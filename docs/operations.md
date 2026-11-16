@@ -164,12 +164,12 @@ An admin is a kit account that claimed an **admin claim code** ([ADR 72](decisio
 Everyone else gets a 403 on `/admin` and its API routes; the Forbidden page
 links to `/admin/claim`.
 
-The first code's SHA-256 goes in `.env` as `ADMIN_CLAIM_CODE_HASH`; the
-code itself is never stored. On a Docker Compose box, make it by hand as [the Forbidden runbook](troubleshooting.md#admin-says-forbidden-for-everyone-including-you) shows: `openssl rand -hex 16`,
-its SHA-256 into `.env`, then a recreated app container; setup does not
-write it yet. The Fly and AWS deploys do not pass `ADMIN_CLAIM_CODE_HASH` to
-the app yet (#738), so a box deployed there cannot claim its first admin
-until they do. Sign in, open
+The first code's SHA-256 is `ADMIN_CLAIM_CODE_HASH` (in `.env`, or SSM on AWS); the
+code itself is never stored. Provisioning prints the code once:
+`ctf-setup.sh secrets` on a Compose box, `deploy/fly/deploy.sh init` on
+Fly, and the first `deploy/aws-terraform/deploy.sh` after the stack is
+applied on AWS. Lost it? See
+**Locked out?** below. Sign in, open
 `/admin/claim` and enter the code: the account you are signed in with becomes an admin. Each code
 works once. Further organizers get a code from the **Admins** tab (see
 below). Until somebody claims, `/admin` refuses everyone and its Forbidden

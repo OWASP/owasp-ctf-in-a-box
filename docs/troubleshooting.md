@@ -61,8 +61,8 @@ the Forbidden page.
 The Forbidden page names which case you are in:
 
 - **"No organizer has claimed this box yet."** Nobody has claimed. Sign in,
-  open `/admin/claim` and enter the code whose hash is in `.env`. Until
-  setup, Fly and AWS generate the code, make one by hand (**Fix**, below).
+  open `/admin/claim` and enter the code provisioning printed. Lost it?
+  Rotate it (**Fix**, below).
 - **"ADMIN_CLAIM_CODE_HASH is not set or is not a SHA-256"** as well. The app
   has no usable hash, so nobody can claim with a bootstrap code. A code an
   admin issued would still work, but with nobody claimed there is none. The
@@ -78,21 +78,18 @@ The Forbidden page names which case you are in:
 
 `ADMIN_LOGINS` is not read by anything; a line left in `.env` grants nothing.
 
-**Fix.** Write a new code's hash to `.env` and recreate the app container — no
-rebuild, since this is a runtime read, but not a plain `docker compose restart`
-either, which keeps the old environment:
+**Fix.** Rotate the bootstrap code. Each command prints the new code once:
 
-```sh
-c=$(openssl rand -hex 16); echo "$c"; printf %s "$c" | openssl dgst -sha256
-# put the 64-hex digest in .env as ADMIN_CLAIM_CODE_HASH=…, then:
-docker compose up -d --no-deps --force-recreate app
-```
+- **Compose box:** `./setup/ctf-setup.sh admin-code`, then recreate the app
+  container (`docker compose up -d --no-deps --force-recreate app`) — no
+  rebuild, since this is a runtime read, but not a plain
+  `docker compose restart` either, which keeps the old environment.
+- **Fly:** `./deploy/fly/deploy.sh --skip-build --new-admin-code`.
+- **AWS:** `./deploy/aws-terraform/deploy.sh --skip-build --new-admin-code`.
 
-Then claim at `/admin/claim` with the 32-hex code the first line printed;
-hyphens and case do not matter. A code wrongly entered five times locks that
-account's claims for 15 minutes. These are the Docker Compose steps. The Fly
-and AWS deploys do not pass `ADMIN_CLAIM_CODE_HASH` to the app yet (#738), so
-a box deployed there cannot claim its first admin until they do.
+Then claim at `/admin/claim` with the printed code; hyphens and case do not
+matter. A code wrongly entered five times locks that account's claims for 15
+minutes.
 
 ## Only the landing page loads (module pages redirect to `/`)
 

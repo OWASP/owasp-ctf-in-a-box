@@ -302,10 +302,9 @@ suggestions.
   of the one-time admin claim code, never the code; empty or malformed means
   nobody can claim the first seat at `/admin/claim` with a bootstrap code —
   fail-closed, `bootstrap-env.ts`, ADR 72; an admin is a player id in
-  `ctf:admin:grants`, and the app does not read `ADMIN_LOGINS`. Provisioning
-  still requires and validates `ADMIN_LOGINS` — `ctf-setup.sh`,
-  `deploy/fly/deploy.sh` and the Terraform module — and does not yet write the
-  hash, so set it by hand as `docs/troubleshooting.md` shows), `GITHUB_ORG` (empty means no fork links
+  `ctf:admin:grants`, and nothing reads `ADMIN_LOGINS`. `ctf-setup.sh secrets`
+  writes the hash and `admin-code` rotates it; Fly and AWS rotate it with
+  `deploy.sh --new-admin-code`), `GITHUB_ORG` (empty means no fork links
   on `/challenges`, and `sync` refuses to start at all, logging
   `ctf-sync: GITHUB_ORG is not set`), and **`SCORE_IMAGE`, which is how a box
   says whether it runs Secure Development** — non-empty means the scorer and

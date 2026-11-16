@@ -227,13 +227,22 @@ require() {
 # write_claim_code — generate a code, put only its hash in $ENV_FILE (replacing
 # any line already there), and print the code once. Called only off --dry-run.
 write_claim_code() {
-  local code hash tmp url
+  local code hash tmp url rc
   code="$(claim_code_new)" || exit 1
   hash="$(claim_code_hash "$code")" || exit 1
   tmp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")" || exit 1
   chmod 600 "$tmp" || { rm -f "$tmp"; exit 1; }
-  grep -vE "$(key_line_ere ADMIN_CLAIM_CODE_HASH)" "$ENV_FILE" > "$tmp" || true
-  printf 'ADMIN_CLAIM_CODE_HASH=%s\n' "$hash" >> "$tmp"
+  # grep exits 1 when it selects no line (a file holding only this key), which
+  # is fine; 2 is a read error, and a partial copy must never replace the file.
+  if grep -vE "$(key_line_ere ADMIN_CLAIM_CODE_HASH)" "$ENV_FILE" > "$tmp"; then :; else
+    rc=$?
+    if [ "$rc" -ne 1 ]; then
+      rm -f "$tmp"
+      echo "FAIL: could not read $ENV_FILE to replace ADMIN_CLAIM_CODE_HASH — nothing changed." >&2
+      exit 1
+    fi
+  fi
+  printf 'ADMIN_CLAIM_CODE_HASH=%s\n' "$hash" >> "$tmp" || { rm -f "$tmp"; exit 1; }
   mv "$tmp" "$ENV_FILE" || { rm -f "$tmp"; exit 1; }
   chmod 600 "$ENV_FILE"
   url="$(env_value EVENT_URL)"

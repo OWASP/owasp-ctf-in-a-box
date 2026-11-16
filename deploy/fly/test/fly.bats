@@ -715,6 +715,34 @@ ENV
   echo "$app_env" | grep -qF "ADMIN_CLAIM_CODE_HASH: $new"
 }
 
+# The rewrite filters $ENV_FILE through `grep -v`. Exit 1 (nothing selected)
+# is fine; any other status is a read error, and the partial copy it left
+# must never be moved over the env file. The stub fails only that filter.
+@test "deploy --new-admin-code leaves the env file untouched when the hash rewrite cannot read it" {
+  need_docker
+  cd "$REPO"
+  mkdir -p "$BATS_TEST_TMPDIR/flybin"
+  printf '#!/bin/sh\nexit 1\n' > "$BATS_TEST_TMPDIR/flybin/fly"
+  real_grep="$(command -v grep)"
+  cat > "$BATS_TEST_TMPDIR/flybin/grep" <<EOF
+#!/bin/sh
+case "\$1 \$2" in
+"-vE "*ADMIN_CLAIM_CODE_HASH*) echo PARTIAL=1; exit 2 ;;
+esac
+exec "$real_grep" "\$@"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/flybin/fly" "$BATS_TEST_TMPDIR/flybin/grep"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.readerr"
+  before="$(cksum < "$BATS_TEST_TMPDIR/env.readerr")"
+  run env PATH="$BATS_TEST_TMPDIR/flybin:$PATH" ./deploy/fly/deploy.sh --skip-build --new-admin-code \
+    --env-file "$BATS_TEST_TMPDIR/env.readerr" --from "$BATS_TEST_TMPDIR/no-such-.env"
+  [ "$status" -ne 0 ]
+  [ "$(cksum < "$BATS_TEST_TMPDIR/env.readerr")" = "$before" ]
+  [ -z "$(printf '%s\n' "$output" | grep -E '([0-9a-f]{4}-){7}[0-9a-f]{4}')" ]
+  [ -z "$(ls "$BATS_TEST_TMPDIR" | grep -F 'env.readerr.tmp.')" ]
+  echo "$output" | grep -qF 'nothing changed'
+}
+
 # A deploy the preflight refuses must not rotate: the box would keep the old
 # code while the operator saves a new one it does not know.
 @test "deploy --new-admin-code refused by the preflight rotates nothing and prints no code" {

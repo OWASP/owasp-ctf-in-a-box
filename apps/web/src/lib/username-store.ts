@@ -9,6 +9,11 @@ export type SetUsernameResult = "ok" | "taken" | "already_set" | "invalid";
  *  unique email, username taken`. */
 const UNIQUE_TAKEN_RE = /\bunique\b.*\btaken\b/;
 
+function isTakenError(err: unknown): boolean {
+  if ((err as { body?: { code?: unknown } } | null)?.body?.code === "USERNAME_IS_ALREADY_TAKEN") return true;
+  return err instanceof Error && UNIQUE_TAKEN_RE.test(err.message);
+}
+
 /**
  * Sets the username of a user who has none (a first OAuth sign-in), once.
  *
@@ -17,10 +22,13 @@ const UNIQUE_TAKEN_RE = /\bunique\b.*\btaken\b/;
  * normalized form the unique index and sign-in key on; `displayUsername` is
  * the trimmed input, held to the same rule as sign-up.
  *
- * The adapter's unique-index refusal lists every unique field of the user
+ * A username someone already holds is refused on two paths, both `taken`. The
+ * username plugin's update hook looks it up first and throws an APIError
+ * coded USERNAME_IS_ALREADY_TAKEN; two picks racing past that lookup meet the
+ * adapter's unique-index refusal, which lists every unique field of the user
  * model (email, username), not the one that collided. This write changes only
- * `username` and `displayUsername`, so the refusal here can only be the
- * username: it maps to `taken`. Any other failure throws (fail closed).
+ * `username` and `displayUsername`, so that refusal can only be the username.
+ * Any other failure throws (fail closed).
  */
 export async function setUsernameOnce(userId: string, raw: string): Promise<SetUsernameResult> {
   if (usernameProblem(raw) !== null) return "invalid";
@@ -32,7 +40,7 @@ export async function setUsernameOnce(userId: string, raw: string): Promise<SetU
     await internalAdapter.updateUser(userId, { username: normalizeUsername(raw), displayUsername: raw.trim() });
     return "ok";
   } catch (err) {
-    if (err instanceof Error && UNIQUE_TAKEN_RE.test(err.message)) return "taken";
+    if (isTakenError(err)) return "taken";
     throw err;
   }
 }

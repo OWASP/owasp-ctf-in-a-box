@@ -45,6 +45,19 @@ describe("setUsernameOnce", () => {
     expect(await setUsernameOnce(ID, "bob")).toBe("taken");
   });
 
+  it("maps the username plugin's already-taken APIError to taken", async () => {
+    const err = Object.assign(new Error("Username is already taken. Please try another."), {
+      body: { code: "USERNAME_IS_ALREADY_TAKEN", message: "Username is already taken. Please try another." },
+    });
+    adapter.updateUser.mockRejectedValue(err);
+    expect(await setUsernameOnce(ID, "bob")).toBe("taken");
+  });
+
+  it("lets an APIError with another code throw", async () => {
+    adapter.updateUser.mockRejectedValue(Object.assign(new Error("bad"), { body: { code: "INVALID_USERNAME" } }));
+    await expect(setUsernameOnce(ID, "bob")).rejects.toThrow("bad");
+  });
+
   it("lets any other failure throw", async () => {
     adapter.updateUser.mockRejectedValue(new Error("auth store: update user failed: NOAUTH"));
     await expect(setUsernameOnce(ID, "bob")).rejects.toThrow("NOAUTH");

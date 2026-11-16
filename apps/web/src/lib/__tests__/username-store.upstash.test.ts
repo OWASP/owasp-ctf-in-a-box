@@ -43,6 +43,18 @@ async function freshUser(prefix: string, login: string) {
 }
 
 describe.skipIf(!liveConfigured)("setUsernameOnce against a live SRH proxy", () => {
+  it("answers taken, leaving no username, when another user already holds it", async () => {
+    const prefix = liveKey("username-store", freshId("held"));
+    const a = await freshUser(prefix, "held-a");
+    const b = await freshUser(prefix, "held-b");
+    expect(await setUsernameOnce(a.user.id, "bob")).toBe("ok");
+    expect(await setUsernameOnce(b.user.id, "Bob")).toBe("taken");
+
+    const ctx = (await live.instance!.$context) as Awaited<ReturnType<typeof betterAuth>["$context"]>;
+    const row = (await ctx.internalAdapter.findUserById(b.user.id)) as { username?: string | null };
+    expect(row.username ?? null).toBeNull();
+  });
+
   it("lets exactly one of two concurrent picks of Bob and bob win", async () => {
     const prefix = liveKey("username-store", freshId("race"));
     const a = await freshUser(prefix, "one");

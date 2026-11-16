@@ -1,16 +1,18 @@
-// setUsernameOnce against a faked internal adapter: the decision table and
-// the error mapping. The unique-index race itself is pinned by
+// setUsernameOnce against faked adapters: the decision table and the error
+// mapping. The unique-index race and the one-pick-per-user race are pinned by
 // username-store.upstash.test.ts against a real Redis.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const adapter = vi.hoisted(() => ({
   findUserById: vi.fn<(id: string) => Promise<Record<string, unknown> | null>>(),
-  updateUser: vi.fn<(id: string, data: Record<string, unknown>) => Promise<unknown>>(),
+  update: vi.fn<(args: { model: string; where: unknown[]; update: Record<string, unknown> }) => Promise<unknown>>(),
   findAccounts: vi.fn<(id: string) => Promise<Array<{ providerId: string }>>>(),
 }));
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/auth", () => ({ auth: { $context: Promise.resolve({ internalAdapter: adapter }) } }));
+vi.mock("@/lib/auth", () => ({
+  auth: { $context: Promise.resolve({ internalAdapter: adapter, adapter: { update: adapter.update } }) },
+}));
 
 import { hasPassword, setUsernameOnce } from "@/lib/username-store";
 
@@ -19,29 +21,41 @@ const ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
 beforeEach(() => {
   vi.clearAllMocks();
   adapter.findUserById.mockResolvedValue({ id: ID, username: null });
-  adapter.updateUser.mockResolvedValue({ id: ID });
+  adapter.update.mockResolvedValue({ id: ID });
 });
 
 describe("setUsernameOnce", () => {
   it("stores the normalized username and the typed display form", async () => {
     expect(await setUsernameOnce(ID, "  Bob_1 ")).toBe("ok");
-    expect(adapter.updateUser).toHaveBeenCalledWith(ID, { username: "bob_1", displayUsername: "Bob_1" });
+    expect(adapter.update).toHaveBeenCalledWith({
+      model: "user",
+      where: [
+        { field: "id", value: ID },
+        { field: "username", value: null },
+      ],
+      update: { username: "bob_1", displayUsername: "Bob_1", updatedAt: expect.any(Date) },
+    });
+  });
+
+  it("answers already_set when the conditional write matches no row (another pick won)", async () => {
+    adapter.update.mockResolvedValue(null);
+    expect(await setUsernameOnce(ID, "bob")).toBe("already_set");
   });
 
   it.each(["ab", "x".repeat(31), "bad name", "bob!", "Kate"])("refuses %j as invalid without touching the store", async (raw) => {
     expect(await setUsernameOnce(ID, raw)).toBe("invalid");
     expect(adapter.findUserById).not.toHaveBeenCalled();
-    expect(adapter.updateUser).not.toHaveBeenCalled();
+    expect(adapter.update).not.toHaveBeenCalled();
   });
 
   it("answers already_set when the user has a username, writing nothing", async () => {
     adapter.findUserById.mockResolvedValue({ id: ID, username: "alice" });
     expect(await setUsernameOnce(ID, "bob")).toBe("already_set");
-    expect(adapter.updateUser).not.toHaveBeenCalled();
+    expect(adapter.update).not.toHaveBeenCalled();
   });
 
   it("maps the adapter's unique-taken failure to taken", async () => {
-    adapter.updateUser.mockRejectedValue(new Error("auth store: update user failed: unique email, username taken"));
+    adapter.update.mockRejectedValue(new Error("auth store: update user failed: unique email, username taken"));
     expect(await setUsernameOnce(ID, "bob")).toBe("taken");
   });
 
@@ -49,17 +63,17 @@ describe("setUsernameOnce", () => {
     const err = Object.assign(new Error("Username is already taken. Please try another."), {
       body: { code: "USERNAME_IS_ALREADY_TAKEN", message: "Username is already taken. Please try another." },
     });
-    adapter.updateUser.mockRejectedValue(err);
+    adapter.update.mockRejectedValue(err);
     expect(await setUsernameOnce(ID, "bob")).toBe("taken");
   });
 
   it("lets an APIError with another code throw", async () => {
-    adapter.updateUser.mockRejectedValue(Object.assign(new Error("bad"), { body: { code: "INVALID_USERNAME" } }));
+    adapter.update.mockRejectedValue(Object.assign(new Error("bad"), { body: { code: "INVALID_USERNAME" } }));
     await expect(setUsernameOnce(ID, "bob")).rejects.toThrow("bad");
   });
 
   it("lets any other failure throw", async () => {
-    adapter.updateUser.mockRejectedValue(new Error("auth store: update user failed: NOAUTH"));
+    adapter.update.mockRejectedValue(new Error("auth store: update user failed: NOAUTH"));
     await expect(setUsernameOnce(ID, "bob")).rejects.toThrow("NOAUTH");
     adapter.findUserById.mockRejectedValue(new Error("boom"));
     await expect(setUsernameOnce(ID, "carol")).rejects.toThrow("boom");

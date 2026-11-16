@@ -1,5 +1,6 @@
-// setUsernameOnce over the real Redis store behind SRH: the unique index is
-// the only thing that decides which of two concurrent picks wins.
+// setUsernameOnce over the real Redis store behind SRH: the unique index
+// decides between two users picking one name, and the compare-and-set's
+// re-checked `username = null` clause between two picks for one user.
 
 import { describe, expect, it, vi } from "vitest";
 import { betterAuth } from "better-auth";
@@ -80,5 +81,17 @@ describe.skipIf(!liveConfigured)("setUsernameOnce against a live SRH proxy", () 
     const row = (await ctx.internalAdapter.findUserById(u.user.id)) as { username?: string; displayUsername?: string };
     expect(row.username).toBe("carol_9");
     expect(row.displayUsername).toBe("Carol_9");
+  });
+
+  it("lets exactly one of two concurrent picks for ONE user win, never overwriting it", async () => {
+    const prefix = liveKey("username-store", freshId("once"));
+    const u = await freshUser(prefix, "twotabs");
+    const results = await Promise.all([setUsernameOnce(u.user.id, "Alice"), setUsernameOnce(u.user.id, "Bob")]);
+    expect([...results].sort()).toEqual(["already_set", "ok"]);
+
+    const ctx = (await live.instance!.$context) as Awaited<ReturnType<typeof betterAuth>["$context"]>;
+    const row = (await ctx.internalAdapter.findUserById(u.user.id)) as { username?: string; displayUsername?: string };
+    const won = results[0] === "ok" ? ["alice", "Alice"] : ["bob", "Bob"];
+    expect([row.username, row.displayUsername]).toEqual(won);
   });
 });

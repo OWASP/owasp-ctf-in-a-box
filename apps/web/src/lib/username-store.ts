@@ -17,28 +17,43 @@ function isTakenError(err: unknown): boolean {
 /**
  * Sets the username of a user who has none (a first OAuth sign-in), once.
  *
- * It goes through the internal adapter, not `/update-user`, which stays
+ * It writes through the database adapter, not `/update-user`, which stays
  * closed: that endpoint takes an arbitrary body. The stored `username` is the
  * normalized form the unique index and sign-in key on; `displayUsername` is
  * the trimmed input, held to the same rule as sign-up.
  *
- * A username someone already holds is refused on two paths, both `taken`. The
- * username plugin's update hook looks it up first and throws an APIError
- * coded USERNAME_IS_ALREADY_TAKEN; two picks racing past that lookup meet the
- * adapter's unique-index refusal, which lists every unique field of the user
- * model (email, username), not the one that collided. This write changes only
- * `username` and `displayUsername`, so that refusal can only be the username.
- * Any other failure throws (fail closed).
+ * "Once" is part of the write, not a read before it: the update matches the
+ * user only while `username` is still null, and the Redis adapter's
+ * compare-and-set re-checks that clause when it loses a race. So two picks
+ * for one user (two tabs) cannot both win; the loser matches no row and gets
+ * `already_set`. `internalAdapter.updateUser` matches on the id alone, which
+ * is why it is not used; nothing it adds applies (no secondary storage, and
+ * the username plugin's update hook only re-normalizes and pre-checks what
+ * the unique index decides anyway).
+ *
+ * A username another user holds is refused by the adapter's unique index,
+ * which names every unique field of the user model (email, username), not
+ * the one that collided. This write changes only `username` and
+ * `displayUsername`, so that refusal can only be the username: `taken`. The
+ * username plugin's APIError coded USERNAME_IS_ALREADY_TAKEN maps the same
+ * way. Any other failure throws (fail closed).
  */
 export async function setUsernameOnce(userId: string, raw: string): Promise<SetUsernameResult> {
   if (usernameProblem(raw) !== null) return "invalid";
-  const { internalAdapter } = await auth.$context;
+  const { adapter, internalAdapter } = await auth.$context;
   const user = await internalAdapter.findUserById(userId);
   if (!user) throw new Error("username: user not found");
   if ((user as { username?: string | null }).username) return "already_set";
   try {
-    await internalAdapter.updateUser(userId, { username: normalizeUsername(raw), displayUsername: raw.trim() });
-    return "ok";
+    const updated = await adapter.update({
+      model: "user",
+      where: [
+        { field: "id", value: userId },
+        { field: "username", value: null },
+      ],
+      update: { username: normalizeUsername(raw), displayUsername: raw.trim(), updatedAt: new Date() },
+    });
+    return updated ? "ok" : "already_set";
   } catch (err) {
     if (isTakenError(err)) return "taken";
     throw err;

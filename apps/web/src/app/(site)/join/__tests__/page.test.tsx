@@ -98,7 +98,7 @@ describe("/join/<code>", () => {
     lookupJoinCode.mockResolvedValue({ slug: "red-team", name: "Red Team", memberCount: 1 });
     getAdminSettings.mockResolvedValue(OPEN_SETTINGS);
     const html = await render("ABC123");
-    expect(html).toContain("sign-in --github");
+    expect(html).toContain("/sign-in?next=%2Fjoin%2FABC123");
     // Still names the team: someone deciding whether to sign in should know
     // what for.
     expect(html).toContain("Red Team");

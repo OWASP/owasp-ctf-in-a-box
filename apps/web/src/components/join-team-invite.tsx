@@ -9,8 +9,8 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { authClient } from "@/lib/auth-client";
-import { oauthErrorCallbackURL, postSigninCallbackURL } from "@/lib/post-signin";
+import Link from "next/link";
+import { signInHref } from "@/lib/post-signin";
 
 export default function JoinTeamInvite({
   code,
@@ -33,28 +33,16 @@ export default function JoinTeamInvite({
 
   if (!signedIn) {
     return (
-      <button
-        type="button"
-        onClick={() =>
-          // Back to THIS page after GitHub, not to /profile: the code lives in
-          // the path, so the round-trip preserves it without a cookie or a
-          // query parameter to lose. The post-signin step passes /join/*
-          // through untouched — the invite IS the team step (issue #217).
-          authClient.signIn.social({
-            provider: "github",
-            callbackURL: postSigninCallbackURL(`/join/${encodeURIComponent(code)}`),
-            // Points a failed callback at the landing page's error banner
-            // rather than better-auth's default `/error` route, which this
-            // app has no page for (issue #380), carrying THIS invite's own
-            // destination through as `?next=` so a failed retry still offers
-            // to come back here rather than /profile (issue #380 follow-up).
-            errorCallbackURL: oauthErrorCallbackURL(`/join/${encodeURIComponent(code)}`),
-          })
-        }
-        className="rounded-md border border-white/10 bg-white/[0.03] px-4 py-2 font-mono text-sm text-zinc-200 transition-colors hover:border-[#2563eb]/45 hover:text-white"
+      // Back to THIS page after sign-in, not to /profile: the code lives in
+      // the path, so `next` preserves it without a cookie. The post-signin
+      // step passes /join/* through untouched — the invite IS the team step
+      // (issue #217).
+      <Link
+        href={signInHref(`/join/${encodeURIComponent(code)}`)}
+        className="self-start rounded-md border border-white/10 bg-white/[0.03] px-4 py-2 font-mono text-sm text-zinc-200 transition-colors hover:border-[#2563eb]/45 hover:text-white"
       >
-        <span className="text-[#22c55e]">$</span> sign-in --github
-      </button>
+        <span className="text-[#22c55e]">$</span> sign-in
+      </Link>
     );
   }
 

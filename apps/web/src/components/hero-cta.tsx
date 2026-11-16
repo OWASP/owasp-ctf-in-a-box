@@ -1,17 +1,12 @@
-"use client";
-
-// The landing hero's single primary action. Two shapes: a plain link, or the
-// GitHub sign-in (which must run client-side through authClient). The
-// `callbackURL` carries the visitor's intent across the OAuth redirect — a
-// signed-out visitor who clicked "Sign in and play" lands on the board, not
-// back on the marketing page (brief: "never lose someone's intended action
-// across the redirect") — routed through the post-signin step, so a teamless
-// contestant meets the team card first (issue #217) and a teamed one still
-// lands exactly where they intended.
+// The landing hero's single primary action: a link. A signed-out visitor's
+// "sign in" goes to /sign-in carrying the destination as `next`, so someone
+// who clicked "Sign in and play" lands on the board after signing in, not back
+// on the marketing page (brief: "never lose someone's intended action"). The
+// sign-in page routes through the post-signin step, so a teamless contestant
+// meets the team card first (issue #217).
 
 import Link from "next/link";
-import { authClient } from "@/lib/auth-client";
-import { oauthErrorCallbackURL, postSigninCallbackURL } from "@/lib/post-signin";
+import { signInHref } from "@/lib/post-signin";
 
 const PRIMARY =
   "inline-flex items-center gap-2 rounded-md bg-[#2563eb] px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-[#1d4ed8] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]";
@@ -27,42 +22,8 @@ export default function HeroCta({
   signIn?: boolean;
   callbackURL?: string;
 }) {
-  if (signIn) {
-    return (
-      <button
-        type="button"
-        onClick={() => {
-          // Surface a failed redirect start instead of leaving the CTA
-          // silently idle; the OAuth flow itself navigates away on success.
-          // errorCallbackURL: without it better-auth's own callback failures
-          // (state present, e.g. access_denied) land on its default
-          // `${baseURL}/error` — a route this app has no page for — instead
-          // of the landing page's banner (issue #380). Carries THIS button's
-          // own destination through as `?next=`, so a failed hero sign-in
-          // still offers to retry toward where it was headed instead of
-          // collapsing to /profile (issue #380 follow-up).
-          void authClient.signIn.social({
-            provider: "github",
-            callbackURL: postSigninCallbackURL(callbackURL),
-            errorCallbackURL: oauthErrorCallbackURL(callbackURL),
-          })
-            .then((result) => {
-              if (result?.error) {
-                console.error("sign-in failed to start:", result.error);
-              }
-            })
-            .catch((err) => {
-              console.error("sign-in failed to start:", err);
-            });
-        }}
-        className={PRIMARY}
-      >
-        {label}
-      </button>
-    );
-  }
   return (
-    <Link href={href ?? "/"} className={PRIMARY}>
+    <Link href={signIn ? signInHref(callbackURL) : (href ?? "/")} className={PRIMARY}>
       {label}
     </Link>
   );

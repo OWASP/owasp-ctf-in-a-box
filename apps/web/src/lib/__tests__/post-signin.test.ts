@@ -10,6 +10,7 @@ import {
   postSigninCallbackURL,
   resolvePostSigninTarget,
   sanitizeNext,
+  signInHref,
 } from "@/lib/post-signin";
 
 describe("postSigninCallbackURL", () => {
@@ -80,5 +81,16 @@ describe("resolvePostSigninTarget", () => {
     expect(resolvePostSigninTarget({ next: "/join/ab12cd", isAdmin: false, teamless: true })).toBe(
       "/join/ab12cd",
     );
+  });
+});
+
+describe("signInHref", () => {
+  it("sends the destination to the sign-in page, encoded", () => {
+    expect(signInHref("/flags")).toBe("/sign-in?next=%2Fflags");
+    expect(signInHref("/profile#team")).toBe("/sign-in?next=%2Fprofile%23team");
+  });
+
+  it("sanitizes a protocol-relative destination", () => {
+    expect(signInHref("//evil")).toBe("/sign-in?next=%2Fprofile");
   });
 });

@@ -51,6 +51,12 @@ export function oauthErrorCallbackURL(next: string): string {
   return `/?next=${encodeURIComponent(sanitizeNext(next))}`;
 }
 
+/** The sign-in page, carrying where the visitor was headed. Sanitized here
+ *  and again by the page: `next` round-trips through a query string. */
+export function signInHref(next: string): string {
+  return `/sign-in?next=${encodeURIComponent(sanitizeNext(next))}`;
+}
+
 /**
  * Where a just-signed-in visitor actually goes.
  *

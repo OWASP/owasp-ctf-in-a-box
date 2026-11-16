@@ -710,13 +710,14 @@ an event that must not be a factor at all: set `FLY_AUTO_STOP=off` in
 The reference deployment's domain is on Cloudflare DNS with the proxy on
 ("orange cloud"), so every request reaches Fly through Cloudflare's edge — a
 `cf-ray` header on any response is how you can tell. That is the only place
-a **trustworthy** per-IP control can live: the app never sees a client
-address it can rely on (Fly sees Cloudflare's, and the `x-forwarded-for`
-value a caller can set is appended to, not replaced), and the app's
-per-address limits on sign-up and sign-in
-([Operations](operations.md#account-sign-up-and-sign-in-limits)) see the
-edge's address too. An unauthenticated `curl` loop against `/api/*` therefore still costs the box a
-session lookup per hit unless the edge stops it.
+a **trustworthy** per-IP control can live: the `x-forwarded-for` value a caller
+can set is appended to, not replaced, so the app keys its limits on the
+rightmost entry, the address of the hop that connected to Fly. Behind
+Cloudflare that is the edge's address, which is usable for a coarse limit on
+sign-up and sign-in
+([Operations](operations.md#account-sign-up-and-sign-in-limits)) but never a
+client identity. An unauthenticated `curl` loop against `/api/*` therefore
+still costs the box a session lookup per hit unless the edge stops it.
 
 **One rate-limiting rule, on the Free plan.** Cloudflare's Free plan includes
 exactly one rate-limiting rule, counted by IP over a 10-second window with a

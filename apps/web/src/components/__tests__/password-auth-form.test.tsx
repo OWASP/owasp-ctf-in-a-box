@@ -48,6 +48,17 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe("PasswordAuthForm tabs", () => {
+  it("wires each tab to the panel and names the panel by the selected tab", () => {
+    render(<PasswordAuthForm next="/flags" />);
+    const panel = screen.getByRole("tabpanel");
+    for (const tab of screen.getAllByRole("tab")) expect(tab.getAttribute("aria-controls")).toBe(panel.id);
+    expect(panel.getAttribute("aria-labelledby")).toBe(screen.getByRole("tab", { name: "Sign in" }).id);
+    openCreate();
+    expect(panel.getAttribute("aria-labelledby")).toBe(screen.getByRole("tab", { name: "Create an account" }).id);
+  });
+});
+
 describe("PasswordAuthForm sign-in", () => {
   it("signs in and navigates through the post-signin step", async () => {
     const href = setHref();

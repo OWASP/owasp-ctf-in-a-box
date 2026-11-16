@@ -16,6 +16,15 @@ export const GENERIC_COPY = "Something went wrong. Try again.";
 
 export const MISMATCH_COPY = "The passwords don't match.";
 
+/** The rate-limit message for a Retry-After of `n` seconds: the wait is
+ *  rounded up to a whole second and singular at exactly 1. */
+export function rateLimitCopy(n: number | null | undefined): string {
+  const wait = typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.ceil(n) : null;
+  return wait !== null
+    ? `Too many attempts. Try again in ${wait} ${wait === 1 ? "second" : "seconds"}.`
+    : "Too many attempts. Try again shortly.";
+}
+
 type AuthError = { status?: number; code?: string; retryAfterSeconds?: number } | null | undefined;
 
 /** Contestant-facing copy for a better-auth error. The code strings are the
@@ -24,11 +33,7 @@ type AuthError = { status?: number; code?: string; retryAfterSeconds?: number } 
 function errorCopy(error: AuthError): string {
   if (!error) return GENERIC_COPY;
   if (error.status === 429 || error.code === "RATE_LIMITED") {
-    const n = error.retryAfterSeconds;
-    const wait = typeof n === "number" && Number.isFinite(n) ? Math.max(1, Math.ceil(n)) : null;
-    return wait !== null
-      ? `Too many attempts. Try again in ${wait} ${wait === 1 ? "second" : "seconds"}.`
-      : "Too many attempts. Try again shortly.";
+    return rateLimitCopy(error.retryAfterSeconds);
   }
   switch (error.code) {
     case "USERNAME_IS_ALREADY_TAKEN":
@@ -103,6 +108,8 @@ export default function PasswordAuthForm({ next }: { next: string }) {
             key={m}
             type="button"
             role="tab"
+            id={`auth-tab-${m}`}
+            aria-controls="auth-panel"
             aria-selected={mode === m}
             onClick={() => switchMode(m)}
             className={`rounded-md border px-3 py-1.5 transition-colors ${
@@ -116,7 +123,14 @@ export default function PasswordAuthForm({ next }: { next: string }) {
         ))}
       </div>
 
-      <form onSubmit={submit} noValidate className="flex flex-col gap-4">
+      <form
+        onSubmit={submit}
+        noValidate
+        role="tabpanel"
+        id="auth-panel"
+        aria-labelledby={`auth-tab-${mode}`}
+        className="flex flex-col gap-4"
+      >
         <label className="flex flex-col gap-1.5 text-sm text-zinc-300">
           Username
           <input
@@ -173,7 +187,7 @@ export default function PasswordAuthForm({ next }: { next: string }) {
             setError(null);
             // errorCallbackURL points a failed callback at the landing
             // page's banner, carrying `next` so the retry keeps the
-            // destination (issue #380).
+            // destination.
             void authClient.signIn
               .social({
                 provider: "github",

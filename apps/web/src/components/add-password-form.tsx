@@ -4,7 +4,7 @@
 // (a GitHub sign-in). Success reloads the page, which then hides the card.
 
 import { useState } from "react";
-import { GENERIC_COPY, MISMATCH_COPY, PASSWORD_COPY } from "@/components/password-auth-form";
+import { GENERIC_COPY, MISMATCH_COPY, PASSWORD_COPY, rateLimitCopy } from "@/components/password-auth-form";
 
 const INPUT =
   "w-full rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 font-mono text-sm text-white placeholder:text-zinc-600 focus-visible:border-[#2563eb]/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]";
@@ -37,12 +37,7 @@ export default function AddPasswordForm() {
         return;
       }
       if (res.status === 429) {
-        const n = Number(res.headers.get("Retry-After"));
-        return setError(
-          Number.isFinite(n) && n > 0
-            ? `Too many attempts. Try again in ${Math.ceil(n)} seconds.`
-            : "Too many attempts. Try again shortly.",
-        );
+        return setError(rateLimitCopy(Number(res.headers.get("Retry-After"))));
       }
       if (body?.error === "length") return setError(PASSWORD_COPY);
       setError(GENERIC_COPY);

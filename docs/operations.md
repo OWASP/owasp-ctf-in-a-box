@@ -96,8 +96,8 @@ account has one, or make a new account.
 Scoring is per team, and **a team is required** — nothing a contestant solves
 counts until they are on one. Contestants self-register in the app: create a
 team to become its captain and get a join code, join an existing team by code,
-or hit **Play solo** for a one-click team of one named after their GitHub
-login. Everyone ends up on a team — a solo player is simply a team of one.
+or hit **Play solo** for a one-click team of one named after their
+username. Everyone ends up on a team — a solo player is simply a team of one.
 
 The requirement is enforced in three places, earliest first. **At sign-in**:
 every GitHub sign-in lands on a post-signin step that sends a contestant with

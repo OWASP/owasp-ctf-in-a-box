@@ -3,7 +3,7 @@
 // who clicked "Sign in and play" lands on the board after signing in, not back
 // on the marketing page (brief: "never lose someone's intended action"). The
 // sign-in page routes through the post-signin step, so a teamless contestant
-// meets the team card first (issue #217).
+// meets the team card first.
 
 import Link from "next/link";
 import { signInHref } from "@/lib/post-signin";

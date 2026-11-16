@@ -23,10 +23,10 @@ vi.mock("@/lib/team-solve-counts", () => ({
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { moduleLive, isAdminLogin, getSession, listChallenges, listCategories, teamSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, deriveStatusSpy } =
+const { moduleLive, isAdminPlayer, getSession, listChallenges, listCategories, teamSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, deriveStatusSpy } =
   vi.hoisted(() => ({
     moduleLive: vi.fn(),
-    isAdminLogin: vi.fn(),
+    isAdminPlayer: vi.fn(),
     getSession: vi.fn(),
     listChallenges: vi.fn(),
     listCategories: vi.fn(),
@@ -51,7 +51,7 @@ vi.mock("next/navigation", async (importOriginal) => ({
 }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
-vi.mock("@/lib/admin-auth", () => ({ isAdminLogin }));
+vi.mock("@/lib/admin-auth", () => ({ isAdminPlayer }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings }));
 // #463 stories: none by default; the story tests below set some.
 const storyMocks = vi.hoisted(() => ({
@@ -94,7 +94,7 @@ const baseChallenges = [
 
 beforeEach(() => {
   vi.clearAllMocks();
-  isAdminLogin.mockReturnValue(false);
+  isAdminPlayer.mockReturnValue(false);
   // Registry-default fallback, same shape resolveModules would produce for an
   // event with only the classic module enabled and no organizer overrides.
   // Tests that care about an organizer-renamed title override this per-case.
@@ -191,7 +191,7 @@ describe("flags page view model", () => {
   // dead end for them and a useless one for whoever has to author the board.
   it("routes an organizer to the authoring tab from the empty state", async () => {
     moduleLive.mockReturnValue(true);
-    isAdminLogin.mockReturnValue(true);
+    isAdminPlayer.mockReturnValue(true);
     getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listChallenges.mockResolvedValue([]);
     getAdminSettings.mockResolvedValue({ classicCooldownSec: null });
@@ -206,7 +206,7 @@ describe("flags page view model", () => {
 
   it("shows a signed-in contestant the plain empty state, with no admin link", async () => {
     moduleLive.mockReturnValue(true);
-    isAdminLogin.mockReturnValue(false);
+    isAdminPlayer.mockReturnValue(false);
     getSession.mockResolvedValue({ user: { id: BOB_ID, login: "bob" } });
     listChallenges.mockResolvedValue([]);
     getAdminSettings.mockResolvedValue({ classicCooldownSec: null });

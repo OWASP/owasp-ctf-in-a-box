@@ -104,7 +104,7 @@ state; everything else that touches scores goes through it.
 | Service | Source | Responsibility |
 |---|---|---|
 | `caddy` | `caddy:2-alpine` image (digest-pinned, [ADR 51](decisions.md#adr-51-base-images-are-digest-pinned-and-dependabot-is-what-keeps-the-pin-honest)); the one Caddyfile, `caddy/Caddyfile.poll`, mounted unconditionally | Reverse proxy in front of `app`, and that is its whole job: there is one Caddyfile, it has no `/score` route to `scorer`, and no setting adds one — so the box has zero inbound scoring surface. |
-| `app` | `apps/web/` (vendored Next.js app, built from local source via `apps/web/Dockerfile`) | Contestant-facing UI: GitHub sign-in, challenge browser, leaderboard, rules/FAQ/how-to-play pages. It reads nothing at build time: `ADMIN_LOGINS` and `GITHUB_ORG` come from the environment at container start, and the event's dates, name and other identity fields, which modules run and which Secure Development targets run are all runtime `/admin` settings (see below). |
+| `app` | `apps/web/` (vendored Next.js app, built from local source via `apps/web/Dockerfile`) | Contestant-facing UI: GitHub sign-in, challenge browser, leaderboard, rules/FAQ/how-to-play pages. It reads nothing at build time: `ADMIN_CLAIM_CODE_HASH` and `GITHUB_ORG` come from the environment at container start, and the event's dates, name and other identity fields, which modules run and which Secure Development targets run are all runtime `/admin` settings (see below). |
 | `scorer` | `${SCORE_IMAGE:-…}` — your own build from the in-repo engine `scorer/`, which bakes the public vendored rubric by default (see [docs/scorer.md](scorer.md)); `setup/ctf-setup.sh org` mirrors whatever `SCORE_IMAGE` names into the event org. The compose fallback `ghcr.io/owasp-ctf/score:latest` is a private upstream image the kit does not assume access to. | Judges submitted PRs against the baked rubric; exposes `POST /score` (bearer-token authed write) and `GET /leaderboard`. The one score writer in the system. Part of the `secure-development` module, so it carries `profiles: ["secdev"]`, the same profile as `sync`: the two come up together or not at all. `SCORE_IMAGE` decides *availability*: non-empty is what adds a Secure Development profile at `up` (so this container exists at all) and what seeds the default module set, and with it empty the scorer cannot run. What is *live* is `enabledModules` in `ctf:admin:settings`, set from `/admin` — so an available Secure Development module can still be switched off, and a running scorer is not by itself an enabled module. See [ADR 26](decisions.md#adr-26-compose-profiles-follow-the-enabled-modules), superseded by [ADR 55](decisions.md#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml). |
 | `srh` | `hiett/serverless-redis-http` | Upstash-REST-compatible HTTP proxy in front of `redis`, so the app's `@upstash/redis` client works unchanged against local Redis. Implements only the POST-command-array subset of Upstash's REST API (no path-style `GET /get/<key>` shortcut — see `scripts/smoke.sh`). |
 | `redis` | `redis:8-alpine` (digest-pinned, [ADR 51](decisions.md#adr-51-base-images-are-digest-pinned-and-dependabot-is-what-keeps-the-pin-honest)), `--appendonly yes` | Durable state: scores, team/hint data. Named volume `redis-data` survives box reboots. |
@@ -690,8 +690,8 @@ See [ADR 68](decisions.md#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled
   admin tab, marking as `unclaimed` those no tick can release any more: the
   author linked at or after the close, or is still unlinked once it has
   passed. The Secure Development page hides fork links until the player has
-  linked. Admin access is still decided by the
-  GitHub login against `ADMIN_LOGINS` (#738).
+  linked. Admin access is decided by the player id, never the GitHub login
+  (see the admin panel section below).
 - **`ctf:user:<id>`** — the contestant's own record: `team` (their current
   slug), `joinedAt` (when they joined **that** team), and `firstTeamAt` (the
   first time they were **ever** on a team). The two timestamps have
@@ -741,8 +741,8 @@ keys without open-coding the strings.
 
 ## Organizer admin panel (runtime overrides)
 
-`.env`'s `ADMIN_LOGINS` (checked case-insensitively against the
-signed-in GitHub login, `apps/web/src/lib/admin-auth.ts`'s `requireAdmin`)
+An admin grant (`ctf:admin:grants`, below; checked by player id in
+`apps/web/src/lib/admin-auth.ts`'s `requireAdmin`, [ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env))
 gates the runtime-override layer described above — the plane that *is*
 readable and writable while the stack is running, without a restart:
 
@@ -817,14 +817,30 @@ readable and writable while the stack is running, without a restart:
   and the outage fallback (`apps/web/src/lib/enabled-modules.ts`'s
   `getEnabledModuleIds()`), and the title/blurb validation above is checked
   against the *live* set.
-- **`ctf:admin:admins`** (Redis SET, ADR 44) — logins granted admin at
-  runtime, on top of the ones `ADMIN_LOGINS` names in `.env`. A set
-  rather than a settings field because membership *is* the whole value.
-  **Bootstrap admins are not revocable here**: they are the recovery path if a
-  runtime grant goes wrong, so no sequence of clicks and no compromised admin
-  session can lock everyone out of `/admin`. `requireAdmin` checks the env
-  list first, without touching Redis, and **fails closed** — an unreachable
-  store denies rather than resolving to an empty list.
+- **`ctf:admin:grants`** (Redis SET, ADR 72) — the player ids that hold an
+  admin grant: the only roster. A set rather than a settings field because
+  membership *is* the whole value. Grants are made only by claiming a code at
+  `/admin/claim` and removed from the Admins tab; the revoke script refuses
+  to remove the last grant whose account still exists. It cannot tell
+  whether that admin can still sign in; if none can, rotating
+  `ADMIN_CLAIM_CODE_HASH` makes a bootstrap code that works whether or not
+  admins exist (ADR 72, Recovery).
+  `requireAdmin` **fails closed** — an unreachable store denies rather than
+  resolving to "no grant".
+- **`ctf:admin:code:<sha256>`** (STRING, 15-minute TTL) — an admin-issued
+  claim code, stored only as its hash with the issuer's id, name and grant
+  generation. The claim script reads and deletes it in one step, so it works
+  once.
+- **`ctf:admin:grant-gen`** (Redis HASH) — player id to grant generation. The
+  revoke script advances the target's; a code whose generation is not its
+  issuer's current one is refused, so a revoked admin's codes stay void after
+  a re-grant.
+- **`ctf:admin:claim:spent`** (Redis SET) — bootstrap hashes
+  (`ADMIN_CLAIM_CODE_HASH`) already claimed. Rotating the env hash makes a new
+  bootstrap code; the old one stops matching at once.
+
+  No `RESET_PREFIXES` pattern matches `ctf:admin:`, so a master reset keeps
+  all four, and the event archive carries none of them.
 
 - **`ctf:admin:audit`** — a capped list (`AUDIT_CAP` = 500, `LPUSH`+`LTRIM`)
   of every settings change, written atomically with the change itself (one
@@ -1191,7 +1207,8 @@ which supersedes the v1 limitation recorded in
 Every fact about an event reaches the running system one of exactly two ways.
 
 **Bootstrap — `.env`, read once at container start.** Four keys, plus the
-secrets: `ADMIN_LOGINS` (who may reach `/admin`), `GITHUB_ORG` (the org whose
+secrets: `ADMIN_CLAIM_CODE_HASH` (the hash of the one-time code that claims
+the first admin seat), `GITHUB_ORG` (the org whose
 forks are linked and polled), `SCORE_IMAGE` (which scorer image to run, and by
 its non-emptiness whether this deployment can provide Secure Development at
 all — it adds the compose profile that gives the module its containers and
@@ -1200,7 +1217,7 @@ seeds the first-boot default module set; `enabledModules` in
 `EVENT_URL` ([ADR 43](decisions.md#adr-43-one-url-and-it-lives-in-env-not-eventyaml)).
 The app reads the first two through `src/lib/bootstrap-env.ts`, a
 `server-only` module — no `process.env` read ever reaches a client bundle,
-which is what keeps the admin list off the wire. Changing any of them is an
+which is what keeps the claim-code hash off the wire. Changing any of them is an
 `.env` edit and a container recreate; there is no rebuild, and nothing is
 compiled in.
 
@@ -1219,12 +1236,11 @@ window fields — the three-reader lockstep the rest of this document describes.
 
 Two fail directions, deliberately opposite and worth knowing apart:
 
-- **`ADMIN_LOGINS` fails CLOSED.** Empty, unset, or every entry failing the
-  GitHub-login shape check means *nobody* is an admin — never "no allowlist
-  configured, let the runtime grants decide". Runtime grants
-  ([ADR 44](decisions.md#adr-44-runtime-admin-grants-with-the-baked-list-as-the-recovery-path))
-  stack on top of the env list and can never remove an entry from it, which is
-  what keeps the recovery path intact.
+- **The admin check fails CLOSED.** A grant read that errors denies, and
+  the claim answers 503 rather than granting. An empty or malformed
+  `ADMIN_CLAIM_CODE_HASH` means nobody can claim the first seat; it never
+  means "anyone may". Rotating the hash is the lock-out recovery path
+  ([ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)).
 - **A failed settings read fails OPEN**, to the defaults: not paused, the
   `SCORE_IMAGE`-derived module set, all six targets, the neutral identity. A
   Redis blip must never drop live submissions or lock a board. `sync` is the
@@ -1380,7 +1396,7 @@ build.
 |---|---|---|
 | Unit (sync) | `sync/test/*.test.js`, run via `npm test` (Node's built-in test runner) | Config loading/validation, comment parsing and the author grammar, cursor/ETag handling, submit retry semantics, state persistence — in isolation, no network or Docker. |
 | Unit (scorer) | `scorer/test/*.test.js`, run via `npm test` (Node's built-in test runner) | Rubric loading/validation, probe grammar + evaluation, the judge's report format (the score-action regexes and the sync marker, pinned verbatim), serve auth/validation/monotonic-replay semantics, leaderboard aggregation, and both solve stores (memory, and Redis-via-SRH against a mocked endpoint) — in isolation, no network or Docker. |
-| Unit (app) | `apps/web/src/lib/__tests__/*`, run via `vitest run` | Bootstrap-env parsing (`ADMIN_LOGINS` case/whitespace/empties, the `SCORE_IMAGE`-derived default module set), timezone-independent date formatting from the scoring window, module/app enablement filtering (`enabled-apps.ts`'s live, per-request target filter, defaulting to all six), site config derivation, and — `apps/web/src/lib/leaderboard/__tests__/{module-contributions,rank,pipeline}.test.ts` — the module-contribution overlay's attribution (`secure-development` attributed not added, no double counting; `pipeline.test.ts` shows a penalised row's module blocks gross and nets the hint penalty once, on the row total; with the quiz module disabled a source's teams pass through untouched and no quiz block is read at all; with it enabled, quiz points are added to an entry's and a deduped team's totals, a quiz-less entry gets a zero quiz block at `0 / N` that moves no total, rank or order (#585), and a quiz-active row on an upstash-shaped board keeps its patches in the items tiebreak — added quiz points can move a row either way in the points order, whatever its patch count) and the points/cross-module-completion/earliest-activity ranking — including the regression that ordering is already correct with hints disabled, since `withHintPenalties` no-ops in that case and must not be the thing doing the re-rank, and the pinned points order of an Upstash-shaped board with its ties broken on `patched`. The quiz store itself (`src/lib/__tests__/quiz-store*.test.ts`) covers all-or-nothing set comparison, the attempt cap and cooldown (including the atomic grading script's authority over the JS-side pre-check, and its fail-closed behavior on a lookup error), and question authoring validation; `components/__tests__/{admin-quiz-controls,quiz-board}.test.tsx` cover the authoring form and the contestant answer UI. The derived-plumbing rules get their own direct coverage, since neither is observable in a static render: `src/lib/__tests__/quiz-id.test.ts` pins that `generateQuestionId` always emits an id `QUIZ_ID_RE` accepts (across a corpus of punctuation-only, non-Latin, emoji and over-long prompts) and that two identical prompts never collide, and `admin-quiz-controls.test.tsx` pins that `payloadFromEditor` submits an existing question's stored id no matter how the draft was rewritten, plus `reorderQuestions`'s recomputed `order` values. The drag handlers themselves are deliberately NOT unit-tested — this repo has no testing-library and does not want one — which is why every decision they make lives in those two pure functions instead. The answer-key boundary is pinned from both sides: `listQuestions` never issues a command against `ctf:quiz:key` while `listQuestionsForAdmin` returns the set paired by question id (`quiz-store.test.ts`), `GET /api/admin/quiz` returns it for an admin and returns a body with no answer data at all for a 401/403 (`app/api/quiz/__tests__/routes.test.ts`), the admin edit draft prefills it (`admin-quiz-controls.test.tsx`) while the collapsed question list doesn't paint it, and `/quiz`'s page-level view model strips it even when the store hands one over (`app/(site)/quiz/__tests__/page-view-model.test.tsx`, with `quiz-board.test.tsx`'s markup check as the independent second guard). |
+| Unit (app) | `apps/web/src/lib/__tests__/*`, run via `vitest run` | Bootstrap-env parsing (`ADMIN_CLAIM_CODE_HASH` shape, a pasted code read as unset, the `SCORE_IMAGE`-derived default module set), timezone-independent date formatting from the scoring window, module/app enablement filtering (`enabled-apps.ts`'s live, per-request target filter, defaulting to all six), site config derivation, and — `apps/web/src/lib/leaderboard/__tests__/{module-contributions,rank,pipeline}.test.ts` — the module-contribution overlay's attribution (`secure-development` attributed not added, no double counting; `pipeline.test.ts` shows a penalised row's module blocks gross and nets the hint penalty once, on the row total; with the quiz module disabled a source's teams pass through untouched and no quiz block is read at all; with it enabled, quiz points are added to an entry's and a deduped team's totals, a quiz-less entry gets a zero quiz block at `0 / N` that moves no total, rank or order (#585), and a quiz-active row on an upstash-shaped board keeps its patches in the items tiebreak — added quiz points can move a row either way in the points order, whatever its patch count) and the points/cross-module-completion/earliest-activity ranking — including the regression that ordering is already correct with hints disabled, since `withHintPenalties` no-ops in that case and must not be the thing doing the re-rank, and the pinned points order of an Upstash-shaped board with its ties broken on `patched`. The quiz store itself (`src/lib/__tests__/quiz-store*.test.ts`) covers all-or-nothing set comparison, the attempt cap and cooldown (including the atomic grading script's authority over the JS-side pre-check, and its fail-closed behavior on a lookup error), and question authoring validation; `components/__tests__/{admin-quiz-controls,quiz-board}.test.tsx` cover the authoring form and the contestant answer UI. The derived-plumbing rules get their own direct coverage, since neither is observable in a static render: `src/lib/__tests__/quiz-id.test.ts` pins that `generateQuestionId` always emits an id `QUIZ_ID_RE` accepts (across a corpus of punctuation-only, non-Latin, emoji and over-long prompts) and that two identical prompts never collide, and `admin-quiz-controls.test.tsx` pins that `payloadFromEditor` submits an existing question's stored id no matter how the draft was rewritten, plus `reorderQuestions`'s recomputed `order` values. The drag handlers themselves are deliberately NOT unit-tested — this repo has no testing-library and does not want one — which is why every decision they make lives in those two pure functions instead. The answer-key boundary is pinned from both sides: `listQuestions` never issues a command against `ctf:quiz:key` while `listQuestionsForAdmin` returns the set paired by question id (`quiz-store.test.ts`), `GET /api/admin/quiz` returns it for an admin and returns a body with no answer data at all for a 401/403 (`app/api/quiz/__tests__/routes.test.ts`), the admin edit draft prefills it (`admin-quiz-controls.test.tsx`) while the collapsed question list doesn't paint it, and `/quiz`'s page-level view model strips it even when the store hands one over (`app/(site)/quiz/__tests__/page-view-model.test.tsx`, with `quiz-board.test.tsx`'s markup check as the independent second guard). |
 | Live Lua (app) | Every `apps/web/src/lib/__tests__/*.upstash.test.ts` suite — the grading scripts' `{classic-store,quiz-store}.lua.upstash.test.ts` and the settings, hint, team and other store suites beside them — all `describe.skipIf`-gated through `live-redis.ts`'s `liveConfigured` on `UPSTASH_REDIS_REST_URL`/`_TOKEN`; the `app` CI job brings up `redis` + `srh` (digest-pinned like `docker-compose.yml`), sets `CTF_LUA_SUITES_REQUIRED=1` so a skip fails the job, and runs every `*.upstash.test.ts` file serially (`vitest run upstash --no-file-parallelism` — `admin-store` and `hint-store` share the fixed `ctf:admin:settings` hash) | The three older suites, one store each: `admin-store` pins the settings write + audit append as one atomic step and the audit cap; `hint-store` the hint reveal under a policy the suite seeds itself (a player with no solves on the target is refused with `forbidden` and charged nothing, the first reveal charges the organizer's configured price — not the baked default — once a solve is seeded, the second is free, and a missing hint charges nothing); `team-store` the team scripts (the four-player cap, one team per player, a populated team's captain refused with `Transfer or disband before leaving` as a no-op, then transfer → leave → the last member's leave deleting the team hash, member set and join-code index while every user hash survives). Each was checked against a one-line store mutation (the gate condition flipped; the key deletion dropped; the captain rule weakened) and went red (#235). The newer suites close the rest of that gap (#497): `team-captain` runs the captain-only scripts (remove, rename, transfer, disband, regenerate) through the store, refusals asserted as no-ops, plus concurrent regenerations and a disband racing one (no join code may survive resolving to the team or to a deleted one); `admin-scripts` runs the organizer overrides `FORCE_REMOVE`/`FORCE_TRANSFER` and the runtime-admin `ADMINS` grant; `rate-limit-store` runs `CONSUME` on a two-second window, observing the expiry for real. Each was checked against a one-line mutant (window extended on every call, captain guard dropped, transfer to a non-member, another team's member record cleared, audit cap dropped) and went red. The two grading scripts — the scoring authority — EXECUTED against a real Redis, on run-unique keys: `missing`/`already`/`incorrect`/`correct`/`cooldown`/`exhausted` verdicts, the exact attempts and solve rows written, that a refused submission writes nothing, the cooldown boundary (refused at `now < lastAtMs + cooldownMs`, graded at equality), the `>=` cap, `maxAttempts = 0` as uncapped, a first-ever submission with a cooldown set (no attempts row, so `lastAtMs` is nil), `solvecount` keyed by the challenge and the two totals by the login, and the case-sensitive form chosen only for a `caseSensitive` record. Each of the single-line Lua mutations the 2026-08-25 review found survivable in these scripts (already-solved polarity, `and lastAtMs`, login-keyed solvecount, `>` cap, case-sensitive branch) fails at least one of these. The mocked `*.grade.test.ts` suites still pin what the stores hand the scripts (key and argument order); together the two layers cover the chain. |
 | Shell (bats) | `setup/test/`, `scripts/test/`, `deploy/fly/test/` and `deploy/aws-terraform/test/`, each run by the `shell` job in `ci.yml` | `ctf-setup.sh`'s subcommands against fixture `.env` files: dry-run fork/workflow/mirror/teardown plans, secrets generation, the wizard's answers, and the `.env` reader's edge cases (trailing comments, blank values, a missing file refused rather than read as "no Secure Development") — no real `gh`/`docker` calls needed. The other directories cover the repo's scripts (the shared `.env` reader against `docker compose config`, the CI path filter, the changelog and comment-policy checks, image pins) the Fly module's `deploy.sh` and `render-compose.sh`, and the AWS module's `deploy.sh` with stubbed `docker`/`aws`/`terraform`. |
 | Offline smoke | `scripts/smoke.sh` | The full poll pipeline against fixture services (`test/fixtures/mock-github.mjs`, `test/fixtures/mock-scorer.mjs`, `docker-compose.smoke.yml`): Redis and the `srh` REST proxy work, `sync` ingests fixture score comments, scores match the fixtures, a forged comment is dropped by the trust filter, an unauthenticated `POST /score` is rejected, each score carries its own comment's `updated_at` as `at`, and — the poller's half of the freeze — setting `ctf:admin:settings paused` directly on Redis (the same key the app's settings route writes) shows in `ctf:sync:status` while the poller keeps forwarding a queued fixture score, with its comment time, for the scorer to judge. The scorer's half (refusing a score posted before the launch, during a freeze or before a reset, against a real Redis) is `scripts/acceptance-scorer.sh`'s freeze stage. This is what CI's `smoke` job runs, and needs no live GitHub org, Action runs, or scorer image access. |

@@ -24,6 +24,24 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   launch key or event endpoint to call. Nothing migrates: v2 refuses a Redis
   holding v1 data and does not read v1 archives, so an event that wants its
   AI results records them from its v1.x box before upgrading.
+- **Added: admin claim codes (#738).** An admin is a kit account that claimed
+  a one-time code at `/admin/claim`. The first code's SHA-256 is
+  `ADMIN_CLAIM_CODE_HASH` in `.env`; the Admins tab issues further codes
+  (single use, 15 minutes), lists admins by name and removes them, refusing
+  the last one whose account still exists. Claims are limited to five attempts per player per 15
+  minutes, and every claim, issue and removal is audited without the code.
+  Master reset keeps the admins. ADR 72.
+  **Breaking:** `ADMIN_LOGINS` is ignored; a GitHub login no longer makes
+  anyone an admin, and grants made from the v1 panel (`ctf:admin:admins`)
+  are not read. The Admins tab's add-by-login form and
+  `POST /api/admin/admins` are gone. **Upgrade note:** on a Docker Compose
+  box, set the hash by hand, since setup does not write it yet: run
+  `c=$(openssl rand -hex 16); echo "$c"; printf %s "$c" | openssl dgst -sha256`,
+  put the digest in `.env` as `ADMIN_CLAIM_CODE_HASH`, recreate the app
+  container (`docker compose up -d --no-deps --force-recreate app`; a plain restart does not reload `.env`), and
+  claim with the printed code. The Fly and AWS deploys do not pass
+  `ADMIN_CLAIM_CODE_HASH` to the app yet (#738), so a box deployed there
+  cannot claim its first admin until they do.
 - **Added: GitHub linking, and held Secure Development scores (#741).** With
   Secure Development on, a player links a GitHub account from their profile
   or by signing in with GitHub; one GitHub account links to one kit account,

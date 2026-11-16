@@ -18,11 +18,9 @@ import MenuChevron from "@/components/menu-chevron";
 // requireAdmin(), so showing the item to a non-admin — or hiding it from an
 // admin — never grants or denies access, it only affects the menu.
 //
-// Config v2: `ADMIN_LOGINS` is server-only (it must never reach the client
-// bundle, unlike the old baked `event.yaml` list — see bootstrap-env.ts), so
-// there is no instant client-side check any more. Every viewer, env admin or
-// not, waits on the round-trip below: `/api/me/admin` answers through
-// `isAdminLogin`, which covers both env admins and runtime grants.
+// The admin roster lives in Redis, which a Client Component cannot read, so
+// every viewer waits on the round-trip below: `/api/me/admin` answers through
+// `isAdminPlayer`.
 
 // The pages that only make sense WITH a session. Signing out anywhere else
 // stays put (a refresh re-renders the same public page signed out), but

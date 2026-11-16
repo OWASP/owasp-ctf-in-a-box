@@ -18,7 +18,7 @@ import { notFound } from "next/navigation";
 import ModuleEmptyState from "@/components/module-empty-state";
 import PageHeader from "@/components/page-header";
 import QuizBoard, { type QuizQuestionView, type QuizStatus } from "@/components/quiz-board";
-import { isAdminLogin } from "@/lib/admin-auth";
+import { isAdminPlayer } from "@/lib/admin-auth";
 import { getPlayer } from "@/lib/player";
 import { getAdminSettings } from "@/lib/admin-store";
 import { isModuleLive } from "@/lib/enabled-modules";
@@ -81,14 +81,13 @@ export default async function QuizPage() {
 
   const player = await getPlayer(await headers());
   const playerId = player?.id;
-  const adminLogin = player?.githubLogin ?? undefined;
   // #464 pre-launch lock: before ANY content load below. A refused viewer
   // (not launched, not an admin) goes to the landing page.
-  const launch = await redirectIfNotLaunched(adminLogin);
+  const launch = await redirectIfNotLaunched(playerId);
   // Drives the empty state's authoring route only. Deliberately the SAME
   // check `/admin` and every `/api/admin/*` route gate on, so this can never
   // offer a link to someone the admin page would then 403 at.
-  const viewerIsAdmin = await isAdminLogin(adminLogin);
+  const viewerIsAdmin = await isAdminPlayer(playerId);
 
   // Answers only count for a team (issue #153), and the answer route refuses a
   // teamless login. Sending them to set a team up first means nobody learns

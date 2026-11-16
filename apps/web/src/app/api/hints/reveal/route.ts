@@ -18,12 +18,11 @@ export async function POST(request: Request) {
   const player = await getPlayer(request.headers);
   if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const playerId = player.id;
-  const adminLogin = player.githubLogin ?? undefined;
 
   // #464 pre-launch lock. Its own refusal — 403 `not-launched` — never a
   // wrong-answer shape. An admin before launch passes as a PREVIEW: they see
   // the hint text and are charged nothing (the same script, writing nothing).
-  const { refused, preview } = await launchApiAccess(adminLogin);
+  const { refused, preview } = await launchApiAccess(playerId);
   if (refused) return refused;
 
   // After the lock, before any store write — a refusal here can never follow
@@ -55,7 +54,7 @@ export async function POST(request: Request) {
   const id = typeof body.id === "string" ? body.id : "";
   // An admin on a Jeopardy challenge contestants cannot see reads its hint
   // as a dry run, like a preview: shown, never charged.
-  const dryRun = preview || (app === "classic" && id !== "" && (await adminSeesHidden(adminLogin, id)));
+  const dryRun = preview || (app === "classic" && id !== "" && (await adminSeesHidden(playerId, id)));
   const result = await revealHint(playerId, app, id, typeof quotedCost === "number" ? { dryRun, quotedCost } : { dryRun });
   if (!result.ok && "repriced" in result) {
     // 409: the confirmed price is stale. Only the new price goes back, so

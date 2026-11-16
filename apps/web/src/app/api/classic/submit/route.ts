@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { adminSeesHidden } from "@/lib/classic-visibility";
-import { isAdminLogin } from "@/lib/admin-auth";
+import { isAdminPlayer } from "@/lib/admin-auth";
 import { getPlayer } from "@/lib/player";
 import { logActivity } from "@/lib/activity-log";
 import { isModuleLive } from "@/lib/enabled-modules";
@@ -66,12 +66,11 @@ export async function POST(request: Request) {
   const player = await getPlayer(request.headers);
   if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const playerId = player.id;
-  const adminLogin = player.githubLogin ?? undefined;
 
   // #464 pre-launch lock. Its own refusal — 403 `not-launched` — never a
   // wrong-answer shape. An admin before launch passes as a PREVIEW, and their
   // flag is graded as a dry run: the same script, writing nothing.
-  const { refused, preview } = await launchApiAccess(adminLogin);
+  const { refused, preview } = await launchApiAccess(playerId);
   if (refused) return refused;
 
   // Scoring is per team, and a teamless login's banked points fold into no
@@ -91,7 +90,7 @@ export async function POST(request: Request) {
   // test it, and nothing may be recorded for them. That needs the id, so for
   // an admin alone the body is read before their team check; everyone else
   // is refused first, with the body unread.
-  const admin = !preview && (await isAdminLogin(adminLogin).catch(() => false));
+  const admin = !preview && (await isAdminPlayer(playerId).catch(() => false));
   if (!preview && !admin && !(await hasTeam(playerId))) {
     return NextResponse.json({ error: "no-team" }, { status: 403 });
   }
@@ -99,7 +98,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const challengeId = typeof body.challengeId === "string" ? body.challengeId : "";
   const flag = typeof body.flag === "string" ? body.flag : "";
-  const dryRun = preview || (admin && CLASSIC_ID_RE.test(challengeId) && (await adminSeesHidden(adminLogin, challengeId)));
+  const dryRun = preview || (admin && CLASSIC_ID_RE.test(challengeId) && (await adminSeesHidden(playerId, challengeId)));
 
   if (!dryRun && admin && !(await hasTeam(playerId))) {
     return NextResponse.json({ error: "no-team" }, { status: 403 });

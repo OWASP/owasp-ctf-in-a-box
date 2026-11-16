@@ -18,8 +18,8 @@ const m = vi.hoisted(() => ({
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/launch", () => ({ redirectIfNotLaunched: async () => ({ allowed: true, preview: false }) }));
 vi.mock("@/lib/enabled-modules", async () => (await import("@/test/enabled-modules-mock")).mockEnabledModules(() => true));
-vi.mock("@/lib/admin-admins", () => ({ listStoredAdmins: async () => [] }));
-vi.mock("@/lib/admin-auth", () => ({ isAdminLogin: async () => false }));
+vi.mock("@/lib/admin-grants", () => ({ isAdminGrantee: async () => false }));
+vi.mock("@/lib/admin-auth", () => ({ isAdminPlayer: async () => false }));
 vi.mock("@/lib/require-team", () => ({ redirectIfTeamless: async () => false }));
 vi.mock("next/headers", () => ({ headers: () => new Headers() }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules: async () => [{ id: "classic", title: "Jeopardy", blurb: "b" }] }));

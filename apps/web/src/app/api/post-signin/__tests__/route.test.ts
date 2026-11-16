@@ -5,16 +5,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
 
-const { getSession, hasTeam, isAdminLogin } = vi.hoisted(() => ({
+const { getSession, hasTeam, isAdminPlayer } = vi.hoisted(() => ({
   getSession: vi.fn(),
   hasTeam: vi.fn(),
-  isAdminLogin: vi.fn(),
+  isAdminPlayer: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/team-store", () => ({ hasTeam }));
-vi.mock("@/lib/admin-auth", () => ({ isAdminLogin }));
+vi.mock("@/lib/admin-auth", () => ({ isAdminPlayer }));
 
 import { GET } from "@/app/api/post-signin/route";
 
@@ -38,9 +38,9 @@ const location = (res: Response) => {
 beforeEach(() => {
   getSession.mockReset();
   hasTeam.mockReset();
-  isAdminLogin.mockReset();
+  isAdminPlayer.mockReset();
   getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
-  isAdminLogin.mockResolvedValue(false);
+  isAdminPlayer.mockResolvedValue(false);
   hasTeam.mockResolvedValue(true);
 });
 
@@ -57,12 +57,11 @@ describe("GET /api/post-signin", () => {
     expect(url.pathname).toBe("/quiz");
   });
 
-  // The team lookup is keyed by the player id; admin-ness is still decided on
-  // the GitHub login (ADMIN_LOGINS).
-  it("asks the team store about the player id and the admin check about the login", async () => {
+  // The team lookup and the admin check are both keyed by the player id.
+  it("asks the team store about the player id and the admin check about the same id", async () => {
     await GET(req("/quiz"));
     expect(hasTeam).toHaveBeenCalledWith(ALICE_ID);
-    expect(isAdminLogin).toHaveBeenCalledWith("alice");
+    expect(isAdminPlayer).toHaveBeenCalledWith(ALICE_ID);
   });
 
   it("lands a session whose user id is not a player id at home", async () => {
@@ -74,7 +73,7 @@ describe("GET /api/post-signin", () => {
 
   it("lets a teamless admin through — checking content is not playing", async () => {
     hasTeam.mockResolvedValue(false);
-    isAdminLogin.mockResolvedValue(true);
+    isAdminPlayer.mockResolvedValue(true);
     const url = location(await GET(req("/admin")));
     expect(url.pathname).toBe("/admin");
   });

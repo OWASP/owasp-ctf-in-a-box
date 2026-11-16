@@ -21,6 +21,10 @@ const files = vi.hoisted(() => ({
   fillMissingUpload: vi.fn(),
 }));
 vi.mock("@/lib/attachments-store", () => files);
+// The roster is non-empty, so an export that read it would carry an id.
+const grantee = "00000000-0000-4000-8000-0000000000a1";
+const grants = vi.hoisted(() => ({ listAdminGrants: vi.fn(async () => ["00000000-0000-4000-8000-0000000000a1"]) }));
+vi.mock("@/lib/admin-grants", () => ({ ...grants, ADMIN_GRANTS_KEY: "ctf:admin:grants" }));
 vi.mock("@/lib/classic-store", () => ({ exportBundle: m.exportClassic, clearChallenges: vi.fn(), importBundle: vi.fn() }));
 vi.mock("@/lib/quiz-store", () => ({ exportBundle: m.exportQuiz, clearQuestions: vi.fn(), importBundle: vi.fn() }));
 // Sponsors is a PLATFORM feature, not a content module — it has no
@@ -134,6 +138,16 @@ describe("exportEventBundle", () => {
     const s = JSON.stringify(bundle);
     expect(s).not.toContain("org@example.com");
     expect(s).not.toContain('"admins"');
+  });
+
+  it("never carries the admin roster, grant generations or issued claim codes", async () => {
+    const { bundle } = await exportEventBundle(new Date("2026-06-01T00:00:00Z"));
+    const s = JSON.stringify(bundle);
+    expect(s).not.toContain("ctf:admin:grants");
+    expect(s).not.toContain("ctf:admin:code:");
+    expect(s).not.toContain("ctf:admin:grant-gen");
+    expect(s).not.toContain(grantee);
+    expect(grants.listAdminGrants).not.toHaveBeenCalled();
   });
 
   // Import clears both content stores, so the export must carry

@@ -44,6 +44,7 @@ vi.mock("next/headers", () => ({ headers: () => new Headers() }));
 // from this, not from an eventConfig mock this file never had.
 vi.mock("@/lib/bootstrap-env", () => ({
   getGithubOrg: () => "acceptance-org",
+  adminClaimCodeHash: () => "",
 }));
 // admin-panel.tsx now also reads getEnabledApps() (lib/enabled-apps.ts,
 // issue #386 PR 2) for the setup context's target list. Its own settings
@@ -54,12 +55,10 @@ vi.mock("@/lib/bootstrap-env", () => ({
 // whatever `getAdminSettings` above resolves to per test, which is exactly
 // the settings mock these fixtures already control.
 vi.mock("next/server", () => ({ connection: async () => {} }));
-// `listEnvAdmins` is read alongside `requireAdmin` (the forbidden-wall's
-// ADMIN_LOGINS-empty-or-unparseable notice, admin-panel.tsx) and must be
-// mocked alongside it, or replacing the module wholesale leaves it
-// `undefined` and the gate-false branch throws — an empty array matches the
-// real function's behavior with no ADMIN_LOGINS set.
-vi.mock("@/lib/admin-auth", () => ({ requireAdmin, listEnvAdmins: () => [] }));
+// The Forbidden wall counts grants for its "nobody claimed" notice; one
+// grant keeps that notice out of these fixtures.
+vi.mock("@/lib/admin-auth", () => ({ requireAdmin }));
+vi.mock("@/lib/admin-grants", () => ({ countAdminGrants: async () => 1 }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings, getSyncStatus }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules, getModuleSetup }));
 // admin-panel.tsx now also reads getSite() (issue #386) for the header/reset
@@ -77,6 +76,8 @@ vi.mock("@/lib/site", () => ({ getSite: async () => ({ name: "Plumbed CTF" }) })
 
 import AdminPage from "@/app/(site)/admin/page";
 
+const ADMIN_PLAYER = { id: "00000000-0000-4000-8000-0000000000a1", name: "alice", image: null, githubLogin: null };
+
 describe("admin page gate", () => {
   it("renders a forbidden view for a non-admin", async () => {
     requireAdmin.mockResolvedValue({ ok: false, status: 403 });
@@ -86,7 +87,7 @@ describe("admin page gate", () => {
   });
 
   it("renders controls for an admin", async () => {
-    requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+    requireAdmin.mockResolvedValue({ ok: true, player: ADMIN_PLAYER });
     getAdminSettings.mockResolvedValue({
       paused: false,
       hintsEnabled: null,
@@ -116,7 +117,7 @@ describe("admin page gate", () => {
   // constant, since the mocked getSite() above returns a name no fixture or
   // default shares.
   it("names the event in the header from getSite(), not the baked config", async () => {
-    requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+    requireAdmin.mockResolvedValue({ ok: true, player: ADMIN_PLAYER });
     getAdminSettings.mockResolvedValue({
       paused: false,
       hintsEnabled: null,
@@ -133,7 +134,7 @@ describe("admin page gate", () => {
   });
 
   it("resolves each module's setup block server-side and renders it in that module's panel", async () => {
-    requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+    requireAdmin.mockResolvedValue({ ok: true, player: ADMIN_PLAYER });
     getAdminSettings.mockResolvedValue({
       paused: false,
       hintsEnabled: null,
@@ -161,7 +162,7 @@ describe("admin page gate", () => {
   // always lit is one organizers stop seeing, which would defeat the whole
   // point of putting it beside Ingested.
   it("shows a quiet Dropped counter and no last-drop line when nothing was dropped", async () => {
-    requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+    requireAdmin.mockResolvedValue({ ok: true, player: ADMIN_PLAYER });
     getAdminSettings.mockResolvedValue({
       paused: false, hintsEnabled: null, hintCost: null,
       updatedBy: null, updatedAt: null, moduleOverrides: {}, eventIdentity: {},
@@ -179,7 +180,7 @@ describe("admin page gate", () => {
   });
 
   it("surfaces the drop count and what was dropped when the poller lost a score", async () => {
-    requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+    requireAdmin.mockResolvedValue({ ok: true, player: ADMIN_PLAYER });
     getAdminSettings.mockResolvedValue({
       paused: false, hintsEnabled: null, hintCost: null,
       updatedBy: null, updatedAt: null, moduleOverrides: {}, eventIdentity: {},
@@ -199,7 +200,7 @@ describe("admin page gate", () => {
   });
 
   it("shows 'sync not running' when there is no sync status yet", async () => {
-    requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+    requireAdmin.mockResolvedValue({ ok: true, player: ADMIN_PLAYER });
     getAdminSettings.mockResolvedValue({
       paused: false,
       hintsEnabled: null,
@@ -215,7 +216,7 @@ describe("admin page gate", () => {
   });
 
   it("degrades gracefully instead of 500ing when the settings read fails", async () => {
-    requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+    requireAdmin.mockResolvedValue({ ok: true, player: ADMIN_PLAYER });
     getAdminSettings.mockRejectedValue(new Error("redis down"));
     getSyncStatus.mockResolvedValue(null);
     const ui = await AdminPage({ searchParams: Promise.resolve({}) });
@@ -238,7 +239,7 @@ describe("?tab= deep link", () => {
   };
 
   async function render(searchParams: Record<string, string | string[] | undefined>) {
-    requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+    requireAdmin.mockResolvedValue({ ok: true, player: ADMIN_PLAYER });
     getAdminSettings.mockResolvedValue(settings);
     getSyncStatus.mockResolvedValue(null);
     getResolvedModules.mockResolvedValue([

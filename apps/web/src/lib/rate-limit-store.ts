@@ -22,7 +22,9 @@ import { upstashEval } from "@/lib/upstash";
  * These bound abuse of routes that have their own correctness gates
  * underneath (`joinTeam` validates the code; `revealHint` charges atomically
  * and is idempotent), so a Redis blip must not stop contestants playing. Same
- * fail-open reasoning the freeze reads use — see AGENTS.md.
+ * fail-open reasoning the freeze reads use — see AGENTS.md. The one exception
+ * is opt-in per call (`failClosed`): the admin claim, where the budget is the
+ * guess bound itself.
  */
 
 type RateLimitVerdict =
@@ -54,28 +56,38 @@ if n > tonumber(ARGV[1]) then
 end
 return {1, 0}`;
 
+/** What a fail-closed budget answers when it cannot read its counter. */
+const FAIL_CLOSED_RETRY_SECONDS = 60;
+
 /**
  * Charge one request against `login`'s budget for `bucket`.
  *
  * @param limit   requests allowed per window
  * @param windowSeconds  window length
+ * @param opts.failClosed  refuse (Retry-After 60) instead of allowing when the
+ *   counter cannot be read. For a budget whose only job is bounding guesses at
+ *   a secret, where an unmetered attempt is the failure.
  */
 export async function consumeRateLimit(
   bucket: string,
   login: string,
   limit: number,
   windowSeconds: number,
+  opts: { failClosed?: boolean } = {},
 ): Promise<RateLimitVerdict> {
+  const unreadable = (): RateLimitVerdict =>
+    opts.failClosed ? { allowed: false, retryAfterSeconds: FAIL_CLOSED_RETRY_SECONDS } : { allowed: true };
   try {
     const raw = await upstashEval(CONSUME_SCRIPT, [rateKey(bucket, login)], [limit, windowSeconds]);
-    const [allowed, ttl] = Array.isArray(raw) ? (raw as [number, number]) : [1, 0];
+    if (!Array.isArray(raw)) return unreadable();
+    const [allowed, ttl] = raw as [number, number];
     if (allowed === 1) return { allowed: true };
     // Clamp to 1: `Retry-After: 0` reads as "retry now", which is the one
     // thing this response is saying not to do.
     return { allowed: false, retryAfterSeconds: Math.max(1, Number(ttl)) };
   } catch (err) {
-    console.error(`[rate-limit] ${bucket} charge failed, allowing: ${errorLabel(err)}`);
-    return { allowed: true };
+    console.error(`[rate-limit] ${bucket} charge failed, ${opts.failClosed ? "refusing" : "allowing"}: ${errorLabel(err)}`);
+    return unreadable();
   }
 }
 
@@ -91,6 +103,12 @@ export const RATE_LIMITS = {
    *  human pace: a contestant clicking through every hint on a page must
    *  never hit it. */
   hintReveal: { bucket: "hint-reveal", limit: 30, windowSeconds: 60 },
+  /** Admin claim attempts (`/api/me/admin/claim`), keyed on the player id and
+   *  charged FAIL CLOSED. A code is 128 bits, so this is not what makes
+   *  guessing infeasible; it stops a script trying. There is deliberately no
+   *  global bucket: anyone could spend it and lock the organizer out of the
+   *  recovery claim. */
+  adminClaim: { bucket: "admin-claim", limit: 5, windowSeconds: 900 },
 } as const;
 
 /** Every rate-limit counter `player` can hold, one per budget above. The

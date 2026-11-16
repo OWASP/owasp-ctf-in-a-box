@@ -116,10 +116,10 @@ describe("GET /api/board/items pre-launch lock (#464)", () => {
     expect(mocks.listQuestions).not.toHaveBeenCalled();
   });
 
-  it("asks the lock about the caller's session login, so an admin preview works", async () => {
+  it("asks the lock about the caller session player id, so an admin preview works", async () => {
     mocks.getSession.mockResolvedValue({ user: { id: "3e2b7c6f-4a5d-4f8e-b192-adbecf203152", login: "organizer" } });
     await GET(req("alice"));
-    expect(mocks.requireLaunchedApi).toHaveBeenCalledWith("organizer");
+    expect(mocks.requireLaunchedApi).toHaveBeenCalledWith("3e2b7c6f-4a5d-4f8e-b192-adbecf203152");
   });
 
   it("treats a failed session read as signed out, not as an error", async () => {

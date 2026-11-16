@@ -30,7 +30,7 @@ export async function GET(request: Request) {
   // The pre-launch lock comes before any store read: an admin passes as a
   // preview, everyone else gets the same 403 `not-launched` the other module
   // routes give.
-  const refused = await requireLaunchedApi(player.githubLogin ?? undefined);
+  const refused = await requireLaunchedApi(player.id);
   if (refused) return refused;
 
   const hints = await getViewerHints(playerId);

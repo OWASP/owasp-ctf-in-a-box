@@ -4,7 +4,7 @@
 # longer takes an EVENT_CONFIG_B64 build arg at all — everything that used to
 # be baked (the admin allowlist, the GitHub fork org, the event's name, which
 # Secure Development targets run) is now read at request time, from `.env`
-# (ADMIN_LOGINS, GITHUB_ORG) or from /admin settings in Redis (name, targets).
+# (ADMIN_CLAIM_CODE_HASH, GITHUB_ORG) or from /admin settings in Redis (name, targets).
 # So a single image is built ONCE, and every scenario below is a different
 # runtime `docker run -e ...` against that same image, not a different build.
 #
@@ -60,7 +60,7 @@ docker build -f apps/web/Dockerfile -t ctf-web:acceptance \
 docker run -d --name web-acceptance -p 3100:3000 \
   -e BETTER_AUTH_SECRET=acceptance-app-secret-32-characters-min -e BETTER_AUTH_URL=http://localhost:3100 \
   -e SCORE_IMAGE=ghcr.io/example/score:acceptance \
-  -e GITHUB_ORG=acceptance-org -e ADMIN_LOGINS=acceptance-admin ctf-web:acceptance
+  -e GITHUB_ORG=acceptance-org -e ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9 ctf-web:acceptance
 
 HOME_HTML=$(wait_for_html http://localhost:3100/)
 
@@ -98,7 +98,7 @@ AA_REDIS_ENV="-e UPSTASH_REDIS_REST_URL=http://srh:80 -e UPSTASH_REDIS_REST_TOKE
 docker run -d --name web-launched --network aa-net -p 3103:3000 $AA_REDIS_ENV \
   -e BETTER_AUTH_SECRET=acceptance-app-secret-32-characters-min -e BETTER_AUTH_URL=http://localhost:3103 \
   -e SCORE_IMAGE=ghcr.io/example/score:acceptance \
-  -e GITHUB_ORG=acceptance-org -e ADMIN_LOGINS=acceptance-admin ctf-web:acceptance >/dev/null
+  -e GITHUB_ORG=acceptance-org -e ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9 ctf-web:acceptance >/dev/null
 CHALLENGES_HTML=$(wait_for_html http://localhost:3103/challenges)
 
 # A bare `grep -q` under `set -e` fails with no message at all; every positive
@@ -109,6 +109,13 @@ CHALLENGES_HTML=$(wait_for_html http://localhost:3103/challenges)
 expect_in() { # haystack needle what
   if ! grep -qF -- "$2" <<< "$1"; then echo "FAIL: $3 (missing: $2)"; exit 1; fi
 }
+
+echo "--- /admin/claim renders its signed-out state, not the error boundary"
+# A static segment beside /admin/[tab]: a routing slip would open the panel's
+# Forbidden wall here instead, and a render error would show the boundary.
+CLAIM_HTML=$(wait_for_html http://localhost:3103/admin/claim)
+expect_in "$CLAIM_HTML" "Sign in first" "/admin/claim did not render its signed-out state"
+if grep -qF "Forbidden" <<< "$CLAIM_HTML"; then echo "FAIL: /admin/claim rendered the Forbidden wall"; exit 1; fi
 
 echo "--- identity fails open to the default name (no Redis behind this run)"
 # Identity fails OPEN to the spec default when there is no Redis to read

@@ -74,8 +74,8 @@ describe("GET /api/hints before launch", () => {
     expect(m.storeReads).toBe(0);
   });
 
-  it("asks the lock about the viewer's GitHub login, the admin identity", async () => {
+  it("asks the lock about the viewer player id, the admin identity", async () => {
     await GET(req());
-    expect(m.requireLaunchedApi).toHaveBeenCalledExactlyOnceWith("alice");
+    expect(m.requireLaunchedApi).toHaveBeenCalledExactlyOnceWith(ALICE_ID);
   });
 });

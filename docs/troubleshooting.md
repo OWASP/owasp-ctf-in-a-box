@@ -50,39 +50,49 @@ from before the kit required it is the common case), or run
 interpolation failure inside a script that pipes compose's stderr to
 `/dev/null` looks like an empty service list, not an error.
 
-## `/admin` 403s for everyone, including you
+## `/admin` says Forbidden for everyone, including you
 
-**Symptom.** Nobody — including you — can open `/admin`; every listed admin
-gets the 403 wall.
+**Symptom.** Nobody — including you — can open `/admin`; every account gets
+the Forbidden page.
 
-**Diagnosis.** `ADMIN_LOGINS` is empty or unset in `.env`, or it is set but
-the app was not restarted after you changed it. Since #386 part 4 the app no
-longer bakes an admins list at build time — it reads the comma-separated
-`ADMIN_LOGINS` env var at runtime, and an empty set (unset, blank, or every
-entry failing the GitHub-login shape check) refuses every login, including
-one that used to work. (The event's name and the rest of its branding, the
-fork org, and which Secure Development targets run are separate runtime
-settings — the name and targets default to "OWASP CTF in a Box" / all six
-either way, so a stock-looking name or a full target list is not a symptom of this
-problem on its own.)
+**Diagnosis.** An admin is a kit account that claimed an admin claim code at
+`/admin/claim`
+([ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)).
+The Forbidden page names which case you are in:
 
-**Fix.** Set `ADMIN_LOGINS` in `.env` to a comma-separated list of GitHub
-logins (case doesn't matter — the admin allowlist matches logins
-case-insensitively), then restart the app container — no rebuild needed, since this is
-a runtime read, not a build arg:
+- **"No organizer has claimed this box yet."** Nobody has claimed. Sign in,
+  open `/admin/claim` and enter the code whose hash is in `.env`. Until
+  setup, Fly and AWS generate the code, make one by hand (**Fix**, below).
+- **"ADMIN_CLAIM_CODE_HASH is not set or is not a SHA-256"** as well. The app
+  has no usable hash, so nobody can claim with a bootstrap code. A code an
+  admin issued would still work, but with nobody claimed there is none. The
+  key is missing from `.env`, the app container was not recreated after it
+  was set (`docker compose restart` keeps the old environment), or the value
+  is the code itself pasted where its hash belongs (64 lowercase hex is a hash; eight groups of
+  four is a code). Compose must also pass `ADMIN_CLAIM_CODE_HASH` through to
+  the app service's environment — `docker-compose.yml` does, but a customized
+  override file that dropped it reproduces this symptom.
+- **No notice.** Admins exist, and you are not one of them. Ask an admin to
+  issue you a code from the Admins tab. If no admin can sign in any more,
+  rotate the bootstrap code (below): it works whether or not admins exist.
+
+`ADMIN_LOGINS` is not read by anything; a line left in `.env` grants nothing.
+
+**Fix.** Write a new code's hash to `.env` and recreate the app container — no
+rebuild, since this is a runtime read, but not a plain `docker compose restart`
+either, which keeps the old environment:
 
 ```sh
-docker compose --profile secdev --profile app up -d
+c=$(openssl rand -hex 16); echo "$c"; printf %s "$c" | openssl dgst -sha256
+# put the 64-hex digest in .env as ADMIN_CLAIM_CODE_HASH=…, then:
+docker compose up -d --no-deps --force-recreate app
 ```
 
-(Quiz- or classic-only events: `--profile app` alone.) Compose must also be
-passing `ADMIN_LOGINS` through to the app service's environment — it is on
-recent `docker-compose.yml`, but a customized override file that dropped it
-would reproduce this exact symptom.
-
-**On AWS** the list is the `admin_logins` Terraform variable, not `.env`.
-Set it in `terraform.tfvars` and run `terraform apply`, which rolls out a new
-app task definition. An empty value is refused at plan time.
+Then claim at `/admin/claim` with the 32-hex code the first line printed;
+hyphens and case do not matter. A code wrongly entered five times locks that
+account's claims for 15 minutes. These are the Docker Compose steps. The Fly
+and AWS deploys do not pass `ADMIN_CLAIM_CODE_HASH` to the app yet (#738), so
+a box deployed there cannot claim its first admin until they do.
 
 ## Only the landing page loads (module pages redirect to `/`)
 

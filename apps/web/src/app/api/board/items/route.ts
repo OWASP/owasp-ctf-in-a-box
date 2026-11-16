@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   // module content. The session is optional here (the board is public once
   // launched); it is read only so an admin's preview board still loads.
   const viewer = await getPlayer(request.headers).catch(() => null);
-  const notLaunched = await requireLaunchedApi(viewer?.githubLogin ?? undefined);
+  const notLaunched = await requireLaunchedApi(viewer?.id);
   if (notLaunched) return notLaunched;
 
   const raw = new URL(request.url).searchParams.get("players") ?? "";

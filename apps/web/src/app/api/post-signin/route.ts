@@ -6,7 +6,7 @@
 // A GET that only ever 302s: it writes nothing, so a prefetch or a link
 // preview hitting it can at worst follow a redirect.
 import { getPlayer } from "@/lib/player";
-import { isAdminLogin } from "@/lib/admin-auth";
+import { isAdminPlayer } from "@/lib/admin-auth";
 import { hasTeam } from "@/lib/team-store";
 import { resolvePostSigninTarget, sanitizeNext } from "@/lib/post-signin";
 
@@ -34,9 +34,9 @@ export async function GET(request: Request) {
 
   // hasTeam fails OPEN on a store error (team-store.ts), so a Redis blip
   // sends people to their destination rather than herding everyone to the
-  // team card; isAdminLogin returns false on error, which only means an
-  // organizer sees the team card once — annoying, not wrong.
-  const [isAdmin, teamed] = await Promise.all([isAdminLogin(player.githubLogin ?? undefined), hasTeam(player.id)]);
+  // team card; a failed admin check counts as not an admin, which only means
+  // an organizer sees the team card once — annoying, not wrong.
+  const [isAdmin, teamed] = await Promise.all([isAdminPlayer(player.id).catch(() => false), hasTeam(player.id)]);
   const target = resolvePostSigninTarget({ next, isAdmin, teamless: !teamed });
   return redirect(target);
 }

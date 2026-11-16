@@ -38,10 +38,10 @@ services:
       # issue #386): a runtime read, not a build arg, so it must be passed
       # through here or setting it in .env does nothing.
       GITHUB_ORG: ${GITHUB_ORG:-}
-      # The /admin allowlist, comma-separated logins (config v2, issue #386):
-      # a runtime read too. Empty or unset refuses every login at /admin —
-      # see apps/web/src/lib/bootstrap-env.ts.
-      ADMIN_LOGINS: ${ADMIN_LOGINS:-}
+      # The SHA-256 of the one-time admin claim code (ADR 72), never the code
+      # itself. Empty means nobody can claim the first admin seat at
+      # /admin/claim — see apps/web/src/lib/bootstrap-env.ts.
+      ADMIN_CLAIM_CODE_HASH: ${ADMIN_CLAIM_CODE_HASH:-}
       # Runtime flag, not a build arg: non-empty means this deployment runs
       # Secure Development (the scorer and sync containers exist), and that is
       # the ONLY module enabled before an organizer switches others on in

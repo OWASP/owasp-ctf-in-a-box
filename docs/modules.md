@@ -32,7 +32,7 @@ module that actually exercises the GitHub-mediated scoring contract (§2–3,
 §6–8) that `quiz` and `classic` deliberately bypass.
 
 There is no event configuration file. The platform's own bootstrap facts
-(`GITHUB_ORG`, `ADMIN_LOGINS`, `SCORE_IMAGE`, `EVENT_URL`) live in `.env`, and
+(`GITHUB_ORG`, `ADMIN_CLAIM_CODE_HASH`, `SCORE_IMAGE`, `EVENT_URL`) live in `.env`, and
 everything an organizer changes — which modules run, what a module's content
 is, hints, teams — lives in the `ctf:admin:settings` hash behind `/admin`
 ([ADR 55](decisions.md#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml)).
@@ -733,7 +733,7 @@ of one module's shape.
      A module that hands out any credential for an external site mints it
      behind the page guard, so before launch no contestant can hold one.
 
-   Admins (`isAdminLogin`: `ADMIN_LOGINS` plus stored admins) pass as a
+   Admins (`isAdminPlayer`: the player id holds a grant) pass as a
    **preview** — `getLaunchAccess` returns `{ allowed: true, preview: true }`
    — so an organizer can check the board before kickoff. A grading route asks
    `launchApiAccess`, which also returns `preview`, and passes it on as

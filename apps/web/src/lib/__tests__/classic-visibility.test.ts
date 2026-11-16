@@ -16,7 +16,7 @@ const m = vi.hoisted(() => ({
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/enabled-modules", () => ({ isModuleLive: async () => m.live }));
 vi.mock("@/lib/launch", () => ({ getLaunchAccess: async () => m.access }));
-vi.mock("@/lib/admin-auth", () => ({ isAdminLogin: async (l?: string) => !!l && m.admins.has(l) }));
+vi.mock("@/lib/admin-auth", () => ({ isAdminPlayer: async (l?: string) => !!l && m.admins.has(l) }));
 vi.mock("@/lib/team-store", () => ({ hasTeam: async (l: string) => m.teamed.has(l) }));
 vi.mock("@/lib/classic-store", () => ({
   listChallenges: async () => m.challenges,
@@ -26,10 +26,8 @@ vi.mock("@/lib/classic-team", () => ({ getTeamClassicSolvedIds: async () => m.so
 
 import { adminSeesHidden, classicVisibility } from "@/lib/classic-visibility";
 
-// The id keys the team and solves, the login decides admin-ness: distinct
-// values, so a store asked with the login (or the admin check asked with the
-// id) shows up as a wrong answer.
-const as = (login: string) => ({ id: `${login}-id`, githubLogin: login });
+// The player id keys the team, the solves and the admin check.
+const as = (name: string) => ({ id: `${name}-id` });
 
 beforeEach(() => {
   m.live = true;
@@ -67,7 +65,7 @@ describe("classicVisibility", () => {
   });
 
   it("lets a teamless admin through, and an admin preview skips the story lock", async () => {
-    m.admins = new Set(["boss"]);
+    m.admins = new Set(["boss-id"]);
     expect((await classicVisibility(as("boss"), "one")).state).toBe("visible");
     m.access = { allowed: true, preview: true };
     m.stories = [{ id: "op", title: "Op", intro: "", steps: ["one", "two"] }];
@@ -85,7 +83,7 @@ describe("classicVisibility and hidden challenges", () => {
   });
 
   it("opens it to an admin after launch, marked with why contestants cannot see it", async () => {
-    m.admins = new Set(["boss"]);
+    m.admins = new Set(["boss-id"]);
     m.challenges = [{ id: "one", enabled: false }];
     expect(await classicVisibility(as("boss"), "one")).toEqual({ state: "visible", preview: false, hidden: { kind: "disabled" } });
     const releaseAt = new Date(Date.now() + 3_600_000).toISOString();
@@ -97,7 +95,7 @@ describe("classicVisibility and hidden challenges", () => {
   });
 
   it("lets an admin preview open a disabled challenge", async () => {
-    m.admins = new Set(["boss"]);
+    m.admins = new Set(["boss-id"]);
     m.access = { allowed: true, preview: true };
     m.challenges = [{ id: "one", enabled: false }];
     expect(await classicVisibility(as("boss"), "one")).toEqual({ state: "visible", preview: true, hidden: { kind: "disabled" } });
@@ -122,11 +120,11 @@ describe("classicVisibility and hidden challenges", () => {
 
 describe("adminSeesHidden", () => {
   it("is true only for an admin and a challenge that exists and is hidden now", async () => {
-    m.admins = new Set(["boss"]);
+    m.admins = new Set(["boss-id"]);
     m.challenges = [{ id: "off", enabled: false }, { id: "on" }];
-    expect(await adminSeesHidden("boss", "off")).toBe(true);
-    expect(await adminSeesHidden("boss", "on")).toBe(false);
-    expect(await adminSeesHidden("boss", "nope")).toBe(false);
+    expect(await adminSeesHidden("boss-id", "off")).toBe(true);
+    expect(await adminSeesHidden("boss-id", "on")).toBe(false);
+    expect(await adminSeesHidden("boss-id", "nope")).toBe(false);
     expect(await adminSeesHidden("alice", "off")).toBe(false);
   });
 });

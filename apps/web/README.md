@@ -28,7 +28,7 @@ Module enablement lives entirely in `/admin`'s Event tab; organizers switch modu
 - **Profile** (`/profile`) — requires sign-in; per-module progress plus the team card.
 - **Teams** — join by code, create, or leave. Default cap **4 players per team** (`TEAM_MAX_MEMBERS` in `src/lib/team-limits.ts`), changeable from `/admin` (1–100, ADR 45); joins are enforced in one atomic Lua `EVAL`, so the cap cannot be raced. One team per player.
 - **Paid hints** — reveal costs **10 points** by default (`HINT_COST` in `src/lib/hint-defaults.ts`), set from `/admin`. Charging is idempotent inside one `EVAL`, keyed by the session login; the scorer's totals are never decremented — the penalty is an overlay (`withHintPenalties`, floored at 0). Hints are on by default and toggled from `/admin`; there is no env var for either.
-- **Admin panel** (`/admin`) — module switches, freeze and scheduled scoring window, team cap, hint policy, activity log, insights, event export/import. Admins come from `ADMIN_LOGINS` in `.env`, read at container start (restart, not rebuild, to change).
+- **Admin panel** (`/admin`) — module switches, freeze and scheduled scoring window, team cap, hint policy, activity log, insights, event export/import. An admin is a kit account that claimed an admin claim code at `/admin/claim`; the first code's hash is `ADMIN_CLAIM_CODE_HASH` in `.env`, and admins issue more from the Admins tab.
 
 ## Tech stack
 

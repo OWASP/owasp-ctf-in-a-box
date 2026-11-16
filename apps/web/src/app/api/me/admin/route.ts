@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
 import { getPlayer } from "@/lib/player";
-import { isAdminLogin } from "@/lib/admin-auth";
+import { isAdminPlayer } from "@/lib/admin-auth";
 
 /**
  * "Is the CURRENT session an admin?" — one boolean, for menu visibility.
  *
- * The header's admin link is rendered by a Client Component, which can read
- * neither Redis nor `ADMIN_LOGINS` (server-only, config v2) — so this route
- * is the only way it learns admin status at all, for env admins and runtime
- * grants alike (issue #147).
+ * The header's admin link is rendered by a Client Component, which cannot read
+ * Redis, so this route is the only way it learns admin status at all.
  *
  * This route discloses NOTHING but the caller's own status: no list, no other
  * logins, and it is not gated on being an admin — a non-admin gets `false`,
@@ -22,7 +20,7 @@ import { isAdminLogin } from "@/lib/admin-auth";
 export async function GET(request: Request) {
   try {
     const player = await getPlayer(request.headers);
-    return NextResponse.json({ admin: await isAdminLogin(player?.githubLogin ?? undefined) });
+    return NextResponse.json({ admin: await isAdminPlayer(player?.id) });
   } catch {
     // Fail closed, quietly. A datastore blip hides a menu item; it must never
     // reveal one, and it must not surface as an error toast on every page.

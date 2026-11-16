@@ -1,223 +1,185 @@
-// Route-level tests for runtime admin management (issue #147). Auth and the
-// store are mocked — no Upstash and no GitHub session needed.
+// Route-level tests for the admin roster. Auth, the grant reads, the revoke
+// script and the profile read are mocked; the script itself is pinned by
+// admin-claim.upstash.test.ts.
 //
-// The assertions that matter here are the refusals, not the happy path: this
-// route is the only way to grant admin, and the one guard it must never lose
-// is that a BAKED admin cannot be removed through it.
+// The assertions that matter are the refusals: non-admins get nothing, and
+// the last grant cannot be revoked through here.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { requireAdmin, isEnvAdmin, listEnvAdmins, listStoredAdmins, addStoredAdmin, removeStoredAdmin } = vi.hoisted(
-  () => ({
-    requireAdmin: vi.fn(),
-    isEnvAdmin: vi.fn(),
-    listEnvAdmins: vi.fn(),
-    listStoredAdmins: vi.fn(),
-    addStoredAdmin: vi.fn(),
-    removeStoredAdmin: vi.fn(),
-  }),
-);
-
-vi.mock("server-only", () => ({}));
-vi.mock("@/lib/admin-auth", () => ({ requireAdmin, isEnvAdmin, listEnvAdmins }));
-vi.mock("@/lib/admin-store", async (orig) => ({
-  ...(await orig<typeof import("@/lib/admin-store")>()),
-  listStoredAdmins,
-  addStoredAdmin,
-  removeStoredAdmin,
+const m = vi.hoisted(() => ({
+  requireAdmin: vi.fn(),
+  listAdminGrants: vi.fn(),
+  revokeAdmin: vi.fn(),
+  getPlayerProfiles: vi.fn(),
 }));
 
-import { DELETE, GET, POST } from "@/app/api/admin/admins/route";
-import { AdminValidationError, adminErrorLabel } from "@/lib/admin-store";
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/admin-auth", () => ({ requireAdmin: m.requireAdmin }));
+vi.mock("@/lib/admin-grants", () => ({ listAdminGrants: m.listAdminGrants }));
+vi.mock("@/lib/admin-claim", async (orig) => ({
+  ...(await orig<typeof import("@/lib/admin-claim")>()),
+  revokeAdmin: m.revokeAdmin,
+}));
+// The real label: the redaction tests below compare against it.
+vi.mock("@/lib/admin-store", async () => ({ adminErrorLabel: (await import("@/lib/error-label")).errorLabel }));
+vi.mock("@/lib/player", async (orig) => ({
+  ...(await orig<typeof import("@/lib/player")>()),
+  getPlayerProfiles: m.getPlayerProfiles,
+}));
+
+import * as route from "@/app/api/admin/admins/route";
+import { LAST_ADMIN } from "@/lib/admin-claim-copy";
+import { NotAdminError } from "@/lib/admin-claim";
+import { errorLabel } from "@/lib/error-label";
 import { actor } from "@/lib/__tests__/audit-actor";
 
-const req = (body?: unknown) =>
+const { DELETE, GET } = route;
+const alice = actor("alice");
+const bob = actor("bob");
+const ghost = actor("ghost");
+
+const req = (method: string, body?: unknown) =>
   new Request("http://x/api/admin/admins", {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body),
   });
+
+const profile = (a: { id: string; name: string }) => [a.id, { ...a, image: null, githubLogin: null }] as const;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
-  isEnvAdmin.mockReturnValue(false);
-  listEnvAdmins.mockReturnValue(["alice"]);
-  listStoredAdmins.mockResolvedValue(["carol"]);
-  addStoredAdmin.mockResolvedValue(["carol", "dave"]);
-  removeStoredAdmin.mockResolvedValue([]);
+  m.requireAdmin.mockResolvedValue({ ok: true, player: { ...alice, image: null, githubLogin: null } });
+  m.listAdminGrants.mockResolvedValue([alice.id, bob.id, ghost.id]);
+  m.getPlayerProfiles.mockImplementation(async (ids: string[]) => {
+    const known = new Map([profile(alice), profile(bob)]);
+    return new Map(ids.filter((id) => known.has(id)).map((id) => [id, known.get(id)!]));
+  });
+  m.revokeAdmin.mockResolvedValue({ ok: true, grants: [alice.id] });
 });
 
 describe("gating", () => {
-  it("every method refuses a non-admin with the gate's own status", async () => {
-    requireAdmin.mockResolvedValue({ ok: false, status: 403 });
-    for (const call of [GET(req()), POST(req({ login: "dave" })), DELETE(req({ login: "carol" }))]) {
-      expect((await call).status).toBe(403);
-    }
-    // Nothing may be read or written on the way to the refusal.
-    expect(addStoredAdmin).not.toHaveBeenCalled();
-    expect(removeStoredAdmin).not.toHaveBeenCalled();
+  it("refuses a non-admin on GET and DELETE, reading and writing nothing", async () => {
+    m.requireAdmin.mockResolvedValue({ ok: false, status: 403 });
+    expect((await GET(req("GET"))).status).toBe(403);
+    expect((await DELETE(req("DELETE", { id: bob.id }))).status).toBe(403);
+    expect(m.listAdminGrants).not.toHaveBeenCalled();
+    expect(m.revokeAdmin).not.toHaveBeenCalled();
   });
 
-  it("passes 401 through when there is no session at all", async () => {
-    requireAdmin.mockResolvedValue({ ok: false, status: 401 });
-    expect((await GET(req())).status).toBe(401);
+  it("has no POST: the only way in is a claim code", () => {
+    expect("POST" in route).toBe(false);
   });
 });
 
 describe("GET", () => {
-  it("marks baked admins so the panel can refuse to remove them", async () => {
-    const body = await (await GET(req())).json();
-    expect(body.admins).toEqual([
-      { login: "alice", baked: true },
-      { login: "carol", baked: false },
-    ]);
-  });
-
-  it("reports a login that is both baked and stored exactly once, as baked", async () => {
-    // Happens when someone is granted at runtime and later added to
-    // ADMIN_LOGINS. `baked` is what decides removability, so it must win.
-    listStoredAdmins.mockResolvedValue(["alice", "carol"]);
-    const body = await (await GET(req())).json();
-    expect(body.admins.filter((a: { login: string }) => a.login === "alice")).toEqual([
-      { login: "alice", baked: true },
-    ]);
-  });
-
-  // This route used to log the raw caught `err`. Node's console.error prints
-  // an Error's own enumerable properties too, so a decorated error (a
-  // wrapped Redis/HTTP error carrying a token, a URL with credentials, etc.)
-  // would leak them straight into the server log. adminErrorLabel(err)
-  // reduces it to "<name>: <message>" — prove it, and prove the raw error
-  // object / its decorated props never reach console.error.
-  //
-  // NOTE the assertion shape: `String(someError)` ALSO collapses to
-  // "Error: <message>" and drops the decorated fields on its own, so
-  // `.map(String)` would prove nothing here — the real proof is that every
-  // argument after the fixed prefix is itself a `string` (the raw `err` is
-  // an `Error` instance, so passing it directly fails this check regardless
-  // of how it later stringifies) and that it equals adminErrorLabel(err)'s
-  // own output exactly.
-  it("redacts a decorated list failure before logging it — never the raw err", async () => {
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const decorated = Object.assign(new Error("upstash down"), {
-      token: "SECRET-TOKEN",
-      url: "https://leaky.example/creds",
+  it("maps ids to names, marks the viewer, and names an id with no profile", async () => {
+    const res = await GET(req("GET"));
+    expect(await res.json()).toEqual({
+      admins: [
+        { id: alice.id, name: "alice", self: true },
+        { id: bob.id, name: "bob", self: false },
+        { id: ghost.id, name: "(deleted account)", self: false },
+      ],
     });
-    listStoredAdmins.mockRejectedValue(decorated);
-    const res = await GET(req());
-    expect(res.status).toBe(503);
-    expect(spy).toHaveBeenCalledTimes(1);
-    const [prefix, ...rest] = spy.mock.calls[0];
-    expect(prefix).toBe("[admin/admins] list failed");
-    for (const arg of rest) expect(typeof arg).toBe("string");
-    expect(rest).toEqual([adminErrorLabel(decorated)]);
-    for (const arg of rest) {
-      expect(arg).not.toContain("SECRET-TOKEN");
-      expect(arg).not.toContain("leaky.example");
-    }
-    spy.mockRestore();
-  });
-});
-
-describe("POST", () => {
-  it("grants and records the acting admin", async () => {
-    const res = await POST(req({ login: "dave" }));
-    expect(res.status).toBe(200);
-    expect(addStoredAdmin).toHaveBeenCalledWith("dave", actor("alice"));
   });
 
-  it("400s a non-string login without touching the store", async () => {
-    expect((await POST(req({ login: 42 }))).status).toBe(400);
-    expect(addStoredAdmin).not.toHaveBeenCalled();
-  });
-
-  it("surfaces a validation error as 400, not 500", async () => {
-    addStoredAdmin.mockRejectedValue(new AdminValidationError("login", "'not a login' is not a GitHub login"));
-    const res = await POST(req({ login: "not a login" }));
-    expect(res.status).toBe(400);
-    expect((await res.json()).error).toContain("not a GitHub login");
-  });
-
-  it("503s when the store is unreachable", async () => {
-    addStoredAdmin.mockRejectedValue(new Error("redis down"));
-    expect((await POST(req({ login: "dave" }))).status).toBe(503);
-  });
-
-  // Same redaction guard as GET, for the add path's own console.error site.
-  it("redacts a decorated add failure before logging it — never the raw err", async () => {
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const decorated = Object.assign(new Error("upstash down"), {
-      token: "SECRET-TOKEN",
-      url: "https://leaky.example/creds",
-    });
-    addStoredAdmin.mockRejectedValue(decorated);
-    const res = await POST(req({ login: "dave" }));
-    expect(res.status).toBe(503);
-    expect(spy).toHaveBeenCalledTimes(1);
-    const [prefix, ...rest] = spy.mock.calls[0];
-    expect(prefix).toBe("[admin/admins] add failed");
-    for (const arg of rest) expect(typeof arg).toBe("string");
-    expect(rest).toEqual([adminErrorLabel(decorated)]);
-    for (const arg of rest) {
-      expect(arg).not.toContain("SECRET-TOKEN");
-      expect(arg).not.toContain("leaky.example");
-    }
-    spy.mockRestore();
+  it("503s when the roster cannot be read", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    m.listAdminGrants.mockRejectedValue(new Error("redis down"));
+    expect((await GET(req("GET"))).status).toBe(503);
+    err.mockRestore();
   });
 });
 
 describe("DELETE", () => {
-  it("revokes a runtime grant", async () => {
-    const res = await DELETE(req({ login: "carol" }));
+  it("revokes by id with the profile name as the audit target", async () => {
+    const res = await DELETE(req("DELETE", { id: bob.id }));
     expect(res.status).toBe(200);
-    expect(removeStoredAdmin).toHaveBeenCalledWith("carol", actor("alice"));
+    expect(m.revokeAdmin).toHaveBeenCalledWith({ id: bob.id, name: "bob" }, { id: alice.id, name: "alice" });
+    expect(await res.json()).toEqual({ admins: [{ id: alice.id, name: "alice", self: true }] });
   });
 
-  // THE LOCKOUT GUARD. A baked admin is the recovery path when a runtime grant
-  // goes wrong; if this could remove one, a mistake — or a compromised admin
-  // session — could lock every organizer out of /admin with no way back but a
-  // restart.
-  it("refuses to remove a BAKED admin, and does not touch the store", async () => {
-    isEnvAdmin.mockReturnValue(true);
-    const res = await DELETE(req({ login: "alice" }));
+  it("409s the last admin with the copy that says what to do", async () => {
+    m.revokeAdmin.mockResolvedValue({ ok: false, reason: "last-admin" });
+    const res = await DELETE(req("DELETE", { id: alice.id }));
     expect(res.status).toBe(409);
-    expect((await res.json()).error).toContain("ADMIN_LOGINS");
-    expect(removeStoredAdmin).not.toHaveBeenCalled();
+    expect(await res.json()).toEqual({ error: LAST_ADMIN });
   });
 
-  it("allows removing yourself, since a baked admin always remains", async () => {
-    requireAdmin.mockResolvedValue({ ok: true, login: "carol", player: { ...actor("carol"), image: null, githubLogin: "carol" } });
-    const res = await DELETE(req({ login: "carol" }));
-    expect(res.status).toBe(200);
-    expect(removeStoredAdmin).toHaveBeenCalledWith("carol", actor("carol"));
-  });
-
-  it("400s a non-string login without touching the store", async () => {
-    expect((await DELETE(req({ login: null }))).status).toBe(400);
-    expect(removeStoredAdmin).not.toHaveBeenCalled();
-  });
-
-  // Same redaction guard as GET/POST, for the remove path's own
-  // console.error site.
-  it("redacts a decorated remove failure before logging it — never the raw err", async () => {
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const decorated = Object.assign(new Error("upstash down"), {
-      token: "SECRET-TOKEN",
-      url: "https://leaky.example/creds",
-    });
-    removeStoredAdmin.mockRejectedValue(decorated);
-    const res = await DELETE(req({ login: "carol" }));
-    expect(res.status).toBe(503);
-    expect(spy).toHaveBeenCalledTimes(1);
-    const [prefix, ...rest] = spy.mock.calls[0];
-    expect(prefix).toBe("[admin/admins] remove failed");
-    for (const arg of rest) expect(typeof arg).toBe("string");
-    expect(rest).toEqual([adminErrorLabel(decorated)]);
-    for (const arg of rest) {
-      expect(arg).not.toContain("SECRET-TOKEN");
-      expect(arg).not.toContain("leaky.example");
+  it("403s, logging nothing, when the acting admin lost their grant before the script ran", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      m.revokeAdmin.mockRejectedValue(new NotAdminError());
+      expect((await DELETE(req("DELETE", { id: bob.id }))).status).toBe(403);
+      expect(err).not.toHaveBeenCalled();
+    } finally {
+      err.mockRestore();
     }
-    spy.mockRestore();
+  });
+
+  it("404s an id that holds no grant", async () => {
+    m.revokeAdmin.mockResolvedValue({ ok: false, reason: "not-admin" });
+    expect((await DELETE(req("DELETE", { id: bob.id }))).status).toBe(404);
+  });
+
+  it("400s a GitHub login, a non-string or bad JSON without touching the store", async () => {
+    for (const body of [{ id: "octocat" }, { id: 7 }, { login: bob.id }, "nope"]) {
+      expect((await DELETE(req("DELETE", body))).status).toBe(400);
+    }
+    expect(m.revokeAdmin).not.toHaveBeenCalled();
+  });
+
+  it("503s when the revoke throws", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    m.revokeAdmin.mockRejectedValue(new Error("redis down"));
+    expect((await DELETE(req("DELETE", { id: bob.id }))).status).toBe(503);
+    err.mockRestore();
+  });
+});
+
+// A decorated error (a wrapped Redis/HTTP error carrying a token or a URL with
+// credentials) must reach the log only as errorLabel's "<name>: <message>".
+// Every argument after the fixed prefix must itself be a string: the raw error
+// is an Error instance, so passing it straight to console.error fails here
+// however it would later stringify.
+describe("error logs are redacted", () => {
+  const decorated = () =>
+    Object.assign(new Error("upstash down"), { token: "SECRET-TOKEN", url: "https://leaky.example/creds" });
+
+  async function expectRedacted(run: () => Promise<Response>, prefix: string, err: Error) {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect((await run()).status).toBe(503);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const [first, ...rest] = spy.mock.calls[0];
+      expect(first).toBe(prefix);
+      for (const arg of rest) expect(typeof arg).toBe("string");
+      expect(rest).toEqual([errorLabel(err)]);
+      const logged = JSON.stringify(spy.mock.calls);
+      expect(logged).not.toContain("SECRET-TOKEN");
+      expect(logged).not.toContain("leaky.example");
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it("redacts a decorated roster-read failure on GET", async () => {
+    const err = decorated();
+    m.listAdminGrants.mockRejectedValue(err);
+    await expectRedacted(() => GET(req("GET")), "[admin/admins] list failed", err);
+  });
+
+  it("redacts a decorated profile-read failure on GET", async () => {
+    const err = decorated();
+    m.getPlayerProfiles.mockRejectedValue(err);
+    await expectRedacted(() => GET(req("GET")), "[admin/admins] list failed", err);
+  });
+
+  it("redacts a decorated revoke failure on DELETE", async () => {
+    const err = decorated();
+    m.revokeAdmin.mockRejectedValue(err);
+    await expectRedacted(() => DELETE(req("DELETE", { id: bob.id })), "[admin/admins] remove failed", err);
   });
 });

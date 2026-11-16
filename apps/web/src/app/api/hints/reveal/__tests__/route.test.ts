@@ -21,7 +21,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/launch", () => ({ requireLaunchedApi, launchApiAccess }));
 vi.mock("@/lib/hint-store", () => ({ revealHint, resolveHintConfig }));
-const adminView = vi.hoisted(() => ({ adminSeesHidden: vi.fn<(login: string, id: string) => Promise<boolean>>(async () => false) }));
+const adminView = vi.hoisted(() => ({ adminSeesHidden: vi.fn<(playerId: string, id: string) => Promise<boolean>>(async () => false) }));
 vi.mock("@/lib/classic-visibility", () => adminView);
 // Mocked EXPLICITLY rather than left to load for real. The real module fails
 // open on any Upstash error, so an unmocked import would quietly make every
@@ -49,7 +49,7 @@ beforeEach(() => {
   consumeRateLimit.mockReset();
   getSession.mockResolvedValue(SESSION);
   requireLaunchedApi.mockResolvedValue(null);
-  launchApiAccess.mockImplementation(async (login: string) => ({ refused: await requireLaunchedApi(login), preview: false }));
+  launchApiAccess.mockImplementation(async (playerId: string) => ({ refused: await requireLaunchedApi(playerId), preview: false }));
   consumeRateLimit.mockResolvedValue({ allowed: true });
   // Deliberately DIFFERENT from the revealHint fixture's charged cost (10):
   // the response must echo the amount revealHint actually charged, so if the
@@ -233,7 +233,7 @@ describe("an admin on a hidden challenge after launch", () => {
     adminView.adminSeesHidden.mockResolvedValueOnce(true);
     revealHint.mockResolvedValue({ ok: true, hint: "h", alreadyOwned: false, spent: 0, cost: 10, dryRun: true });
     await POST(req({ app: "classic", id: "c-1" }));
-    expect(adminView.adminSeesHidden).toHaveBeenLastCalledWith("alice", "c-1");
+    expect(adminView.adminSeesHidden).toHaveBeenLastCalledWith(ALICE_ID, "c-1");
     expect(revealHint).toHaveBeenCalledWith(ALICE_ID, "classic", "c-1", { dryRun: true });
   });
 

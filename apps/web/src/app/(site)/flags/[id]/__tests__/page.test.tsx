@@ -22,10 +22,10 @@ const firstOpen = vi.hoisted(() => ({ recordFirstOpen: vi.fn(async () => {}) }))
 vi.mock("@/lib/first-open", () => firstOpen);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { moduleLive, isAdminLogin, getSession, listChallenges, teamSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, getClassicHintIds, getHintNotice, getViewerHints } =
+const { moduleLive, isAdminPlayer, getSession, listChallenges, teamSolveCounts, getViewerClassic, getAdminSettings, getResolvedModules, getClassicHintIds, getHintNotice, getViewerHints } =
   vi.hoisted(() => ({
     moduleLive: vi.fn(),
-    isAdminLogin: vi.fn(),
+    isAdminPlayer: vi.fn(),
     getSession: vi.fn(),
     listChallenges: vi.fn(),
     teamSolveCounts: vi.fn(),
@@ -49,7 +49,7 @@ vi.mock("next/navigation", async (importOriginal) => ({
 }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
-vi.mock("@/lib/admin-auth", () => ({ isAdminLogin }));
+vi.mock("@/lib/admin-auth", () => ({ isAdminPlayer }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings }));
 vi.mock("@/lib/hint-store", () => ({ getClassicHintIds, getHintNotice, getViewerHints }));
 // #463 stories: none by default; the story tests below set some.
@@ -93,7 +93,7 @@ const params = (id: string) => ({ params: Promise.resolve({ id }) });
 beforeEach(() => {
   vi.clearAllMocks();
   moduleLive.mockReturnValue(true);
-  isAdminLogin.mockReturnValue(false);
+  isAdminPlayer.mockReturnValue(false);
   getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
   listChallenges.mockResolvedValue([record]);
   teamSolveCounts.mockResolvedValue(new Map([["c1", 7]]));
@@ -371,7 +371,7 @@ describe("a hidden challenge", () => {
   });
 
   it("opens for an admin preview, so an organizer can check it before it goes live", async () => {
-    isAdminLogin.mockReturnValue(true);
+    isAdminPlayer.mockReturnValue(true);
     launchLock.redirectIfNotLaunched.mockResolvedValue({ allowed: true, preview: true });
     launchLock.getLaunchAccess.mockResolvedValue({ allowed: true, preview: true });
     listChallenges.mockResolvedValue([{ ...record, enabled: false }]);
@@ -386,7 +386,7 @@ describe("a hidden challenge", () => {
 // and nothing is recorded for the admin.
 describe("a hidden challenge, opened by an admin after launch", () => {
   it("renders with a Hidden from contestants banner naming why, and records no first open", async () => {
-    isAdminLogin.mockReturnValue(true);
+    isAdminPlayer.mockReturnValue(true);
     listChallenges.mockResolvedValue([{ ...record, enabled: false }]);
     const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
     expect(html).toContain("Robots Only");
@@ -397,7 +397,7 @@ describe("a hidden challenge, opened by an admin after launch", () => {
   });
 
   it("names a scheduled release on the event clock", async () => {
-    isAdminLogin.mockReturnValue(true);
+    isAdminPlayer.mockReturnValue(true);
     listChallenges.mockResolvedValue([{ ...record, enabled: false, releaseAt: "2099-10-08T13:00:00.000Z" }]);
     const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
     expect(html).toContain("Hidden from contestants");
@@ -405,12 +405,12 @@ describe("a hidden challenge, opened by an admin after launch", () => {
   });
 
   it("shows no banner on a live challenge", async () => {
-    isAdminLogin.mockReturnValue(true);
+    isAdminPlayer.mockReturnValue(true);
     expect(renderToStaticMarkup(await ClassicChallengePage(params("c1")))).not.toContain("Hidden from contestants");
   });
 
   it("is still a 404 for a contestant", async () => {
-    isAdminLogin.mockReturnValue(false);
+    isAdminPlayer.mockReturnValue(false);
     listChallenges.mockResolvedValue([{ ...record, enabled: false }]);
     await expect(ClassicChallengePage(params("c1"))).rejects.toMatchObject({ digest: "NEXT_HTTP_ERROR_FALLBACK;404" });
   });

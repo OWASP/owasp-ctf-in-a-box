@@ -67,12 +67,11 @@ export async function POST(request: Request) {
   const player = await getPlayer(request.headers);
   if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const playerId = player.id;
-  const adminLogin = player.githubLogin ?? undefined;
 
   // #464 pre-launch lock. Its own refusal — 403 `not-launched` — never a
   // wrong-answer shape. An admin before launch passes as a PREVIEW, and their
   // answer is graded as a dry run: the same script, writing nothing.
-  const { refused, preview } = await launchApiAccess(adminLogin);
+  const { refused, preview } = await launchApiAccess(playerId);
   if (refused) return refused;
 
   // Scoring is per team, and a teamless login's banked points fold into no

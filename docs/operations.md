@@ -160,15 +160,20 @@ to share, the captain's controls, and a header stat per enabled module.</sup>
 
 ## Organizer admin panel
 
-Anyone listed in `.env`'s `ADMIN_LOGINS` (checked case-insensitively against
-their GitHub login) can sign in and reach `/admin` — everyone else gets a
-403, on both the page and its API routes.
+An admin is a kit account that claimed an **admin claim code** ([ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)).
+Everyone else gets a 403 on `/admin` and its API routes; the Forbidden page
+links to `/admin/claim`.
 
-Those are the **bootstrap** admins: read from the environment at runtime, so
-changing them needs a restart, not a rebuild. An empty or unset
-`ADMIN_LOGINS` locks everyone out of `/admin`. Everyone else is granted from
-the panel itself, on the **Admins** tab, and takes effect immediately (see
-below).
+The first code's SHA-256 goes in `.env` as `ADMIN_CLAIM_CODE_HASH`; the
+code itself is never stored. On a Docker Compose box, make it by hand as [the Forbidden runbook](troubleshooting.md#admin-says-forbidden-for-everyone-including-you) shows: `openssl rand -hex 16`,
+its SHA-256 into `.env`, then a recreated app container; setup does not
+write it yet. The Fly and AWS deploys do not pass `ADMIN_CLAIM_CODE_HASH` to
+the app yet (#738), so a box deployed there cannot claim its first admin
+until they do. Sign in, open
+`/admin/claim` and enter the code: the account you are signed in with becomes an admin. Each code
+works once. Further organizers get a code from the **Admins** tab (see
+below). Until somebody claims, `/admin` refuses everyone and its Forbidden
+page says so.
 
 The header is one row — `Admin · <event name> · <phase badge> · until <date>`
 — with the same phase vocabulary and colours as the public phase strip. The
@@ -1060,35 +1065,39 @@ wrong about a team size.
 
 ### Adding and removing admins
 
-The **Admins** tab grants organizer access at runtime. Type a GitHub login,
-press *Add admin*, and they can reach `/admin` immediately — no rebuild, no
-redeploy, no `.env` edit.
+The **Admins** tab lists every admin by name, with **you** marked.
 
-Two kinds of admin appear in the list:
+**To add an organizer**, press *Issue admin code*. The panel shows a code
+once, with a copy button and its expiry. Give it to the new organizer: they
+sign in, open `/admin/claim` and enter it. A code works once and expires
+after 15 minutes; leaving the tab clears it from the screen, and only its
+hash is ever stored.
 
-| Source | Where it lives | Removable from the panel? |
-| --- | --- | --- |
-| `.env`'s `ADMIN_LOGINS` | read from the environment at startup | **no** — restart to change; marked `.env` |
-| Added on this tab | `ctf:admin:admins` in Redis | yes |
+**To remove one**, press *Remove* and confirm. You can remove yourself while
+another admin remains. **The last admin cannot be removed**: the panel
+refuses. An admin listed as "(deleted account)" does not count, since nobody
+can sign in as them. The panel cannot tell whether a listed admin can still
+sign in; if none can, rotate `ADMIN_CLAIM_CODE_HASH` for a new bootstrap
+code, which works whether or not admins exist. Issue a code and have someone claim it first. Removing
+an admin also voids every code they issued that nobody has claimed yet, and
+those codes stay void if the admin is later granted again, so a removed
+admin cannot claim their way back in.
 
-**A bootstrap admin cannot be revoked here, and that is the point.** It is
-the recovery path: no sequence of clicks, and no compromised admin session,
-can lock every organizer out of the panel. If you genuinely need to remove
-one, edit `ADMIN_LOGINS` in `.env` and restart — the same cost as adding one
-used to be.
+Only an admin can issue a code. Every claim, issue and removal is written to
+the same audit log as the rest of the panel's changes, naming the account and
+a short code id, never the code. A master reset keeps the admins.
 
-You *can* remove yourself, and the panel asks first. It is safe because, if
-`ADMIN_LOGINS` contains at least one login, a bootstrap admin remains.
+**Locked out?** If no admin can sign in, rotate the bootstrap code: a new
+`ADMIN_CLAIM_CODE_HASH` in `.env` and a recreated app container
+(`docker compose up -d --no-deps --force-recreate app`; a plain
+`docker compose restart` keeps the old environment), then claim with the new
+code at `/admin/claim`. The bootstrap code works whether or not admins
+already exist, and the old one stops working once the hash changes.
 
-Only an admin can create an admin; there is no self-service path in. Every
-grant and revocation is written to the same audit log as the rest of the
-panel's changes, recording who did it and when.
-
-**If Redis is unavailable**, runtime grants stop resolving and those admins
-get a 403 — the access check fails **closed**, deliberately, and deliberately
-unlike the freeze read, which fails *open* so a Redis blip cannot drop live
-submissions. A bootstrap admin still gets in, because that check never
-touches Redis at all — which is exactly when you most need the panel.
+**If Redis is unavailable**, the grant read fails and `/admin` answers 403 —
+the access check fails **closed**, deliberately unlike the freeze read, which
+fails *open* so a Redis blip cannot drop live submissions. A claim during an
+outage answers "try again", never a grant.
 
 ## Sponsors
 
@@ -2419,8 +2428,8 @@ call directly — `POST /api/classic/submit`, `POST /api/quiz/answer`,
 `{ "error": "not-launched" }`**, and the classic, quiz and hint UIs name that
 refusal rather than showing it as a wrong answer.
 
-**Admins preview.** A signed-in admin (`ADMIN_LOGINS`, or an admin added in
-the panel) passes the lock and browses every module page as a preview, to
+**Admins preview.** A signed-in admin (an account that claimed a code at
+`/admin/claim`) passes the lock and browses every module page as a preview, to
 check the board before contestants see it. Every module page shows a
 **Preview — event not launched** banner, with a **View as contestant** link
 (the landing page, which is all a contestant sees) and a link to `/admin`.

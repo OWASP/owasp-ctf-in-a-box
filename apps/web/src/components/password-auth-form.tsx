@@ -170,6 +170,7 @@ export default function PasswordAuthForm({ next }: { next: string }) {
         <button
           type="button"
           onClick={() => {
+            setError(null);
             // errorCallbackURL points a failed callback at the landing
             // page's banner, carrying `next` so the retry keeps the
             // destination (issue #380).
@@ -180,9 +181,15 @@ export default function PasswordAuthForm({ next }: { next: string }) {
                 errorCallbackURL: oauthErrorCallbackURL(next),
               })
               .then((result) => {
-                if (result?.error) console.error("sign-in failed to start:", result.error);
+                if (result?.error) {
+                  console.error("sign-in failed to start:", result.error);
+                  setError(errorCopy(result.error));
+                }
               })
-              .catch((err) => console.error("sign-in failed to start:", err));
+              .catch((err) => {
+                console.error("sign-in failed to start:", err);
+                setError(GENERIC_COPY);
+              });
           }}
           className="self-start rounded-md border border-white/10 bg-white/[0.03] px-4 py-2 font-mono text-sm text-zinc-200 transition-colors hover:border-[#2563eb]/45 hover:text-white"
         >

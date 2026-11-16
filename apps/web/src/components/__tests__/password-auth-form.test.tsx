@@ -196,6 +196,14 @@ describe("PasswordAuthForm sign-up", () => {
 });
 
 describe("PasswordAuthForm GitHub", () => {
+  it("shows the retry wait when GitHub sign-in is rate limited", async () => {
+    signInSocial.mockResolvedValue({ error: { status: 429, code: "RATE_LIMITED", retryAfterSeconds: 30 } });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<PasswordAuthForm next="/profile" />);
+    fireEvent.click(screen.getByRole("button", { name: /github/i }));
+    expect(await screen.findByText("Too many attempts. Try again in 30 seconds.")).toBeTruthy();
+  });
+
   it("starts GitHub with the post-signin and error callbacks", () => {
     signInSocial.mockResolvedValue({});
     render(<PasswordAuthForm next="/flags" />);

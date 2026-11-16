@@ -382,9 +382,10 @@ ENV
 }
 
 @test "admin-code on the project .env gives the plain recreate command" {
-  run bash "$SCRIPT" admin-code
+  run env -u ADMIN_CLAIM_CODE_HASH bash "$SCRIPT" admin-code
   [ "$status" -eq 0 ]
-  echo "$output" | grep -qxF -- "  docker compose up -d --no-deps --force-recreate app"
+  [ -z "$(echo "$output" | grep -F 'is exported in this shell')" ]
+  echo "$output" | grep -qxF -- "  env -u ADMIN_CLAIM_CODE_HASH docker compose up -d --no-deps --force-recreate app"
 }
 
 @test "admin-code refuses an absent env file" {

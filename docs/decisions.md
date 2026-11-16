@@ -4380,7 +4380,7 @@ the mechanism for retiring a module; no module sets it today.
 
 ## ADR 72. Admins are claimed with a one-time code, not named in `.env`
 
-**Status.** Accepted (#738). Replaces the `ADMIN_LOGINS` bootstrap set of [ADR 44](#adr-44-runtime-admin-grants-with-the-baked-list-as-the-recovery-path) and [ADR 55](#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml).
+**Status.** Accepted (#738); amended 2026-11-16: when a rotated code stops working, under **Recovery** below. Replaces the `ADMIN_LOGINS` bootstrap set of [ADR 44](#adr-44-runtime-admin-grants-with-the-baked-list-as-the-recovery-path) and [ADR 55](#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml).
 
 **Context.** `ADMIN_LOGINS` named GitHub logins. v2 accounts are kit
 accounts keyed by a player id (#731), GitHub is optional unless Secure
@@ -4438,16 +4438,20 @@ event exists.
   shows nothing when the read fails.
 
 **Recovery.** Rotating the hash (`ctf-setup.sh admin-code` on a Compose box,
-`deploy.sh --new-admin-code` on Fly or AWS) makes a new bootstrap code. Only
-the hash in the app's environment is compared, so the old code stops working
-when the running app has the new hash, which depends on the deployment: on
-Compose when the app container is recreated (a plain restart keeps the old
-environment); on Fly when the deploy completes; on AWS once the rollout's old
-tasks have drained. Until then the old code still claims, and a failed
-deploy or rollout leaves it valid until that is recovered. The bootstrap code works
+`deploy.sh --new-admin-code` on Fly or AWS) makes a new bootstrap code, and the old one stops working at
+once because only the current env hash is compared. The bootstrap code works
 whether or not admins exist: the lock-out case includes an admin who still
 holds a grant but cannot sign in, and v2.0 has no email recovery. Rotating
 needs `.env` or deploy access, which already means full control of the box.
+
+*Amended 2026-11-16 by [#738](https://github.com/OWASP/owasp-ctf-in-a-box/issues/738): "at
+once" above is wrong. The app compares the hash in its own environment, so
+the old code stops working only when the running app has the new hash, and
+that depends on the deployment: on Compose when the app container is
+recreated (a plain restart keeps the old environment); on Fly when the
+deploy completes; on AWS once the rollout's old tasks have drained. Until
+then the old code still claims, and a failed deploy or rollout leaves it
+valid until that is recovered.*
 
 **Consequences.** `/admin` now needs Redis to decide who is an admin; every
 admin path already needed it for its data. No admin is beyond revocation,

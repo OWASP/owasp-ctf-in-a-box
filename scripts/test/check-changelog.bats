@@ -190,6 +190,16 @@ _entry() {
   [ "$status" -eq 1 ]
 }
 
+@test "an empty or non-bullet fragment does not count" {
+  mkdir -p changelog.d
+  : > changelog.d/1-empty.md
+  printf 'prose, not a bullet\n' > changelog.d/2-prose.md
+  _commit apps/web/src/a.ts
+  run "$SCRIPT" base HEAD
+  [ "$status" -eq 1 ]
+  _has "no changelog fragment added"
+}
+
 @test "a fragment alone, with no shipped code, passes" {
   _commit changelog.d/9-x.md
   run "$SCRIPT" base HEAD

@@ -119,7 +119,14 @@ while IFS= read -r -d '' path; do
   case "$path" in
     changelog.d/README.md) ;;
     changelog.d/*/*) ;;
-    changelog.d/*.md) fragment="$path" ;;
+    changelog.d/*.md)
+      # The assembler refuses an empty fragment or one that is not a bullet,
+      # so one that is either does not count as an entry.
+      first="$(git show "${head}:${path}" | grep -m1 -v '^[[:space:]]*$' || true)"
+      case "$first" in
+        "- "*) fragment="$path" ;;
+      esac
+      ;;
   esac
 done < "$added"
 

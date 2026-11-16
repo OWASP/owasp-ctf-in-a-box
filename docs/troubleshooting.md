@@ -200,6 +200,71 @@ Work down this list — each item is a different subsystem:
 5. **Poll cadence is ~30 s** — a score that lands a minute late in a busy
    tick is normal, not stuck.
 
+## Nothing posts to Discord
+
+**Symptom.** The channel stays quiet while the event runs, or one kind of
+announcement posts while another never does. The card's status line and the
+app log are the two places that say why.
+
+**Diagnosis.** Four independent gates can each keep a post from leaving.
+Work through them in order; the [Discord announcements](operations.md#discord-announcements)
+section has the card's full behavior.
+
+1. **No webhook, or the switch for that kind is off.** Announcements are
+   opt-in twice: saving a webhook turns nothing on, and each kind has its own
+   switch on `/admin` → **Event** → **Discord announcements**. The line
+   under the field says "A webhook is configured." or "No webhook
+   configured"; check it alongside the relevant switch (First blood, Event
+   launch, Scoring paused / resumed, or Remaining-time checks). Turning a
+   switch on later does not replay first bloods or a launch that has already
+   happened — only a real edge observed after it is armed posts. Paste the
+   webhook again and press **Save**, then enable the kind you want.
+
+2. **The event was not launched, or the edge is not eligible.** Launch posts
+   only when the observer sees scoring go from not launched to launched; a
+   box that starts already launched seeds silently instead of posting a
+   retroactive launch. Pause/resume posts only for a live, unclosed event:
+   a pause that begins while scoring is already closed is never announced,
+   and lifting it later posts nothing. Closing at **Scoring closes** is not
+   announced, and Remaining-time checks are silenced while the event is
+   unlaunched, paused, or closed. Check the **Right now:** readout under the
+   schedule and the **Scoring opens** / **Scoring closes** fields. Set
+   **Scoring opens** to now to launch immediately (with the launch switch
+   already on), or wait for the next real freeze/unfreeze edge; enabling
+   announcements after the fact will not backfill one. First blood is
+   solve-triggered rather than schedule-gated, so old solves still do not
+   replay.
+
+3. **Discord returned HTTP 429.** The log line is
+   `[announce] discord post rate limited: HTTP 429`. The sender prefers
+   Discord's `Retry-After` header, falls back to the JSON `retry_after`
+   seconds, and defaults to one second when neither is usable. It then parks
+   every delivery sweep and **Send test** behind a shared cooldown until that
+   instant (concurrent 429s keep the later deadline). The parked entries keep
+   their pending/failed status and the 429 does not consume an attempt;
+   delivery resumes on the first armed tick after the cooldown expires,
+   normally within 30 seconds.
+   For a non-429 rejection or a timeout (the POST is capped at five seconds)
+   the entry is marked failed and retried on the 30-second ticker, up to
+   three failed attempts in total, with no exponential backoff. Delivery is
+   at-least-once, not exactly-once: a success whose write is lost can post
+   again. Check the log/status line and wait out the retry instant rather
+   than repeatedly pressing **Send test**; a persistent non-429 failure means
+   check that the webhook is still valid and the channel still accepts it.
+
+4. **Redis is unavailable.** The announcer keeps its config, claims, outbox
+   and cooldown in Redis, and every path fails closed rather than posting
+   from a guess: a failed config read skips the tick
+   (`[announce] config read failed, skipping tick`); a failed claim or
+   enqueue records nothing; and a failed webhook-target read leaves queued
+   entries untouched for a later pass. There is no post until Redis is
+   readable again — check `/health/deep` and the app log for `NOAUTH` or
+   `fetch failed`, then fix the path to Redis
+   ([`NOAUTH`](#services-log-noauth-authentication-required),
+   [`fetch failed`](#a-service-cant-reach-another-nothing-but-fetch-failed)).
+   Entries already in the outbox are retried after recovery, but events that
+   occurred while Redis was down may be lost, and no delivery is guaranteed.
+
 ## The fork's Action fails: "no matching manifest for linux/amd64"
 
 **Diagnosis.** The scorer image was built on Apple Silicon without a

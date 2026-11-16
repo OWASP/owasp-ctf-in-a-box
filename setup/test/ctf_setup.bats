@@ -243,7 +243,10 @@ ENV
   run bash "$SCRIPT" secrets --out .env.bootstrap.test
   [ "$status" -eq 0 ]
   grep -qx "GITHUB_ORG=" .env.bootstrap.test
-  grep -qx "SCORE_IMAGE=" .env.bootstrap.test
+  # SCORE_IMAGE is documented but not assigned: the wizard's step 3 asks it,
+  # and an assigned empty value would read as an answered "no".
+  [ -z "$(grep -E '^[[:space:]]*SCORE_IMAGE[[:space:]]*=' .env.bootstrap.test)" ]
+  grep -qF "# SCORE_IMAGE=" .env.bootstrap.test
   grep -qF "/admin/claim" .env.bootstrap.test
   [ -z "$(grep -F ADMIN_LOGINS .env.bootstrap.test)" ]
 }
@@ -312,14 +315,14 @@ ENV
   cp .env ro/.env
   chmod 555 ro
   if [ -w ro ]; then chmod 755 ro; skip "running as a user who can write a read-only directory"; fi
-  tmp_before="$(ls "${TMPDIR:-/tmp}" | wc -l)"
-  run bash "$SCRIPT" admin-code --out ro/.env
+  mkdir tmp
+  run env TMPDIR="$BATS_TEST_TMPDIR/tmp" bash "$SCRIPT" admin-code --out ro/.env
   chmod 755 ro
   [ "$status" -ne 0 ]
   [ -z "$(printf '%s\n' "$output" | grep -E '([0-9a-f]{4}-){7}[0-9a-f]{4}')" ]
   echo "$output" | grep -qF "could not write"
   [ "$(ls -A ro)" = ".env" ]
-  [ "$(ls "${TMPDIR:-/tmp}" | wc -l)" -le "$tmp_before" ]
+  [ -z "$(ls -A tmp)" ]
   grep -qx 'ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9' ro/.env
 }
 
@@ -343,6 +346,39 @@ ENV
   run bash "$SCRIPT" admin-code --out staging.env
   [ "$status" -eq 0 ]
   echo "$output" | grep -qF -- "docker compose --env-file staging.env up -d --no-deps --force-recreate app"
+}
+
+# Recovery for a non-default env file has to rotate THAT file: a bare
+# `admin-code` rotates .env, another deployment's code or none.
+@test "admin-code --out keeps the env file, shell-quoted, in the recovery command" {
+  cp .env "staging one.env"
+  run bash "$SCRIPT" admin-code --out "staging one.env"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF -- 'Run ./setup/ctf-setup.sh admin-code --out staging\ one.env for a new one'
+  echo "$output" | grep -qF -- 'docker compose --env-file staging\ one.env up -d'
+}
+
+@test "secrets --out names its file in the recovery command, printed and in the file" {
+  run bash "$SCRIPT" secrets --out .env.named.test
+  [ "$status" -eq 0 ]
+  grep -qF -- './setup/ctf-setup.sh admin-code --out .env.named.test' .env.named.test
+  echo "$output" | grep -qF -- 'Run ./setup/ctf-setup.sh admin-code --out .env.named.test for a new one'
+}
+
+@test "doctor's claim-hash failure names the --out file in the fix" {
+  _stub_prereqs
+  printf 'GITHUB_ORG=test-event-org\nSCORE_IMAGE=\n' > other.env
+  run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" doctor --out other.env
+  echo "$output" | grep -qF -- 'run ./setup/ctf-setup.sh admin-code --out other.env'
+}
+
+# Compose lets the shell environment win over the env file, so a hash still
+# exported would keep the old code live after the recreate.
+@test "admin-code warns about an exported hash and prints the recreate without it" {
+  ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9 run bash "$SCRIPT" admin-code
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'ADMIN_CLAIM_CODE_HASH is exported in this shell'
+  echo "$output" | grep -qF -- 'env -u ADMIN_CLAIM_CODE_HASH docker compose up -d --no-deps --force-recreate app'
 }
 
 @test "admin-code on the project .env gives the plain recreate command" {
@@ -1085,15 +1121,30 @@ _stub_prereqs() {
 }
 
 # A real first run, NOT --dry-run: --dry-run writes no .env, so it never sees
-# the `SCORE_IMAGE=` placeholder `secrets` writes. That placeholder must not
-# read as an organizer's "no Secure Development" and skip step 3 — which
-# would skip the scorer image and org provisioning with it. openssl is real
-# here: `secrets` needs it for the secrets and the claim code.
-@test "wizard: a first run asks the event basics even though secrets just wrote SCORE_IMAGE=" {
+# what `secrets` writes. Nothing in that file may read as an organizer's "no
+# Secure Development" and skip step 3 — which would skip the scorer image and
+# org provisioning with it. openssl is real here: `secrets` needs it for the
+# secrets and the claim code.
+@test "wizard: a first run asks the event basics after secrets wrote the file" {
   _stub_prereqs
   rm -f "$BATS_TEST_TMPDIR/stubbin/openssl" .env
   run bash -c 'printf "https://ctf.example.org\nmy-event-org\ny\n" | env CTF_NO_BROWSER=1 TMPDIR="$3" PATH="$1:$PATH" bash "$2" wizard' _ "$BATS_TEST_TMPDIR/stubbin" "$SCRIPT" "$BATS_TEST_TMPDIR"
   echo "$output" | grep -qF 'Answer a few questions to write'
+  echo "$output" | grep -qF 'Run Secure Development'
+  grep -qx 'GITHUB_ORG=my-event-org' .env
+  grep -qx 'SCORE_IMAGE=ghcr.io/my-event-org/score:latest' .env
+}
+
+# A first run stopped at step 2's EVENT_URL prompt leaves exactly what
+# `secrets` wrote. The next run must still treat the Secure Development
+# question as never asked, not resume past it as "no".
+@test "wizard: a first run interrupted after secrets still asks the event basics next time" {
+  _stub_prereqs
+  rm -f "$BATS_TEST_TMPDIR/stubbin/openssl" .env
+  mkdir -p "$BATS_TEST_TMPDIR/tmp"
+  run bash "$SCRIPT" secrets
+  [ "$status" -eq 0 ]
+  run bash -c 'printf "my-event-org\ny\n" | env CTF_NO_BROWSER=1 TMPDIR="$3" PATH="$1:$PATH" bash "$2" wizard' _ "$BATS_TEST_TMPDIR/stubbin" "$SCRIPT" "$BATS_TEST_TMPDIR/tmp"
   echo "$output" | grep -qF 'Run Secure Development'
   grep -qx 'GITHUB_ORG=my-event-org' .env
   grep -qx 'SCORE_IMAGE=ghcr.io/my-event-org/score:latest' .env

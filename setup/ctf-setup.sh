@@ -14,7 +14,8 @@
 #   check     verify local prerequisites (gh auth, docker, compose)
 #   secrets   generate .env secret values and the admin claim code
 #   admin-code  write a new ADMIN_CLAIM_CODE_HASH and print its code once — the
-#             lock-out recovery path (ADR 72); the old code stops working
+#             lock-out recovery path (ADR 72); the old code stops working once
+#             the app container is recreated with the new hash
 #   org       fork targets, render scoring workflows from the in-repo template
 #             + print install steps, mirror scorer image
 #             (idempotent/re-runnable: every step is skipped once its
@@ -565,16 +566,16 @@ doctor_check_admin_claim() {
     printf '%s✅ ADMIN_CLAIM_CODE_HASH: set — claim it at %s/admin/claim if nobody has%s\n' \
       "$C_GREEN" "${url:-<EVENT_URL>}" "$C_RESET"
   elif [ -z "$hash" ]; then
-    printf '%s❌ ADMIN_CLAIM_CODE_HASH is not set — nobody can claim /admin with a bootstrap code; run ./setup/ctf-setup.sh admin-code%s\n' \
-      "$C_RED" "$C_RESET"
+    printf '%s❌ ADMIN_CLAIM_CODE_HASH is not set — nobody can claim /admin with a bootstrap code; run %s%s\n' \
+      "$C_RED" "$(admin_code_cmd)" "$C_RESET"
     crc=1
   elif claim_code_normalize "$hash" >/dev/null; then
-    printf '%s❌ ADMIN_CLAIM_CODE_HASH looks like the code itself, not its hash — run ./setup/ctf-setup.sh admin-code for a fresh code%s\n' \
-      "$C_RED" "$C_RESET"
+    printf '%s❌ ADMIN_CLAIM_CODE_HASH looks like the code itself, not its hash — run %s for a fresh code%s\n' \
+      "$C_RED" "$(admin_code_cmd)" "$C_RESET"
     crc=1
   else
-    printf '%s❌ ADMIN_CLAIM_CODE_HASH is not a 64-hex SHA-256 — run ./setup/ctf-setup.sh admin-code%s\n' \
-      "$C_RED" "$C_RESET"
+    printf '%s❌ ADMIN_CLAIM_CODE_HASH is not a 64-hex SHA-256 — run %s%s\n' \
+      "$C_RED" "$(admin_code_cmd)" "$C_RESET"
     crc=1
   fi
   if env_has ADMIN_LOGINS; then
@@ -1155,7 +1156,7 @@ cmd_check() {
 }
 
 cmd_secrets() {
-  local out="${OUT:-.env}" code hash
+  local out="${OUT:-.env}" code hash recover
   # `-e || -L`, not `-f`: `-f` follows symlinks, so a dangling link at $out
   # would pass this check and the redirect below would write the secrets to
   # wherever the link points.
@@ -1166,6 +1167,7 @@ cmd_secrets() {
   fi
   code="$(claim_code_new)" || exit 1
   hash="$(claim_code_hash "$code")" || exit 1
+  recover="$(admin_code_cmd "$out")"
   # Owner-only from the first byte, and created exclusively: `umask 077` so a
   # plain redirect cannot land 0644 under the usual 022 umask, and `noclobber`
   # so bash opens with O_EXCL — which fails on any pre-existing path, symlink
@@ -1196,17 +1198,31 @@ cmd_secrets() {
     echo "GITHUB_ORG="
     echo "# ADMIN_CLAIM_CODE_HASH: SHA-256 of the one-time admin claim code printed"
     echo "# when this file was written — never the code itself. Claim the first"
-    echo "# admin seat at /admin/claim. Lost it? ./setup/ctf-setup.sh admin-code"
+    echo "# admin seat at /admin/claim. Lost it? $recover"
     echo "ADMIN_CLAIM_CODE_HASH=$hash"
     echo "# SCORE_IMAGE: your own scorer image, built from scorer/ (docs/scorer.md),"
     echo "# e.g. ghcr.io/<your-event-org>/score:latest. No default — the upstream"
     echo "# image is private and the kit does not assume access to it. NON-EMPTY"
     echo "# is also how this box says the event runs Secure Development at all."
-    echo "SCORE_IMAGE="
+    echo "# Left unset on purpose: the setup wizard asks and writes it (an empty"
+    echo "# SCORE_IMAGE= means no Secure Development). Setting up by hand? Add it:"
+    echo "# SCORE_IMAGE=ghcr.io/<your-event-org>/score:latest"
   } > "$out"
   )
-  echo "wrote $out — fill in GITHUB_ORG, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY, SCORE_IMAGE"
-  claim_code_announce "$code" "<EVENT_URL>" "./setup/ctf-setup.sh admin-code"
+  echo "wrote $out — fill in GITHUB_ORG, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY; add SCORE_IMAGE to run Secure Development"
+  claim_code_announce "$code" "<EVENT_URL>" "$recover"
+}
+
+# The recovery command for the env file in use: `--out` is named (shell-quoted)
+# whenever it is not the default, because a bare `admin-code` rotates .env —
+# another deployment's code, or no file at all.
+admin_code_cmd() {
+  local out="${1:-${OUT:-.env}}"
+  if [ "$out" = ".env" ]; then
+    printf '%s' "./setup/ctf-setup.sh admin-code"
+  else
+    printf '%s' "./setup/ctf-setup.sh admin-code --out $(printf '%q' "$out")"
+  fi
 }
 
 # rotate_claim_code <env-file> — generate a code, write only its hash, and
@@ -1220,7 +1236,7 @@ rotate_claim_code() {
     return 1
   fi
   url="$(env_url)"
-  claim_code_announce "$code" "${url:-http://localhost}" "./setup/ctf-setup.sh admin-code"
+  claim_code_announce "$code" "${url:-http://localhost}" "$(admin_code_cmd "$out")"
 }
 
 # `admin-code`: always rotates (ADR 72). The lock-out recovery path: the new
@@ -1234,12 +1250,19 @@ cmd_admin_code() {
     return 0
   fi
   rotate_claim_code "$out" || exit 1
+  # Compose lets the shell environment win over the env file, so a hash still
+  # exported in this shell would keep the old code live and the new one dead.
+  # `env -u` drops it for that one command (BSD and GNU env both have -u).
+  if [ "${ADMIN_CLAIM_CODE_HASH+x}" = x ]; then
+    echo "NOTE: ADMIN_CLAIM_CODE_HASH is exported in this shell, and compose would use it"
+    echo "      over $out. Run 'unset ADMIN_CLAIM_CODE_HASH', or use the command below as printed."
+  fi
   echo "Recreate the app container to use it (a plain restart keeps the old environment):"
   if [ "$out" = ".env" ]; then
-    echo "  docker compose up -d --no-deps --force-recreate app"
+    echo "  env -u ADMIN_CLAIM_CODE_HASH docker compose up -d --no-deps --force-recreate app"
   else
     # Compose interpolates the project .env unless told otherwise.
-    echo "  docker compose --env-file $out up -d --no-deps --force-recreate app"
+    echo "  env -u ADMIN_CLAIM_CODE_HASH docker compose --env-file $(printf '%q' "$out") up -d --no-deps --force-recreate app"
   fi
 }
 
@@ -2240,9 +2263,7 @@ wiz_prereqs() {
 #
 # `url_asked` (the caller's local) stops step 3 asking for EVENT_URL a second
 # time on a first run: this step already has the answer, and two prompts for
-# one value read as a bug in the wizard. `env_fresh` (also the caller's) tells
-# step 3 the file was written by THIS run, so its `SCORE_IMAGE=` is the
-# `secrets` placeholder and not an organizer's answer.
+# one value read as a bug in the wizard.
 wiz_secret_env() {
   local out="$1" ev_url
   wiz_step "2/9  Secrets ($out)"
@@ -2256,7 +2277,6 @@ wiz_secret_env() {
     set_env_var "$out" EVENT_URL "$ev_url"
     echo "  ✅ EVENT_URL=$ev_url"
     url_asked=1
-    env_fresh=1
   fi
 }
 
@@ -2287,17 +2307,16 @@ wiz_claim_code() {
 
 # Step 3 of the wizard: Event basics — the whole of what this wizard writes.
 #
-# Already answered when the Secure Development question has
-# been PUT at all (the SCORE_IMAGE line exists, empty or not, in a file this
-# run did not just create), and, if that answer was yes, an org to fork into.
-# An app-only event legitimately has no GITHUB_ORG, so demanding one here
-# would re-ask it every single run. `fresh`=1 is a file step 2 just wrote:
-# its `SCORE_IMAGE=` is the `secrets` placeholder, not a "no", so the
-# questions are always asked.
+# Already answered when the Secure Development question has been PUT at all
+# (a SCORE_IMAGE line exists, empty or not), and, if that answer was yes, an
+# org to fork into. `secrets` writes no SCORE_IMAGE line, only a comment, so
+# a file whose first wizard run stopped before this step still reads as
+# unanswered and is asked again. An app-only event legitimately has no
+# GITHUB_ORG, so demanding one here would re-ask it every single run.
 wiz_basics() {
-  local out="$1" url_asked="$2" fresh="${3:-0}" basics_done=0
+  local out="$1" url_asked="$2" basics_done=0
   wiz_step "3/9  Event basics ($out)"
-  if [ "$fresh" -ne 1 ] && env_has SCORE_IMAGE; then
+  if env_has SCORE_IMAGE; then
     if ! runs_secdev || [ -n "$(env_val GITHUB_ORG)" ]; then basics_done=1; fi
   fi
   if [ "$basics_done" -eq 1 ]; then
@@ -2317,7 +2336,7 @@ wiz_basics() {
     echo "  Fix that and re-run the wizard — it resumes." >&2
     exit 1
   fi
-  if ! wiz_claim_code "$out" "$fresh"; then
+  if ! wiz_claim_code "$out" "$url_asked"; then
     echo "  Could not write the admin claim code — fix that and re-run the wizard." >&2
     exit 1
   fi
@@ -2537,7 +2556,7 @@ wiz_done() {
   else
     echo "== Done. Set EVENT_URL in $out, then open <EVENT_URL>/admin/claim, sign in and enter the admin claim code."
   fi
-  echo "   Lost the code? ./setup/ctf-setup.sh admin-code prints a new one."
+  echo "   Lost the code? $(admin_code_cmd "$out") prints a new one."
   echo "   $out is the whole bootstrap plane: GITHUB_ORG, ADMIN_CLAIM_CODE_HASH, SCORE_IMAGE,"
   echo "   EVENT_URL and the secrets. Everything else — which modules run, the event's"
   echo "   name and branding, the schedule, hint policy, caps — is set in /admin."
@@ -2560,7 +2579,7 @@ wiz_done() {
 # (edit a file, click Create in GitHub's UI); complete it and re-run.
 cmd_wizard() {
   local out="${OUT:-.env}"
-  local url_asked=0 env_fresh=0
+  local url_asked=0
   # The SCORE_IMAGE step 3 settled on, for the later steps to key off when
   # there is nothing written to read it back from (--dry-run).
   WIZ_SCORE_IMAGE=""
@@ -2570,7 +2589,7 @@ cmd_wizard() {
 
   wiz_prereqs
   wiz_secret_env "$out"
-  wiz_basics "$out" "$url_asked" "$env_fresh"
+  wiz_basics "$out" "$url_asked"
 
   # Everything from here on that touches forks, the scorer image or the poll
   # App belongs to Secure Development, and SCORE_IMAGE is the one fact that

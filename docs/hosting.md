@@ -99,9 +99,10 @@ containers and forks to provision.
 A resumed run re-reads `.env` and ticks off what is answered rather than
 re-asking it, and says which way the Secure Development switch is set — plus,
 when it is off, that setting `SCORE_IMAGE` is how you turn it on. The one
-exception is a hand-rolled `.env` with no `SCORE_IMAGE` line at all: that
-question has never been put, so the wizard asks step 3 again rather than
-assuming an answer.
+exception is an `.env` with no `SCORE_IMAGE` line at all: that question has
+never been put, so the wizard asks step 3 again rather than assuming an
+answer. `secrets` writes the key only as a comment for exactly this reason,
+so a first run stopped before step 3 is asked step 3 on the next run.
 
 **The wizard closes by offering an optional fly.io deploy** (issue #371).
 After step 9 has verified the box, it asks *"Deploy to fly.io now?"* —
@@ -146,7 +147,8 @@ you'd rather drive it yourself or script it. Each step is either a
 git clone https://github.com/OWASP/owasp-ctf-in-a-box && cd owasp-ctf-in-a-box
 
 # 2. Generate .env — BETTER_AUTH_SECRET, SRH_TOKEN, SCORER_TOKEN, REDIS_PASSWORD,
-#    EVENT_URL, and empty App/OAuth/SCORE_IMAGE fields to fill later.
+#    EVENT_URL, and empty App/OAuth fields to fill later (SCORE_IMAGE is a
+#    comment until you add it).
 ./setup/ctf-setup.sh secrets
 
 # 3. Build + push the scorer image, then set SCORE_IMAGE in .env by hand.
@@ -155,7 +157,7 @@ git clone https://github.com/OWASP/owasp-ctf-in-a-box && cd owasp-ctf-in-a-box
 docker login ghcr.io   # token with write:packages
 docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
   -t ghcr.io/<your-org>/score:latest --push scorer/
-#    MANUAL: edit SCORE_IMAGE=ghcr.io/<your-org>/score:latest in .env
+#    MANUAL: add SCORE_IMAGE=ghcr.io/<your-org>/score:latest to .env
 #    (the wizard builds + pins amd64 for you at step 4)
 
 # 4. Fill in GITHUB_ORG in .env, by hand or with the wizard.

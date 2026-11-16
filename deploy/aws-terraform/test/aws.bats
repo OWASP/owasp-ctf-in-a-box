@@ -711,6 +711,34 @@ claim_code_of() { printf '%s\n' "$1" | grep -oE '([0-9a-f]{4}-){7}[0-9a-f]{4}' |
   [ -z "$(grep '^aws ecs update-service' "$CALLS")" ]
 }
 
+# DescribeParameters pages, and --query runs per page: an empty page before
+# the match must not turn a placeholder into "could not read the version".
+@test "a paged version lookup (an empty page, then version 1) still writes the code" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_VERSION="$(printf '\n\t1')" run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -eq 0 ]
+  grep -q '^aws ssm put-parameter' "$CALLS"
+  [ -n "$(claim_code_of "$output")" ]
+}
+
+@test "the version lookup asks for every page's versions, not page-local index 0" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -eq 0 ]
+  grep '^aws ssm describe-parameters' "$CALLS" | grep -qF -- "--query Parameters[].Version"
+}
+
+@test "two versions for one name are refused, not guessed" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_VERSION="$(printf '2\t3')" run "$repo/deploy/aws-terraform/deploy.sh" --new-admin-code
+  [ "$status" -ne 0 ]
+  [ -z "$(grep '^aws ssm put-parameter' "$CALLS")" ]
+  echo "$output" | grep -qF 'could not read the version'
+}
+
 @test "a set parameter is left alone: nothing written, no code" {
   repo="$(fake_repo)"
   applied_stack_stubs 0

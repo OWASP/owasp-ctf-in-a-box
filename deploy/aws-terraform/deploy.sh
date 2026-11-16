@@ -604,10 +604,17 @@ elif ! SSM_PREFIX="$(terraform -chdir="$HERE" output -raw ssm_prefix 2>/dev/null
 else
   CLAIM_URL="$(terraform -chdir="$HERE" output -raw event_url 2>/dev/null)" || CLAIM_URL=""
   CLAIM_PARAM="$SSM_PREFIX/ADMIN_CLAIM_CODE_HASH"
-  if ! claim_version="$(aws ssm describe-parameters --region "$REGION" \
+  # The CLI applies --query to each page, and DescribeParameters can return an
+  # empty page before the one holding the match. `Parameters[].Version` makes
+  # an empty page print nothing rather than `None`; the filter drops blank
+  # lines (and a stray `None`) so the pages join into one value. More than one
+  # value is not an answer either: the case below refuses it.
+  if ! claim_raw="$(aws ssm describe-parameters --region "$REGION" \
     --parameter-filters "Key=Name,Values=$CLAIM_PARAM" \
-    --query 'Parameters[0].Version' --output text)"; then
+    --query 'Parameters[].Version' --output text)"; then
     claim_version="unreadable"
+  else
+    claim_version="$(printf '%s\n' "$claim_raw" | tr -s '[:space:]' '\n' | grep -vx -e '' -e None | paste -sd ' ' -)" || claim_version=""
   fi
   write_claim=""
   case "$claim_version" in

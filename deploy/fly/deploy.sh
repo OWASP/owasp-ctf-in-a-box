@@ -255,7 +255,7 @@ require_claim_hash() {
   local v="$1"
   claim_code_is_hash "$v" && return 0
   if [ -z "$v" ]; then
-    echo "FAIL: ADMIN_CLAIM_CODE_HASH is empty in $ENV_FILE — nobody could claim /admin." >&2
+    echo "FAIL: ADMIN_CLAIM_CODE_HASH is empty in $ENV_FILE — nobody could claim /admin with a bootstrap code." >&2
     echo "      Run: ./deploy/fly/deploy.sh init --env-file $ENV_FILE (writes one if absent)" >&2
     echo "       or: ./deploy/fly/deploy.sh --new-admin-code --env-file $ENV_FILE" >&2
   elif claim_code_normalize "$v" >/dev/null; then

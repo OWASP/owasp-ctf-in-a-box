@@ -551,9 +551,11 @@ doctor_check_sync_app() {
 }
 
 # Check (a) — the admin claim-code hash (ADR 72). Always checked, regardless
-# of Secure Development: a box nobody can claim is broken either way, and the
-# failure (every account 403s on /admin) is otherwise silent until someone
-# tries the panel. The value is never printed: a pasted code IS the secret.
+# of Secure Development: without a usable hash no bootstrap-code claim works
+# (existing admins and the codes they issue are unaffected), so an unclaimed
+# box 403s every account on /admin, silently until someone tries the panel,
+# and a claimed one has no lock-out recovery code. The value is never
+# printed: a pasted code IS the secret.
 # This cannot see Redis, so it cannot say whether the code was claimed.
 doctor_check_admin_claim() {
   local crc=0 hash url
@@ -563,7 +565,7 @@ doctor_check_admin_claim() {
     printf '%s✅ ADMIN_CLAIM_CODE_HASH: set — claim it at %s/admin/claim if nobody has%s\n' \
       "$C_GREEN" "${url:-<EVENT_URL>}" "$C_RESET"
   elif [ -z "$hash" ]; then
-    printf '%s❌ ADMIN_CLAIM_CODE_HASH is not set — nobody can claim /admin; run ./setup/ctf-setup.sh admin-code%s\n' \
+    printf '%s❌ ADMIN_CLAIM_CODE_HASH is not set — nobody can claim /admin with a bootstrap code; run ./setup/ctf-setup.sh admin-code%s\n' \
       "$C_RED" "$C_RESET"
     crc=1
   elif claim_code_normalize "$hash" >/dev/null; then

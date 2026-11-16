@@ -133,7 +133,8 @@ A deploy refuses outright — naming the key — if `GITHUB_ORG` is empty in
 `.env.fly`, or if `ADMIN_CLAIM_CODE_HASH` is empty or not a 64-hex SHA-256
 (it says so when the value looks like the code itself, and never prints it).
 Neither fails loudly on the machine: without a usable hash nobody can claim
-`/admin`, and without an org `sync` exits at start-up while the other four
+`/admin` with a bootstrap code (existing admins and the codes they issue still
+work), and without an org `sync` exits at start-up while the other four
 containers look healthy. A leftover `ADMIN_LOGINS` line gets one warning that
 it is ignored.
 

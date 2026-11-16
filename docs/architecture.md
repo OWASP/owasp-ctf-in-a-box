@@ -1238,8 +1238,8 @@ Two fail directions, deliberately opposite and worth knowing apart:
 
 - **The admin check fails CLOSED.** A grant read that errors denies, and
   the claim answers 503 rather than granting. An empty or malformed
-  `ADMIN_CLAIM_CODE_HASH` means nobody can claim the first seat; it never
-  means "anyone may". Rotating the hash is the lock-out recovery path
+  `ADMIN_CLAIM_CODE_HASH` means no bootstrap-code claim works (existing
+  grants and admin-issued codes are unaffected); it never means "anyone may". Rotating the hash is the lock-out recovery path
   ([ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)).
 - **A failed settings read fails OPEN**, to the defaults: not paused, the
   `SCORE_IMAGE`-derived module set, all six targets, the neutral identity. A

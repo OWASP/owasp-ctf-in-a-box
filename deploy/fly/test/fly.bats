@@ -631,7 +631,7 @@ ENV
 }
 
 # The admin claim-code hash (ADR 72). A missing or unusable value deploys an
-# event nobody can claim, so the deploy refuses it — and never prints it: a
+# event nobody can claim with a bootstrap code, so the deploy refuses it — and never prints it: a
 # value pasted where the hash belongs is usually the code itself.
 @test "deploy refuses a missing claim-code hash, naming init and --new-admin-code" {
   cd "$REPO"

@@ -96,5 +96,5 @@
   <text x="440" y="337" text-anchor="middle" font-size="10" fill="var(--text-muted)">the same image runs every event &#8212; a build cannot ship an empty admins list any more</text>
 
   <text x="40" y="382" font-size="10" fill="var(--text-muted)">there is no config file: nothing sits between these two planes, so nothing can disagree with either.</text>
-  <text x="40" y="398" font-size="10" fill="var(--text-muted)">an empty ADMIN_CLAIM_CODE_HASH fails closed (nobody can claim /admin); an unreadable settings hash falls back to defaults.</text>
+  <text x="40" y="398" font-size="10" fill="var(--text-muted)">an empty ADMIN_CLAIM_CODE_HASH fails closed (no bootstrap-code claim); an unreadable settings hash falls back to defaults.</text>
 </svg>

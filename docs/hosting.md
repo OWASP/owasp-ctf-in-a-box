@@ -306,8 +306,9 @@ fork's **package Read grant**, the one step with no API in either direction.
 
 It also checks the three bootstrap facts that have no other alarm:
 **`ADMIN_CLAIM_CODE_HASH` is a SHA-256** (absent, malformed, or the code
-pasted where its hash belongs means nobody can claim `/admin`; the value is
-never printed, and a leftover `ADMIN_LOGINS` line gets a warning that it is
+pasted where its hash belongs means nobody can claim `/admin` with a
+bootstrap code, though existing admins and codes they issue still work; the
+value is never printed, and a leftover `ADMIN_LOGINS` line gets a warning that it is
 ignored),
 **`GITHUB_ORG` is set and matches the org being inspected** (a warning
 instead of a failure when Secure Development is off, since an app-only event
@@ -784,7 +785,7 @@ four are the event's identity to the machine:
 
 | Key | Required | What it drives | Empty or unset means |
 |---|---|---|---|
-| `ADMIN_CLAIM_CODE_HASH` | **yes** | The SHA-256 of the one-time admin claim code — never the code. `ctf-setup.sh secrets` (or `admin-code`, the rotation) writes it and prints the code once; a signed-in kit account enters the code at `/admin/claim` to become an admin, and admins issue further 15-minute codes from the Admins tab. Read by `lib/bootstrap-env.ts` at start; anything that is not 64 hex (the code itself, pasted here) counts as unset. | **Nobody can claim the first admin seat**, so `/admin` refuses everyone and its Forbidden page says so. Fails CLOSED; there is no "let everyone in" state. |
+| `ADMIN_CLAIM_CODE_HASH` | **yes** | The SHA-256 of the one-time admin claim code — never the code. `ctf-setup.sh secrets` (or `admin-code`, the rotation) writes it and prints the code once; a signed-in kit account enters the code at `/admin/claim` to become an admin, and admins issue further 15-minute codes from the Admins tab. Read by `lib/bootstrap-env.ts` at start; anything that is not 64 hex (the code itself, pasted here) counts as unset. | **No bootstrap-code claim works.** On a box nobody has claimed yet that means no first admin seat, so `/admin` refuses everyone and its Forbidden page says so; existing admins, and the codes they issue from the Admins tab, still work. Fails CLOSED; there is no "let everyone in" state. |
 | `GITHUB_ORG` | when running Secure Development | The event org contestants fork the target repos under. Drives every fork link the app renders, the policy-page prose, and the repos `sync` polls. | The app renders a plain repo name instead of a broken link, and `sync` refuses to start at all, logging `ctf-sync: GITHUB_ORG is not set`. |
 | `SCORE_IMAGE` | when running Secure Development | Your scorer image, built from `scorer/` and pushed somewhere the box and the forks can pull it. | The event does not run Secure Development — see below. |
 | `EVENT_URL` | **yes** | **The** event URL: Caddy's TLS host, the auth callback origin, the HTTPS start-up guard, the CSRF origin check, and the leaderboard link in every score comment ([ADR 43](decisions.md#adr-43-one-url-and-it-lives-in-env-not-eventyaml)). | Defaults to `http://localhost`, which is fine only for a local trial. |
@@ -1009,7 +1010,7 @@ the same list, annotated), and `doctor` flags a missing `REDIS_PASSWORD`.
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | `lib/upstash.ts`; also `scorer/src/store.js`, `sync/src/redis.js` | *fixed*: `http://srh:80`, `SRH_TOKEN` | Redis-over-REST endpoint. Hints, teams, admin settings and module content live behind it. |
 | `TEAM_WRITES_ENABLED` | `lib/team-store.ts` | *fixed*: `"true"` | Enables team create/join writes; off in mock mode. |
 | `GITHUB_ORG` | `lib/bootstrap-env.ts` | empty | The GitHub org contestants fork the target repos under; drives fork links and policy-page prose. Empty renders plain repo-name text, never a broken link. |
-| `ADMIN_CLAIM_CODE_HASH` | `lib/bootstrap-env.ts`, `app/api/me/admin/claim/route.ts` | empty | SHA-256 of the one-time admin claim code ([ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)). Empty, or anything that is not 64 hex, means nobody can claim the first admin seat. Never the code itself. A new value needs a container recreate (`docker compose up -d --no-deps --force-recreate app`). `ADMIN_LOGINS` is not read. |
+| `ADMIN_CLAIM_CODE_HASH` | `lib/bootstrap-env.ts`, `app/api/me/admin/claim/route.ts` | empty | SHA-256 of the one-time admin claim code ([ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)). Empty, or anything that is not 64 hex, means no bootstrap-code claim works (existing admins and the codes they issue are unaffected). Never the code itself. A new value needs a container recreate (`docker compose up -d --no-deps --force-recreate app`). `ADMIN_LOGINS` is not read. |
 | `APP_BUILD_REV`, `APP_BUILT_AT` | `lib/app-version.ts` (`GET /health`) | empty | *Build args*, not runtime: the commit and build time the image reports. Unset reports `unknown`/`null` rather than failing a plain `docker compose build`; `scripts/dev-stack`, `deploy/fly/deploy.sh` and `deploy/aws-terraform/deploy.sh` fill them in. |
 
 **Sync** (`sync/src/config.js`):

@@ -2236,7 +2236,9 @@ looks wrong. Alongside the per-fork provisioning matrix (see
 three facts that have no other alarm:
 
 - **`ADMIN_CLAIM_CODE_HASH` is a SHA-256.** Absent or malformed (or the code
-  itself pasted where its hash belongs) means nobody can claim `/admin`, which
+  itself pasted where its hash belongs) means nobody can claim `/admin` with a
+  bootstrap code. Existing admins and the codes they issue still work, so on
+  a claimed box this only bites at the next lock-out; on an unclaimed one it
   is silent until an organizer tries to open the panel. The value is never
   printed. A leftover `ADMIN_LOGINS` line gets a ⚠️: nothing reads it.
 - **`GITHUB_ORG` is set.** `doctor` takes no separate org argument —

@@ -50,8 +50,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   unset (later plans ignore its value; the hash, never the code, may sit in
   state as a sensitive value), and
   `deploy/aws-terraform/deploy.sh` writes the hash into it once the stack
-  exists; `--new-admin-code` replaces it and rolls the app. `dev-stack`
-  writes a code into its throwaway env. The dry-run redactor hides `*_HASH`
+  exists; `--new-admin-code` replaces it and rolls the app. The code is
+  printed as soon as the hash is stored, so a failed roll still leaves it in
+  hand, with the `update-service` command that activates it. `dev-stack`
+  writes a code into its throwaway env, and refuses to start when an exported
+  `ADMIN_CLAIM_CODE_HASH` differs from its env file's. The dry-run redactor hides `*_HASH`
   values and the argument after `--value`.
   **Breaking:** setup no longer asks for or writes `ADMIN_LOGINS`; `doctor`
   and the Fly deploy warn on a leftover line. The Terraform variable

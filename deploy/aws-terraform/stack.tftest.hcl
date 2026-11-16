@@ -288,7 +288,7 @@ run "secure_development_event_runs_scorer_and_sync" {
       for sec in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].secrets :
       sec.name == "ADMIN_CLAIM_CODE_HASH" && endswith(sec.valueFrom, "${var.ssm_prefix}/ADMIN_CLAIM_CODE_HASH")
     ])
-    error_message = "app must receive ADMIN_CLAIM_CODE_HASH by reference, or nobody can claim /admin."
+    error_message = "app must receive ADMIN_CLAIM_CODE_HASH by reference, or nobody can claim /admin with a bootstrap code."
   }
 
   assert {

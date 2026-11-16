@@ -85,9 +85,9 @@ src/
   proxy.ts                  # Middleware: same-origin check on mutating /api, /profile sign-in redirect
   instrumentation.ts        # Startup checks (http:// EVENT_URL refusal)
   app/
-    (site)/                 # Pages: challenges, quiz, flags, ai, leaderboard, profile,
+    (site)/                 # Pages: challenges, quiz, flags, leaderboard, profile,
                             #   admin, join, how-to-play, rules, faq, privacy, terms
-    api/                    # auth, team, hints, quiz, classic, ai, admin, board,
+    api/                    # auth, team, hints, quiz, classic, admin, board,
                             #   me, post-signin, public, stats
   components/               # Header/footer, boards, leaderboard, team card, countdown
   lib/
@@ -95,7 +95,7 @@ src/
     resolved-modules.ts     # Runtime enablement + title/blurb overrides from Redis
     auth.ts                 # better-auth config; disabledPaths closes unused endpoints
     admin-store.ts          # ctf:admin:settings — pause, schedule, cap, hint policy
-    team-store.ts, hint-store.ts, quiz-store.ts, classic-store.ts, ai-store.ts
+    team-store.ts, hint-store.ts, quiz-store.ts, classic-store.ts
     launch.ts               # Pre-launch lock: page redirect + API 403 not-launched
     leaderboard/            # Source adapters (mock/lambda/empty) + overlays
     upstash.ts              # Redis REST client (pipeline + EVAL)
@@ -106,7 +106,7 @@ src/
 
 **Authentication surface.** better-auth mounts its whole default endpoint set under `src/app/api/auth/[...all]`; the app uses four routes and closes the rest with `disabledPaths` in `src/lib/auth.ts`. `POST /update-user` was the one that mattered — with no database it would re-sign the session cookie with a client-chosen `login`. Do not "harden" `login` to `input: false` (it breaks OAuth profile mapping), remember `disabledPaths` matches literal paths only, and keep `src/lib/__tests__/auth.test.ts` green — it fails when an upgrade adds an endpoint that is neither used nor closed.
 
-**Launch lock.** Until the event is launched — a **Scoring opens** (`scoringStartsAt`) that has passed — every module page (`/challenges`, `/flags`, `/quiz`, `/ai`, their detail pages, `/leaderboard`) calls `redirectIfNotLaunched(login)` before loading any content and sends a non-admin to `/`, and the module APIs (`POST /api/classic/submit`, `/api/quiz/answer`, `/api/hints/reveal`, `GET /api/board/items`, and the ai module's `/ai/[id]` server action) call `requireLaunchedApi(login)` and answer **403 `{ error: "not-launched" }`**. Both live in `src/lib/launch.ts`; admins pass as a preview; it fails closed. The check is per page and route, not in `src/proxy.ts` (the proxy makes no Redis reads), so `src/__tests__/launch-guard-coverage.test.ts` walks the module pages and routes on disk and fails if a new one forgets the guard. The contract is item 8 of [modules.md Section 5](../../docs/modules.md); the operator view is [Before launch](../../docs/operations.md#before-launch).
+**Launch lock.** Until the event is launched — a **Scoring opens** (`scoringStartsAt`) that has passed — every module page (`/challenges`, `/flags`, `/quiz`, their detail pages, `/leaderboard`) calls `redirectIfNotLaunched(login)` before loading any content and sends a non-admin to `/`, and the module APIs (`POST /api/classic/submit`, `/api/quiz/answer`, `/api/hints/reveal`, and `GET /api/board/items`) call `requireLaunchedApi(login)` and answer **403 `{ error: "not-launched" }`**. Both live in `src/lib/launch.ts`; admins pass as a preview; it fails closed. The check is per page and route, not in `src/proxy.ts` (the proxy makes no Redis reads), so `src/__tests__/launch-guard-coverage.test.ts` walks the module pages and routes on disk and fails if a new one forgets the guard. The contract is item 8 of [modules.md Section 5](../../docs/modules.md); the operator view is [Before launch](../../docs/operations.md#before-launch).
 
 **Reach counter.** `POST /api/stats/visit` does `HINCRBY stats:countries <iso2> 1` once per browser session, taking the country from `cf-ipcountry` or `x-geo-country` and validating it as ISO-3166 alpha-2; the body is ignored and no login, IP or timestamp is stored, which is the promise `/privacy` makes. The kit's Caddy does not set or strip that header, so on a bare deployment the tally is spoofable — accepted for an approximate, no-PII counter.
 

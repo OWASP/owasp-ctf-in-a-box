@@ -38,10 +38,10 @@
 //      `lastSolveAt` = the latest solve time. scorer/src/serve.js:190-213,
 //      scorer/src/store.js:6-7. The app ATTRIBUTES this total, never adds it
 //      again: leaderboard/module-contributions.ts:624-635.
-//  R4  Quiz / classic / ai per contestant = the aggregate counters
+//  R4  Quiz / classic per contestant = the aggregate counters
 //      (`ctf:<m>:points` + `ctf:<m>:answered|solved`), ADDED to the row, and
 //      only when the completed count is > 0. quiz-store.ts:577-590,
-//      classic-store.ts:950-963, ai-store.ts:471-484,
+//      classic-store.ts:950-963,
 //      module-contributions.ts:639-655.
 //  R5  The contestant rows are the union (case-insensitive) of SD authors and
 //      players with completed > 0 in a live app-side module; a module-only
@@ -55,9 +55,9 @@
 //      team-store.ts:537-572, scorer/src/serve.js:249-253,
 //      docs/operations.md:96-110.
 //  R7  A team's module total is the UNION of its members' items, never the
-//      sum: SD by (target, id) across members; quiz/classic/ai by item id
+//      sum: SD by (target, id) across members; quiz/classic by item id
 //      across the members' `ctf:quiz:answers:<player>` /
-//      `ctf:classic:solves:<player>` / `ctf:ai:solves:<player>` rows
+//      `ctf:classic:solves:<player>` rows
 //      ({points, at} JSON), the EARLIEST row winning, each module counted
 //      ONCE. scorer/src/serve.js:256-275, leaderboard/team-fold.ts:43-106,
 //      docs/operations.md:118-122 and :1164-1170 ("points count per team").
@@ -127,13 +127,12 @@ import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
-export const MODULES = ["secure-development", "quiz", "classic", "ai"];
-export const APP_MODULES = ["quiz", "classic", "ai"];
+export const MODULES = ["secure-development", "quiz", "classic"];
+export const APP_MODULES = ["quiz", "classic"];
 /** Per-player row hash and aggregate counters for each app-side module. */
 export const MODULE_KEYS = {
   quiz: { points: "ctf:quiz:points", count: "ctf:quiz:answered", lastAt: "ctf:quiz:lastAt", rows: "ctf:quiz:answers:" },
   classic: { points: "ctf:classic:points", count: "ctf:classic:solved", lastAt: "ctf:classic:lastAt", rows: "ctf:classic:solves:" },
-  ai: { points: "ctf:ai:points", count: "ctf:ai:solved", lastAt: "ctf:ai:lastAt", rows: "ctf:ai:solves:" },
 };
 const BATCH = 200;
 const FETCH_TIMEOUT_MS = 15_000;
@@ -217,8 +216,8 @@ export function parseEarnedRow(raw) {
  *     scoreImage: boolean,                // SCORE_IMAGE non-empty in the container
  *     sdCatalogue: [{app, id, points}] | null,
  *     sdSolves: {target: {"<author>:<id>": iso}},
- *     agg: {quiz: {points: {player: n}, count: {player: n}, lastAt: {player: iso}}, classic: …, ai: …},
- *     rows: {quiz: {player: {itemId: json}}, classic: …, ai: …},
+ *     agg: {quiz: {points: {player: n}, count: {player: n}, lastAt: {player: iso}}, classic: …},
+ *     rows: {quiz: {player: {itemId: json}}, classic: …},
  *     hintsSpent: {player: n},
  *     teams: [{slug, name, members: [player]}],
  *     users: {player: teamSlug | null},    // ctf:user:<player> team field
@@ -229,7 +228,7 @@ export function recompute(snapshot) {
   const invariants = [];
   // R12: the name the board should show; null when the snapshot carries no account rows.
   const nameOf = (player) => (snapshot.names ? snapshot.names[player] ?? snapshot.names[lc(player)] ?? fallbackName(player) : null);
-  const stats = { sdSolvesCounted: 0, sdSolvesIgnored: 0, quizAnswers: 0, classicSolves: 0, aiSolves: 0, hintPlayers: 0 };
+  const stats = { sdSolvesCounted: 0, sdSolvesIgnored: 0, quizAnswers: 0, classicSolves: 0, hintPlayers: 0 };
 
   // --- SD per author (R2, R3) ----------------------------------------------
   const sdAuthors = new Map(); // lower -> { player, points, patched, lastSolveAt, solves: Map<target:id, {points, at}> }
@@ -293,7 +292,6 @@ export function recompute(snapshot) {
       const n = [...map.values()].reduce((s, t) => s + (t.completed > 0 ? t.completed : 0), 0);
       if (m === "quiz") stats.quizAnswers = n;
       if (m === "classic") stats.classicSolves = n;
-      if (m === "ai") stats.aiSolves = n;
     }
   }
 
@@ -827,7 +825,7 @@ export async function readSnapshot() {
   });
   const rowCmds = playerList.flatMap((l) => [...APP_MODULES.map((m) => ["HGETALL", `${MODULE_KEYS[m].rows}${l}`]), ["HGET", `ctf:user:${l}`, "team"]]);
   const rowReplies = await batched(rowCmds);
-  const rows = { quiz: {}, classic: {}, ai: {} };
+  const rows = { quiz: {}, classic: {} };
   const users = {};
   const per = APP_MODULES.length + 1;
   playerList.forEach((l, i) => {
@@ -908,7 +906,7 @@ export function summarize(report) {
   const out = [];
   out.push(`score-audit: live modules [${(report.live || []).join(", ")}], hints ${report.hintsEnabled ? "on" : "off"}`);
   out.push(`  compared ${c.comparedContestants ?? 0}/${c.expectedContestants ?? 0} contestants (board shows ${c.servedContestants ?? 0}), ${c.comparedTeams ?? 0}/${c.expectedTeams ?? 0} teams (board shows ${c.servedTeams ?? 0}), ${c.comparedValues ?? 0} values`);
-  out.push(`  from ${c.sdSolvesCounted ?? 0} Secure Development solves (${c.sdSolvesIgnored ?? 0} ignored: not in the rubric), ${c.quizAnswers ?? 0} quiz answers, ${c.classicSolves ?? 0} flag solves, ${c.aiSolves ?? 0} ai solves, ${c.hintPlayers ?? 0} players with hint spend`);
+  out.push(`  from ${c.sdSolvesCounted ?? 0} Secure Development solves (${c.sdSolvesIgnored ?? 0} ignored: not in the rubric), ${c.quizAnswers ?? 0} quiz answers, ${c.classicSolves ?? 0} flag solves, ${c.hintPlayers ?? 0} players with hint spend`);
   if (report.orphanTargets && report.orphanTargets.length) out.push(`  note: solve hashes for targets outside the rubric (ignored by the scorer): ${report.orphanTargets.join(", ")}`);
   out.push(`  board mismatches: ${(report.mismatches || []).length}; store invariant findings: ${(report.invariants || []).length}`);
   for (const m of (report.mismatches || []).slice(0, 200)) out.push(`  MISMATCH ${m.who}${m.module ? ` [${m.module}]` : ""} ${m.field}: expected ${JSON.stringify(m.expected)}, served ${JSON.stringify(m.served)}`);

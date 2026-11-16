@@ -14,8 +14,8 @@ example of an app-side module end to end.
 
 A **module** is a CTF vertical — a family of challenges with its own targets,
 scoring logic, and provisioning steps — plugged into the OWASP CTF in a Box
-platform (event config, sync/scorer pipeline, `ctf-setup`, leaderboard). v1
-ships four playable registered modules: `secure-development` (the OWASP Secure
+platform (event config, sync/scorer pipeline, `ctf-setup`, leaderboard). It
+ships three playable registered modules: `secure-development` (the OWASP Secure
 Development CTF patch-the-vulnerability format: fork target app, find + patch
 the vuln, PR back, GitHub Actions scores the patch), `quiz` (a self-paced
 single/multi-select question bank, authored in `/admin` and scored entirely
@@ -24,14 +24,7 @@ inside the app — no GitHub, `sync`, or `scorer` involvement at all), `classic`
 hiding a flag, graded the instant a contestant submits a matching string —
 scored entirely inside the app exactly like `quiz`, with no GitHub/`sync`/
 `scorer` involvement either; §5 covers what its UI contract satisfies and
-what it still doesn't, for both app-side modules), and `ai` (externally
-hosted AI/LLM challenges: an organizer authors each challenge in `/admin` —
-mode flag/event/both, the external launch URL, categories, an optional paid
-hint, a submission cooldown — and a contestant plays it on the external site
-or types a flag back on `/ai/[id]`; see
-[docs/ai-module.md](ai-module.md) for the external integrator's side of the
-contract; `ai` is deprecated and removed in v2.0.0, see
-[ADR 69](decisions.md#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags)). This document is
+what it still doesn't, for both app-side modules). This document is
 the contract a new
 module (forensics, api-security, cloud, …) must satisfy to plug in, with
 `secure-development` as the worked example throughout, since it is the one
@@ -64,7 +57,7 @@ the sections below are the enforceable contract behind it.
    `secure-development`'s "this deployment runs me" answer (§1.2 below and
    [docs/hosting.md](hosting.md#the-four-bootstrap-keys)). Anything an
    organizer might change mid-event is a runtime `/admin` setting instead, not
-   an env key. `quiz`, `classic` and `ai` need no bootstrap key at all.
+   an env key. `quiz` and `classic` need no bootstrap key at all.
 
 2. MUST be **runtime-toggleable**, like every other module. Organizers switch
    modules on and off from `/admin` during an event, and the live set lives in
@@ -81,7 +74,7 @@ the sections below are the enforceable contract behind it.
    stack comes up, not when a switch is flipped — MUST
    expose that availability fact to the app as a runtime env var (`SCORE_IMAGE`
    is the worked example) and refuse enabling when it is absent, with the
-   reason, in both the panel and the server. `quiz`, `classic` and `ai` need no
+   reason, in both the panel and the server. `quiz` and `classic` need no
    such env var, since their routes, nav entries and tabs ship in every `app`
    image regardless.
 
@@ -101,7 +94,7 @@ the sections below are the enforceable contract behind it.
    architectural stance.
 
    What a new module has to touch depends on how far into the platform it
-   reaches. A purely app-side module (`quiz`, `classic`, `ai`) is the app
+   reaches. A purely app-side module (`quiz`, `classic`) is the app
    registry and nothing else — neither `sync` nor `setup/ctf-setup.sh` knows
    those ids exist, and neither needs to. A module with **provisioning** of its
    own (forks, GitHub Apps, package grants — anything `ctf-setup.sh` must do
@@ -282,7 +275,7 @@ description, and nav entry are code-side registry data (`REGISTRY` in
 `ctf:admin:settings` set that defaults to Secure Development alone when the
 deployment has a `SCORE_IMAGE`, otherwise nothing
 ([ADR 52](decisions.md#adr-52-modules-are-switched-at-runtime-secure-development-is-configured-at-setup),
-amended by #386). Four ids are registered today, all four
+amended by #386). Three ids are registered today, all three
 **real, working modules** rather than registry-proving placeholders:
 `secure-development` (targets, catalogue,
 GitHub-mediated scoring — the worked example throughout this document),
@@ -295,20 +288,7 @@ also scored entirely inside the app — see
 [docs/architecture.md#jeopardy-data-flow](architecture.md#jeopardy-data-flow)
 for its data flow and `docs/operations.md`'s "Jeopardy" section for the
 organizer-facing authoring/cooldown guide, including stories — chains of
-challenges a team unlocks in order, #463 — and challenge files, #186), and `ai` (challenges hosted on an
-external site, played there or graded by a typed flag back on `/ai/[id]`).
-Registered and selectable, and its contract, store layer, contestant surface
-**and** admin section have all shipped: the nav entry, the `/ai` board and
-the `/ai/[id]` challenge page (the launcher, and the in-box flag form for a
-`flag`/`both` challenge), plus a full authoring UI
-(`admin-ai-controls.tsx`) for mode/URL/categories/hint and the
-`aiCooldownSec` submission-cooldown knob. Its catalogue rides in the
-whole-event archive bundle (`ai-io.ts`, the third section beside `classic`
-and `quiz`, carrying flags, hints, categories and per-challenge signing keys
-but never the launch keypair); the remaining gap is narrower — the AI tab has
-no bundle button of its own, so a board is moved through the archive rather
-than a per-module export. See [docs/ai-module.md](ai-module.md) for what an external
-challenge site must implement to integrate with it. An id outside the
+challenges a team unlocks in order, #463 — and challenge files, #186). An id outside the
 registry is rejected wherever it is offered: the `/admin` settings route
 validates `enabledModules` against `ALL_MODULE_IDS` and answers an unknown id
 with an `AdminValidationError`, and `isModuleId` guards every other read, so
@@ -319,29 +299,26 @@ across the app, not just as a filter over one hardcoded target list:
 `resolved-modules.ts`'s `getNavLinks`/`getNavGroups`, running `site.ts`'s
 `buildNavLinks`/`buildNavGroups` over the LIVE resolved-module list, splice a
 module's nav entry into the header iff that module is enabled *and* defines a
-`nav` — all three app-side modules do now, `quiz`'s pointing at `/quiz` (`apps/web/src/app/(site)/quiz/`,
-rendering `components/quiz-board.tsx`), `classic`'s at `/flags`
-(`apps/web/src/app/(site)/flags/`, rendering `components/challenge-board.tsx`)
-and `ai`'s at `/ai` (`apps/web/src/app/(site)/ai/`, rendering that same
-`components/challenge-board.tsx` — the board and the challenge page are
-shared by both flag-graded modules, with a different `basePath`);
+`nav` — both app-side modules do, `quiz`'s pointing at `/quiz` (`apps/web/src/app/(site)/quiz/`,
+rendering `components/quiz-board.tsx`) and `classic`'s at `/flags`
+(`apps/web/src/app/(site)/flags/`, rendering `components/challenge-board.tsx`);
 the leaderboard pipeline's
 `withModuleContributions` (`src/lib/leaderboard/module-contributions.ts`)
 attributes `secure-development`'s scorer-sourced *gross* points (hint
 penalties fold last, netting the final all-module total once — the module
 blocks show gross, the row's `−N hints` marker reconciles them) into a
-per-module `ModuleProgress`, and now *also* computes `quiz`'s, `classic`'s
-and `ai`'s points app-side and adds them into the combined total (never
-attributes them — the scorer never sees a quiz question, a captured flag,
-or an ai challenge solve, so there is nothing of theirs to attribute from) —
+per-module `ModuleProgress`, and now *also* computes `quiz`'s and `classic`'s
+points app-side and adds them into the combined total (never
+attributes them — the scorer never sees a quiz question or a captured flag,
+so there is nothing of theirs to attribute from) —
 see
-the architecture doc for why secure-development and the three app-side modules
+the architecture doc for why secure-development and the two app-side modules
 use different verbs there. An
 expanded leaderboard row renders each enabled
 module's own detail block (`components/module-detail.tsx`) instead of one
 hardcoded shape — `secure-development`'s branch shows the existing
-patched/target breakdown, `quiz`'s shows an answered/total count, `classic`'s
-a solved/total count, and `ai`'s a cleared/total count of its own — with the
+patched/target breakdown, `quiz`'s shows an answered/total count and `classic`'s
+a solved/total count — with the
 per-module heading suppressed while only one module is enabled, so a
 single-module event's row reads exactly as it did before; `/profile` renders
 the same per-module blocks for the signed-in contestant's own progress,
@@ -365,11 +342,9 @@ own tab (`app/(site)/admin/admin-secure-dev-tab.tsx`), the quiz's two retry-gate
 knobs plus its full
 question-authoring UI (`components/admin-quiz-controls.tsx`) in Quiz's,
 classic's submission-cooldown knob plus its full challenge/category
-authoring UI (`components/admin-classic-controls.tsx`) in Jeopardy's, and
-ai's submission-cooldown knob plus its own challenge/category authoring UI
-(`components/admin-ai-controls.tsx`) in AI's —
+authoring UI (`components/admin-classic-controls.tsx`) in Jeopardy's —
 so the generic "No settings for this module yet." fallback that a module
-tab renders when it defines no controls is, today, dead code for all four
+tab renders when it defines no controls is, today, dead code for all three
 shipped modules; it stays wired for whatever module ships next with no
 settings of its own. Every module tab opens with an identity editor
 (`app/(site)/admin/admin-module-identity.tsx`) for that module's title/blurb override (item 1
@@ -408,18 +383,17 @@ third module isn't mistaken for a fully general n-module platform:
   per-module breakdown, never a separate view. This is unchanged by `quiz` or
   `classic` going live — each added its own breakdown block, not a second or
   third board.
-- **`sync` still doesn't score anything for `quiz`, `classic` or `ai`, by
+- **`sync` still doesn't score anything for `quiz` or `classic`, by
   design, not as a gap.**
   `sync` has no notion of those ids at all — since config v2 (#386) it reads
   `.env` plus the Secure Development target list in `ctf:admin:settings`, and
   nothing else; it scores `secure-development`
-  alone, because none of the three app-side modules ever produces a score for
+  alone, because neither app-side module ever produces a score for
   GitHub to relay in the
-  first place — all three grade server-side inside the app's own Redis keys
-  (see the architecture doc; `ai` takes its solve reports over its own
-  authenticated app route, never through the scorer). Per-module
+  first place — both grade server-side inside the app's own Redis keys
+  (see the architecture doc). Per-module
   ingest/rubric plumbing was for a
-  module that needs scorer-mediated scoring; `quiz`, `classic` and `ai` are
+  module that needs scorer-mediated scoring; `quiz` and `classic` are
   proof one doesn't
   always need it, not evidence that plumbing is still missing.
 - **No free-text questions, no partial credit, and no per-question
@@ -495,12 +469,11 @@ third module isn't mistaken for a fully general n-module platform:
 
 This section remains the contract a *new* module (forensics, api-security,
 cloud, …) must satisfy to plug into the same UI: it is now proven against
-four
+three
 real modules with genuinely different shapes — `secure-development`
 (GitHub-mediated scoring, per-target progress), `quiz` (app-side scoring,
-a flat answered/total count), `classic` (app-side scoring, a flat
-solved/total count), and `ai` (challenges hosted outside the box, scored
-app-side from a signed event or a typed flag, a flat solved/total count) —
+a flat answered/total count) and `classic` (app-side scoring, a flat
+solved/total count) —
 which is what makes item 3 below a contract
 about *defining your own progress semantics*, not an accidental description
 of one module's shape.
@@ -619,11 +592,7 @@ of one module's shape.
    from a tab opened before the toggle cannot bank points that reappear on
    re-enable (#495). The HTTP routes answer **HTTP 403** with the body
    `{ "error": "unavailable" }` as their first check: `POST
-   /api/classic/submit`, `POST /api/quiz/answer`, and the ai module's
-   token-authenticated `POST /api/ai/submit` and `POST /api/ai/event`. The
-   ai module's in-box server action (`submitAiFlagAction`) has no HTTP
-   status; it returns the result object `{ error: "unavailable" }` as its
-   first check instead. `hintGate` refuses a hint on a disabled module's
+   /api/classic/submit` and `POST /api/quiz/answer`. `hintGate` refuses a hint on a disabled module's
    target the same way.
 
 
@@ -744,7 +713,7 @@ of one module's shape.
    implementation; a module does not re-derive "launched" from the settings.
 
    - **Pages.** Every module page (its `nav.href` and every page under it —
-     `/flags/[id]`, `/ai/[id]`, and `/leaderboard` too) calls
+     `/flags/[id]` and `/leaderboard` too) calls
      `await redirectIfNotLaunched(login)` **before it loads any module
      content**: a refused viewer is redirected to `/`, and the page must not
      have read a challenge, question or standing first. Order matters — a
@@ -759,16 +728,10 @@ of one module's shape.
      `GET /api/board/items` and `GET /api/attachments/<id>`. A module's UI
      should name the refusal (the classic, quiz and hint UIs do) rather than
      render it as "wrong".
-   - **Server actions and tokens.** A server action is an API too: the ai
-     module's in-box flag action (`/ai/[id]/actions.ts`) checks
-     `getLaunchAccess(login)` and answers `{ error: "not-launched" }`. The ai
-     launch token is minted only from `/ai/[id]`, behind its own
-     `redirectIfNotLaunched`, so `POST /api/ai/submit` and `/api/ai/event`,
-     which are authenticated by that token, inherit the lock — before
-     launch no contestant can hold a token; only an admin previewing the
-     page can mint one, and nothing scores until the scoring window opens.
-     A module that hands out any credential for
-     an external site mints it behind the page guard the same way.
+   - **Server actions and tokens.** A server action is an API too: it
+     checks `getLaunchAccess(login)` and answers `{ error: "not-launched" }`.
+     A module that hands out any credential for an external site mints it
+     behind the page guard, so before launch no contestant can hold one.
 
    Admins (`isAdminLogin`: `ADMIN_LOGINS` plus stored admins) pass as a
    **preview** — `getLaunchAccess` returns `{ allowed: true, preview: true }`
@@ -1030,46 +993,11 @@ different, smaller set of files, since none of `scorer/`'s rows apply and
 | `apps/web/src/lib/classic-store.ts` | the module's own `ctf:classic:*` Redis store, its atomic flag-grading Lua script, and the admin/contestant secrecy split |
 | `apps/web/src/lib/markdown.ts` + `apps/web/src/components/markdown.tsx` | the restricted Markdown parser and its node-tree-to-React renderer for challenge descriptions |
 | `apps/web/src/app/api/classic/submit/route.ts` + `apps/web/src/app/api/admin/classic/route.ts` | the flag-submission and organizer-authoring wire contract |
-| `apps/web/src/app/(site)/flags/page.tsx` + `apps/web/src/components/challenge-board.tsx` + `apps/web/src/components/challenge-detail.tsx` | the contestant-facing board and the challenge page it links to (both shared with `ai`, parameterised by `basePath`) |
+| `apps/web/src/app/(site)/flags/page.tsx` + `apps/web/src/components/challenge-board.tsx` + `apps/web/src/components/challenge-detail.tsx` | the contestant-facing board and the challenge page it links to (parameterised by `basePath`) |
 | `apps/web/src/components/admin-classic-controls.tsx` | the organizer's cooldown knob, category manager, and challenge authoring UI |
 | `apps/web/src/lib/leaderboard/module-contributions.ts` + `apps/web/src/lib/leaderboard/team-fold.ts` | the leaderboard overlay (points added, never attributed) and the union-by-item team dedupe it shares with `quiz` |
 | `apps/web/src/lib/module-defs/classic.ts` + `apps/web/src/lib/modules.ts` | display name/description/nav plus the `home`/`guide`/`rules`/`faq`/`terms`/`routeCard` copy blocks (§5.5–5.7) in the module's def file, registered in `modules.ts`'s `REGISTRY` |
 | `README.md` | document the module |
-
-`ai`'s actual footprint in this PR series — a module shaped like `classic`
-(no target, no scorer, app-side grading) but with an external launch step and
-two independent ways to report a solve back:
-
-| File | What it added |
-|---|---|
-| `apps/web/src/lib/ai-keys.ts` | key names/builders, challenge-id generation, the `AiMode` shape, `validateUrlTemplate` — dependency-free, shared by the admin form and the server-only store (`HintTarget` itself lives in `hint-store.ts`, below) |
-| `apps/web/src/lib/ai-defaults.ts` | the module's shared constants (`AI_COOLDOWN_SEC`, …) the server and the admin UI both need, so neither can drift from the other |
-| `apps/web/src/lib/ai-token.ts` | the launch token: EdDSA/Ed25519 signing and verification (`signLaunchToken`), plus the HMAC signing helper for a `mode: "event"` solve report (`signEventBody`) — see [ADR 53](decisions.md#adr-53-ai-launch-tokens-are-asymmetric-event-signatures-stay-symmetric) for why the two are different key types |
-| `apps/web/src/lib/ai-store.ts` | the module's own `ctf:ai:*` Redis store — challenges, the per-challenge signing keys and the one module-wide launch keypair, flag grading, hints — and the admin/contestant secrecy split |
-| `apps/web/src/lib/ai-launch.ts` | building a launch URL from a challenge's `urlTemplate` and a minted token (`mintLaunchUrl`/`buildLaunchClaims`) |
-| `apps/web/src/lib/ai-http.ts` | shared request/response helpers for the four contestant-facing `/api/ai/*` routes |
-| `apps/web/src/lib/app-origin.ts` | the launch token's `iss` — the app's own configured origin, never a request's `Host` header |
-| `apps/web/src/app/(site)/ai/page.tsx` + `not-found.tsx` | the contestant-facing board (a 404 when the module is disabled, same gate `/flags` and `/quiz` already run) |
-| `apps/web/src/app/(site)/ai/[id]/page.tsx` + `layout.tsx` + `not-found.tsx` + `actions.ts` | the challenge page: the launcher (mints a personal launch URL server-side) and, for a `flag`/`both` challenge, the in-box flag form |
-| `apps/web/src/app/api/ai/launch-key/route.ts`, `.../submit/route.ts`, `.../state/route.ts`, `.../event/route.ts` | the four contestant-facing routes: publish the launch public key, grade a typed flag, read a player's own progress, and accept an external site's signed solve event |
-| `apps/web/src/app/api/admin/ai/route.ts` + `.../test/route.ts` | the organizer-authoring wire contract, plus the "Send test" route that calls the real `/api/ai/event` handler in-process with `dryRun: true` |
-| `apps/web/src/components/admin-ai-controls.tsx` + `admin-ai-integration.tsx` | the organizer's challenge authoring UI (mode, launch URL, categories, hint, `order`) and cooldown knob, plus the per-challenge integration panel (endpoint URLs, the masked signing key with reveal/rotate, a ready-to-run test curl, and the Send test button) |
-| `apps/web/src/app/(site)/flags/page.tsx` + `apps/web/src/components/challenge-board.tsx` + `apps/web/src/components/challenge-detail.tsx` | the contestant-facing board and challenge page `ai` shares with `classic`, parameterised by `basePath` (already listed in `classic`'s row above — no separate copy for `ai`) |
-| `apps/web/src/components/hint-reveal-button.tsx` | extended to cover an `ai` hint purchase alongside secure-development's and classic's |
-| `apps/web/src/lib/hint-store.ts` | `ai` added to `HintTarget`; the anti-burner solve-count gate reads `ai`'s whole-board solve count the same way it reads `classic`'s |
-| `apps/web/src/lib/leaderboard/module-contributions.ts` | the leaderboard overlay's `ai` case — points added, never attributed, same verb as `quiz`/`classic` |
-| `apps/web/src/lib/metrics-store.ts` | `ai` added to the per-player read list, the `earnedRows` fold and the `modules` split, so Insights reports on it (§10.4) |
-| `apps/web/src/lib/activity-keys.ts` | an `ai-solve` activity type, logged on fresh solves only |
-| `apps/web/src/lib/admin-store.ts` | the `aiCooldownSec` runtime setting (validated, capped at `AI_COOLDOWN_SEC_MAX`) and the module's rows in `resetEvent`'s PROGRESS/CONTENT split |
-| `apps/web/src/lib/demo-fixture.ts` | demo seed data for the `ai` board, gated the same way `quiz`'s and `classic`'s are — a disabled `ai` module leaves the seed byte-for-byte identical to pre-`ai` behavior |
-| `apps/web/src/lib/module-defs/ai.ts` + `apps/web/src/lib/modules.ts` | display name/description/nav plus the `home`/`guide`/`rules`/`faq`/`terms`/`routeCard` copy blocks (§5.5–5.7) in the module's def file, registered in `modules.ts`'s `REGISTRY` |
-| `docs/decisions.md` | [ADR 53](decisions.md#adr-53-ai-launch-tokens-are-asymmetric-event-signatures-stay-symmetric) — why the launch token is asymmetric while event signatures stay symmetric |
-| `docs/ai-module.md` + `README.md` | the external integrator's contract, and documenting the module for organizers |
-
-`ai` has no per-tab bulk import/export button of its own, unlike `quiz` and
-`classic` (§5), but its catalogue does ride the whole-event archive bundle,
-in its own bundle format (`ai-io.ts`, exported and imported through
-`event-store.ts` — #155's `ai` half, closed by #250).
 
 Nothing under `scorer/` or `scorer/rubric.owasp/` changes for a module shaped
 this way — there is no target, no rubric, and no catalogue for the scorer to
@@ -1113,8 +1041,8 @@ Three rules about those rows, each of which has cost this repo a wrong number:
    timeline buckets on it, so a row stamped at import or seed time moves a
    solve to the wrong ten minutes.
 2. **`firstAt` is the FIRST attempt and is carried forward** across every
-   later attempt — all three modules' Lua scripts re-read the existing row and
-   keep the original (`quiz-store.ts` / `classic-store.ts` / `ai-store.ts`,
+   later attempt — both modules' Lua scripts re-read the existing row and
+   keep the original (`quiz-store.ts` / `classic-store.ts`,
    `if not firstAt then firstAt = ARGV[…] end`). It is what makes time-to-solve knowable at all;
    overwriting it each try silently turns every duration into zero.
 3. **The attempt row must survive the solve.** `avgAttemptsToSolve` and
@@ -1160,7 +1088,7 @@ reads as "measured, and none".
 ### 10.4 Registration is NOT automatic
 
 Adding a module does not add it to Insights. `computeEventMetrics`
-(`apps/web/src/lib/metrics-store.ts`) names quiz, classic and ai explicitly — the
+(`apps/web/src/lib/metrics-store.ts`) names quiz and classic explicitly — the
 per-player read list, the `earnedRows` pair it folds, and the `modules` split in
 the response. A new module with both hashes still reports nothing until it is
 added in those three places.
@@ -1183,8 +1111,8 @@ the next module author finds it in the contract rather than in an empty tab.
   write, it needs a decision record first: every per-contestant field added is
   one edit away from making an admin payload carry a login.
 - **Do not read a module's aggregate counter where a fold over per-player rows
-  will do.** `ctf:classic:solvecount` and `ctf:ai:solvecount` exist and would
-  be free per-module shortcuts; the fold deliberately ignores them, because
-  folding per-player rows produces the same figure for **all three** app-scored
+  will do.** `ctf:classic:solvecount` exists and would
+  be a free per-module shortcut; the fold deliberately ignores them, because
+  folding per-player rows produces the same figure for **every** app-scored
   modules from one source. Reading both invites the two to disagree with no
   way to tell which is right.

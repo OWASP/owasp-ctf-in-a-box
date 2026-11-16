@@ -39,8 +39,7 @@ that weakens one layer "because another layer still catches it" is a
 finding — the four layers are deliberate redundancy.
 
 **2. Lua is the scoring authority.** The grading scripts (`SUBMIT_SCRIPT`
-in `classic-store.ts`, `GRADE_SCRIPT` in `quiz-store.ts`, `AWARD_SCRIPT` in
-`ai-store.ts`) decide points; the JS pre-checks are advisory early-outs.
+in `classic-store.ts`, `GRADE_SCRIPT` in `quiz-store.ts`) decide points; the JS pre-checks are advisory early-outs.
 Review implications: moving an already-solved guard, attempt cap, cooldown
 check, or price read out of the script into JS is a correctness regression,
 not a refactor. A change to script text needs tests that pin the *semantics*
@@ -155,12 +154,12 @@ rebuild. The last three of those are machine-enforced as well: `.coderabbit.yaml
 carries path instructions for `bootstrap-env.ts` and the snapshot readers, and
 for `apps/web/src/**/*.tsx` (the client-bundle read and the prerendered `/`).
 
-**11. The public surface is a named list, not a shape.** Exactly eight routes
-under `/api` answer without a session or a verified launch token, and each is
-on the list for its own stated reason — a ninth does not inherit an exemption
-by resembling one that has it; it needs its own case. Seven are read-only,
+**11. The public surface is a named list, not a shape.** Exactly seven routes
+under `/api` answer without a session, and each is
+on the list for its own stated reason — an eighth does not inherit an exemption
+by resembling one that has it; it needs its own case. Six are read-only,
 policy or public-by-design content out and never facts in, nothing secret in
-the response: `GET /api/public/scoring`, `GET /api/ai/launch-key`, `GET
+the response: `GET /api/public/scoring`, `GET
 /api/board/items`, `GET /api/sponsors/logo/[id]`, `GET
 /api/attachments/[id]`, `GET /api/event/logo` and `GET /api/event/icon`. One is a POST that exists
 *before* identity: `POST /api/stats/visit` (the approximate, no-PII
@@ -169,19 +168,13 @@ that it is not a security boundary). The pre-event password check
 (`POST /api/gate`) that used to be the second is gone (#464); a route that
 brings back a pre-identity credential check is a new case, not a
 restoration. `/api/auth/*` is better-auth's and is outside this list. Anything else under `/api` that answers without
-`getSession`, `requireAdmin` or a verified launch token is the finding.
+`getSession` or `requireAdmin` is the finding.
 `board/items` (from the #207 redesign) serves the public leaderboard's row
 expansion, and like the board it is public only once the event is launched —
 before that it answers `403 not-launched` to anyone but an admin. Who
 solved what is already on the board as counts, the items are built only from the contestant-safe listers (ids, labels, banked points —
 never a flag, hint, or key), and the login list is capped at a team roster's
-size so it reads like the board, not like a scrape. `launch-key` is the
-sharpest test of the "nothing secret" half: it exists to publish the launch
-token's public key, `kid`, and algorithm so an external integrator can verify
-a token without holding a credential, and the finding to watch for is the
-private half (or any per-challenge signing key) drifting into that same
-payload — the ai contract test's import ban is what makes that a compile-time
-impossibility rather than a promise. `sponsors/logo/[id]` (issue #405, ADR 57)
+size so it reads like the board, not like a scrape. `sponsors/logo/[id]` (issue #405, ADR 57)
 is the newest, and its own reason is a privacy one rather than a launch-time
 one: it exists so a contestant's browser NEVER fetches a sponsor's logo from
 the sponsor's own CDN, which would leak that contestant's IP to the sponsor on
@@ -190,7 +183,7 @@ command, serves only PNG/WebP bytes that already passed the store's
 magic-byte sniff at upload (never SVG, which could execute script if opened
 directly), and carries nothing an organizer did not deliberately upload to be
 shown publicly — no flag, key, or contestant data has anywhere to ride in this
-payload. The finding to watch for here is the same shape as `launch-key`'s:
+payload. The finding to watch for here is
 anything beyond those bytes and their content-type metadata leaking into the
 response, or the id check moving after a Redis read. `attachments/[id]` (issue #186, ADR 61) serves a classic
 challenge's uploaded file to exactly the viewers who can read that
@@ -215,12 +208,11 @@ metadata in the response.
 are the one carve-out, and it's narrow.** A route returning points,
 attempts, hint spend, team membership, answer keys, flags, or metrics needs
 `requireAdmin` unless it reads *only* the row belonging to the caller who is
-asking — and "the caller" has to be established cryptographically, not
-trusted from the request: a verified launch token's `sub`, or a session
-login, never a client-supplied id, header, or query parameter standing in
-for one. `GET /api/ai/state` is the shape that qualifies — it derives its
-subject from a signature-verified token (`verifyLaunchToken(...).claims.sub`)
-before it reads anything. A route that reads "my own row" by trusting an
+asking — and "the caller" has to be established by the session, not
+trusted from the request: the session login, never a client-supplied id,
+header, or query parameter standing in for one. `GET /api/hints` is the
+shape that qualifies — it derives its subject from the session before it
+reads anything. A route that reads "my own row" by trusting an
 unverified field isn't self-service; it's the admin gate with the identity
 check removed, and it still needs `requireAdmin` or a real bound identity to
 pass review.

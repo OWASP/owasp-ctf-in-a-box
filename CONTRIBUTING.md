@@ -95,7 +95,6 @@ scripts/check-changelog.sh origin/main HEAD
 # single-module compose bring-ups
 ./scripts/acceptance-quiz-only.sh
 ./scripts/acceptance-classic-only.sh
-./scripts/acceptance-ai-only.sh
 
 # the whole poll pipeline, end to end, offline
 ./scripts/smoke.sh
@@ -127,8 +126,8 @@ filtering) plus eleven gated jobs — a job for an area your PR doesn't touch is
 | `vacuous` | No rubric check passes against an up-but-useless stub (0/321) |
 | `shell` | shellcheck + bats over `setup/`, `scripts/`, `deploy/fly/`, `deploy/aws-terraform/` (its `deploy.sh` and bats suite) |
 | `smoke` | The full poll pipeline against fixture services, including the forged-comment drop and the freeze hold |
-| `app` | eslint (`pnpm lint`, zero problems); vitest; the three grading Lua scripts and the admin, hint and team scripts executed against a real Redis behind srh (every `*.upstash.test.ts` suite, run serially; required, not skippable, in CI); the production build; the `/`-never-prerendered assertion; `acceptance-app.sh`'s runtime-config acceptance (one image, three environments) |
-| `quiz-only` / `classic-only` / `ai-only` | A single app-side module runs a whole event alone, with no scorer to pull |
+| `app` | eslint (`pnpm lint`, zero problems); vitest; the two grading Lua scripts and the admin, hint and team scripts executed against a real Redis behind srh (every `*.upstash.test.ts` suite, run serially; required, not skippable, in CI); the production build; the `/`-never-prerendered assertion; `acceptance-app.sh`'s runtime-config acceptance (one image, three environments) |
+| `quiz-only` / `classic-only` | A single app-side module runs a whole event alone, with no scorer to pull |
 | `registries` | The three independently maintained target lists (`sync/src/config.js`, `apps/web/src/lib/apps.ts`, `scorer/src/targets.js`) still agree |
 | `docs` | The Jekyll site builds; link/meta checks |
 

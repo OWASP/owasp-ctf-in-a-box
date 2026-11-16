@@ -11,8 +11,8 @@
 # functions are that common core: neither gate reimplements any of it any more
 # (M15, #504), so a fix to the staging/build/judge path lands exactly once.
 #
-# The single-module gates (acceptance-quiz-only.sh, acceptance-classic-only.sh,
-# acceptance-ai-only.sh) source this file too; their module-independent
+# The single-module gates (acceptance-quiz-only.sh and
+# acceptance-classic-only.sh) source this file too; their module-independent
 # machinery — the compose line-up check, the redis/srh and app bring-ups, the
 # sync refusal check — lives in the acc_* helpers at the bottom of this file.
 #
@@ -220,14 +220,14 @@ acc_launch() {
 }
 
 # ---------------------------------------------------------------------------
-# Single-module (*-only) gates: the machinery the quiz/classic/ai gates share.
+# Single-module (*-only) gates: the machinery the quiz/classic gates share.
 #
-# acceptance-quiz-only.sh, acceptance-classic-only.sh and acceptance-ai-only.sh
-# run the SAME event for three different modules; everything below is that
-# shared half, parameterized on the module label ("quiz"/"classic"/"ai"), a
-# container-name prefix, or a compose project/override pair. The
-# module-specific half — the seeded question/challenge JSON, the module page
-# assertions, ai's extra routes — stays in each script.
+# acceptance-quiz-only.sh and acceptance-classic-only.sh run the SAME event
+# for two different modules; everything below is that shared half,
+# parameterized on the module label ("quiz"/"classic"), a container-name
+# prefix, or a compose project/override pair. The module-specific half — the
+# seeded question/challenge JSON and the module page assertions — stays in
+# each script.
 # ---------------------------------------------------------------------------
 
 # acc_compose_services [compose-args…] — `docker compose … config --services`
@@ -257,7 +257,8 @@ acc_compose_services() {
 acc_assert_module_lineups() {
   label="$1"
   # The article for the "'$svc' is in the …-only line-up" message, spelled the
-  # way each gate already spells it ("a quiz-only event", "an ai-only event").
+  # way each gate already spells it ("a quiz-only event"), and "an" for a
+  # label that starts with a vowel.
   case "$label" in
     [aeiou]*) article="an" ;;
     *) article="a" ;;

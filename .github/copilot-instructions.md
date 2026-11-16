@@ -41,9 +41,9 @@ Section 1):
 10. **No build-time config.** No `process.env` read reaches a client
     component, and `/` is never statically prerendered.
 11. **The public surface is a named list.** A new `/api` route without a
-    session or verified launch token needs its own stated case.
+    session needs its own stated case.
 12. **`requireAdmin` gates per-contestant data.** A self-service read takes
-    the caller from a verified token or session, never from the request.
+    the caller from the session, never from the request.
 13. **A `catch` logs a label, never the caught object** (`errorLabel(err)`).
     Validation errors name the position and rule, never the submitted value.
 

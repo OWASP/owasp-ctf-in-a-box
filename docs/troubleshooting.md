@@ -75,7 +75,7 @@ a runtime read, not a build arg:
 docker compose --profile secdev --profile app up -d
 ```
 
-(Quiz/classic/ai-only events: `--profile app` alone.) Compose must also be
+(Quiz- or classic-only events: `--profile app` alone.) Compose must also be
 passing `ADMIN_LOGINS` through to the app service's environment — it is on
 recent `docker-compose.yml`, but a customized override file that dropped it
 would reproduce this exact symptom.
@@ -86,7 +86,7 @@ app task definition. An empty value is refused at plan time.
 
 ## Only the landing page loads (module pages redirect to `/`)
 
-**Symptom.** Contestants open `/challenges`, `/flags`, `/quiz`, `/ai` or
+**Symptom.** Contestants open `/challenges`, `/flags`, `/quiz` or
 `/leaderboard` and land back on `/`, which says **Launching soon.** or shows
 a countdown; a script calling a submit or answer API gets
 `403 { "error": "not-launched" }`. You, signed in as an admin, see every page
@@ -115,14 +115,14 @@ any more (the password gate was removed in v0.6) — delete them. See
 
 ## A board that was on before the upgrade is gone
 
-**Symptom.** After upgrading, Quiz, Jeopardy, or AI no longer appears in the
+**Symptom.** After upgrading, Quiz or Jeopardy no longer appears in the
 nav or on the landing page, even though nothing about that module changed.
 
 **Diagnosis.** Not a bug and nothing was deleted. Since #386, module
 enablement is decided at runtime in `/admin`, not baked into the image —
 and on a fresh deployment (or one whose stored settings have never named
 this module) only Secure Development starts on, and only when the stack has
-a scorer image; Quiz, Jeopardy and AI always start **off**.
+a scorer image; Quiz and Jeopardy always start **off**.
 
 **Fix.** `/admin` → Event tab → Modules, and switch it on. The board's
 data was never touched — solves, attempts and points come back exactly as
@@ -271,7 +271,7 @@ place that failure is visible from outside. Read the body:
   as down only when both are. See the srh and failover
   drills in the [AWS runbook](aws.md#failure-drills).
 - **`"scorer": "down"`** — Redis is fine but the scorer's `/healthz` did not
-  answer. Quiz, Jeopardy and AI keep scoring; Secure Development scores stop
+  answer. Quiz and Jeopardy keep scoring; Secure Development scores stop
   landing and the board shows stale SD totals. Restart the scorer container
   (on AWS, `aws ecs update-service --cluster <cluster> --service scorer
   --force-new-deployment`, after reading its `stoppedReason`);

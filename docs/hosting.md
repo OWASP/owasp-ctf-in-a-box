@@ -598,9 +598,24 @@ optionally, `GITHUB_APP_INSTALLATION_ID` in `.env`. Both `GITHUB_APP_ID` and
 `GITHUB_APP_PRIVATE_KEY` are required — `sync` refuses to start without them.
 You can also set all three by hand instead of using the helpers.
 
+## Player accounts
+
+Players create accounts on the box itself: `/sign-in` offers *Sign in* and
+*Create an account* (a username and a password) beside the GitHub button.
+Usernames are 3 to 30 characters of letters, digits, `_` and `.`, unique
+regardless of case and shown as typed; passwords are 12 to 128 characters
+with no composition rules. Account creation is always open — the
+registration window gates creating and joining teams, not accounts — and
+needs no GitHub account, so a Quiz or Jeopardy event can run with none
+beyond the organizers'. A player who signs in with GitHub and has no
+username is asked to pick one first, and can add a password from `/profile`.
+There is no password change or recovery yet; a player who loses a password
+signs in with GitHub if the account has one, or makes a new account.
+
 ## GitHub OAuth app
 
-Contestants (and admins) sign in with GitHub, so you need an OAuth app —
+Contestants (and admins) can sign in with GitHub, which Secure Development
+needs to link a player to their pull requests, so you need an OAuth app —
 separate from the sync GitHub App above. OAuth apps have no manifest/create
 API, so this is a guided flow rather than an auto-filled one:
 
@@ -697,9 +712,10 @@ The reference deployment's domain is on Cloudflare DNS with the proxy on
 `cf-ray` header on any response is how you can tell. That is the only place
 a **trustworthy** per-IP control can live: the app never sees a client
 address it can rely on (Fly sees Cloudflare's, and the `x-forwarded-for`
-value a caller can set is appended to, not replaced), and the app's own
-rate limiter is per login, which starts only after sign-in. An
-unauthenticated `curl` loop against `/api/*` therefore still costs the box a
+value a caller can set is appended to, not replaced), and the app's
+per-address limits on sign-up and sign-in
+([Operations](operations.md#account-sign-up-and-sign-in-limits)) see the
+edge's address too. An unauthenticated `curl` loop against `/api/*` therefore still costs the box a
 session lookup per hit unless the edge stops it.
 
 **One rate-limiting rule, on the Free plan.** Cloudflare's Free plan includes

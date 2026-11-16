@@ -1271,6 +1271,22 @@ build.
 
 ## Security model
 
+- **Open auth endpoints and the sign-up allowlist.** better-auth's
+  `disabledPaths` in `apps/web/src/lib/auth.ts` closes everything the app
+  does not use, so the open endpoints are `/sign-up/email`,
+  `/sign-in/username`, `/sign-in/social`, `/link-social`, `/callback/:id`,
+  `/get-session` and `/sign-out`. `/sign-in/email`, `/is-username-available`,
+  `/update-user`, `/change-password` and the rest of the credential and
+  session management paths stay closed; the username pick and the add-a-password
+  step go through the app's own routes (`/api/me/username`,
+  `/api/me/password`), which call better-auth server side. A sign-up body may
+  carry only `username`, `password` and a matching `displayUsername` (plus
+  `callbackURL` and `rememberMe`): `refuseSignUpFields` refuses any other key,
+  and the server fills the name and a placeholder `@accounts.invalid` email
+  itself, so a client cannot set either. better-auth's built-in in-memory
+  limiter is off; the Redis limiter in `apps/web/src/lib/auth-rate-limit.ts`
+  keys on the rightmost `X-Forwarded-For` entry and fails closed (budgets in
+  [Operations](operations.md#account-sign-up-and-sign-in-limits)).
 - **Trust filter before parse.** `sync/src/github.js` filters comments by
   `cfg.commentAuthor` *before* `sync/src/parse.js` ever runs `JSON.parse`
   on the comment body. A forged comment authored by anyone else is

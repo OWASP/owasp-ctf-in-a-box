@@ -46,6 +46,7 @@ import {
   ANNOUNCE_LIFECYCLE_KEY,
   ANNOUNCE_MAX_ATTEMPTS,
   ANNOUNCE_OUTBOX_KEY,
+  ANNOUNCE_LIFECYCLE_REV_KEY,
   ANNOUNCE_SEQ_KEY,
   ANNOUNCE_STATUS_KEY,
   ANNOUNCE_WEBHOOK_GENERATION_KEY,
@@ -549,17 +550,25 @@ export async function ledgerFields(ledgerKey: string): Promise<Set<string>> {
  *  ours to announce, 0 = someone else got there first (or the state has
  *  already moved on since our read). `prev` is the pack we swapped FROM, so
  *  the caller can describe the edge. */
-export type StateCasResult = { code: 0 | 1 | 2; seq: number; prev: string };
+export type StateCasResult = { code: 0 | 1 | 2 | 3; seq: number; prev: string };
 
 /** The CAS script itself, exported for the live-Redis suite, which runs it
  *  against run-unique keys (the store's own stateCompareSet uses the fixed
  *  ctf:announce:* keys, which must not be shared with test runs). */
 export const STATE_CAS_SCRIPT = `
 local cur = redis.call('GET', KEYS[1])
+-- A revision was captured with the expected pack; refuse the swap if the
+-- observation moved since, even when a pause/resume cycle brought the pack
+-- back to the same string.
+if KEYS[3] and ARGV[3] ~= '' then
+  local rev = redis.call('GET', KEYS[3]) or '0'
+  if rev ~= ARGV[3] then return {0, 0, cur == false and '' or cur} end
+end
 if cur == false then
   if ARGV[1] == '' then
     local seq = redis.call('INCR', KEYS[2])
     redis.call('SET', KEYS[1], ARGV[2])
+    if KEYS[3] then redis.call('INCR', KEYS[3]) end
     return {2, seq, ''}
   end
   return {0, 0, ''}
@@ -568,6 +577,39 @@ if cur == ARGV[2] then return {0, 0, cur} end
 if cur == ARGV[1] then
   local seq = redis.call('INCR', KEYS[2])
   redis.call('SET', KEYS[1], ARGV[2])
+  if KEYS[3] then redis.call('INCR', KEYS[3]) end
+  return {1, seq, cur}
+end
+return {0, 0, cur}
+`;
+
+/** The reconcile-only CAS: same revision and pack swap as STATE_CAS_SCRIPT,
+ *  but refuses to advance the pack when a webhook has appeared since the
+ *  caller read it as absent. Code 3 means "leave observation to the ticker",
+ *  not a failed swap. */
+export const STATE_CAS_RECONCILE_SCRIPT = `
+local cur = redis.call('GET', KEYS[1])
+if redis.call('EXISTS', KEYS[4]) == 1 then
+  return {3, 0, cur == false and '' or cur}
+end
+if KEYS[3] and ARGV[3] ~= '' then
+  local rev = redis.call('GET', KEYS[3]) or '0'
+  if rev ~= ARGV[3] then return {0, 0, cur == false and '' or cur} end
+end
+if cur == false then
+  if ARGV[1] == '' then
+    local seq = redis.call('INCR', KEYS[2])
+    redis.call('SET', KEYS[1], ARGV[2])
+    if KEYS[3] then redis.call('INCR', KEYS[3]) end
+    return {2, seq, ''}
+  end
+  return {0, 0, ''}
+end
+if cur == ARGV[2] then return {0, 0, cur} end
+if cur == ARGV[1] then
+  local seq = redis.call('INCR', KEYS[2])
+  redis.call('SET', KEYS[1], ARGV[2])
+  if KEYS[3] then redis.call('INCR', KEYS[3]) end
   return {1, seq, cur}
 end
 return {0, 0, cur}
@@ -596,6 +638,15 @@ export type StateCasEntry = {
 export const STATE_CAS_ENQUEUE_SCRIPT = `
 local cur = redis.call('GET', KEYS[1])
 local n = tonumber(ARGV[4])
+-- Compare the observation revision captured with the pack: a pause/resume
+-- cycle can restore the same pack string, so the pack alone cannot fence a
+-- delayed observer. The revision is the trailing ARGV so the entry groups
+-- keep their positions.
+local expectedRev = ARGV[#ARGV]
+if KEYS[6] and expectedRev ~= '' then
+  local rev = redis.call('GET', KEYS[6]) or '0'
+  if rev ~= expectedRev then return {0, 0, cur == false and '' or cur, 0} end
+end
 -- A stale observation must not advance the pack. The per-entry checks in
 -- the enqueue below would drop the entry AFTER the swap, consuming the
 -- edge forever (the next tick sees no change, so the notice is lost while
@@ -624,6 +675,7 @@ if cur == false then
   if ARGV[1] == '' then
     seq = redis.call('INCR', KEYS[2])
     redis.call('SET', KEYS[1], ARGV[2])
+    if KEYS[6] then redis.call('INCR', KEYS[6]) end
     code = 2
     prev = ''
   else
@@ -634,6 +686,7 @@ elseif cur == ARGV[2] then
 elseif cur == ARGV[1] then
   seq = redis.call('INCR', KEYS[2])
   redis.call('SET', KEYS[1], ARGV[2])
+  if KEYS[6] then redis.call('INCR', KEYS[6]) end
   code = 1
   prev = cur
 else
@@ -675,9 +728,16 @@ export async function stateCompareSet(
   expected: string,
   next: string,
   entries: readonly StateCasEntry[] = [],
+  expectedRev: number | null = null,
+  requireWebhookAbsent = false,
 ): Promise<StateCasResult> {
+  const rev = expectedRev === null ? "" : String(expectedRev);
   if (entries.length === 0) {
-    const raw = await upstashEval(STATE_CAS_SCRIPT, [stateKey, ANNOUNCE_SEQ_KEY], [expected, next, new Date().toISOString()]);
+    const script = requireWebhookAbsent ? STATE_CAS_RECONCILE_SCRIPT : STATE_CAS_SCRIPT;
+    const keys = requireWebhookAbsent
+      ? [stateKey, ANNOUNCE_SEQ_KEY, ANNOUNCE_LIFECYCLE_REV_KEY, DISCORD_WEBHOOK_KEY]
+      : [stateKey, ANNOUNCE_SEQ_KEY, ANNOUNCE_LIFECYCLE_REV_KEY];
+    const raw = await upstashEval(script, keys, [expected, next, rev]);
     return parseCasReply(raw);
   }
   const at = new Date().toISOString();
@@ -703,8 +763,15 @@ export async function stateCompareSet(
   });
   const raw = await upstashEval(
     STATE_CAS_ENQUEUE_SCRIPT,
-    [stateKey, ANNOUNCE_SEQ_KEY, ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY],
-    [expected, next, at, String(entries.length), ...entryArgs],
+    [
+      stateKey,
+      ANNOUNCE_SEQ_KEY,
+      ANNOUNCE_OUTBOX_KEY,
+      DISCORD_CONFIG_KEY,
+      ANNOUNCE_WEBHOOK_GENERATION_KEY,
+      ANNOUNCE_LIFECYCLE_REV_KEY,
+    ],
+    [expected, next, at, String(entries.length), ...entryArgs, rev],
   );
   return parseCasReply(raw);
 }
@@ -715,7 +782,7 @@ function parseCasReply(raw: unknown): StateCasResult {
   const seq = Number(arr[1]);
   const prev = typeof arr[2] === "string" ? arr[2] : "";
   return {
-    code: (code === 1 || code === 2 ? code : 0) as 0 | 1 | 2,
+    code: (code === 1 || code === 2 || code === 3 ? code : 0) as 0 | 1 | 2 | 3,
     seq: Number.isFinite(seq) ? seq : 0,
     prev,
   };
@@ -733,14 +800,47 @@ export async function readStatePack(stateKey: typeof ANNOUNCE_LIFECYCLE_KEY): Pr
   }
 }
 
-/** The state pack for a write decision: a failed read THROWS rather than
- *  reading as "no previous state". reconciliation MUST NOT treat an
- *  unreadable pack as absent — it would seed over the old one and let the
- *  next tick announce its transitions as new edges. */
-async function readStatePackStrict(stateKey: typeof ANNOUNCE_LIFECYCLE_KEY): Promise<string | null> {
-  const [res] = await upstashPipeline([["GET", stateKey]]);
-  if (res.error) throw new Error(`state read failed: ${res.error}`);
-  return typeof res.result === "string" ? res.result : null;
+function parseRevision(raw: unknown): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/** The pack plus the revision it was observed at. Both are read in one
+ *  pipeline; a pair that straddles a concurrent write only makes the CAS
+ *  lose (a stale revision), never match a newer pack. */
+export async function readStatePackWithRev(
+  stateKey: typeof ANNOUNCE_LIFECYCLE_KEY,
+): Promise<{ pack: string | null; rev: number } | null> {
+  try {
+    const [pack, rev] = await upstashPipeline([
+      ["GET", stateKey],
+      ["GET", ANNOUNCE_LIFECYCLE_REV_KEY],
+    ]);
+    if (pack.error) throw new Error(pack.error);
+    if (rev.error) throw new Error(rev.error);
+    return {
+      pack: typeof pack.result === "string" ? pack.result : null,
+      rev: parseRevision(rev.result),
+    };
+  } catch (err) {
+    console.error("[announce] state read failed:", adminErrorLabel(err));
+    return null;
+  }
+}
+
+async function readStatePackStrictWithRev(
+  stateKey: typeof ANNOUNCE_LIFECYCLE_KEY,
+): Promise<{ pack: string | null; rev: number }> {
+  const [pack, rev] = await upstashPipeline([
+    ["GET", stateKey],
+    ["GET", ANNOUNCE_LIFECYCLE_REV_KEY],
+  ]);
+  if (pack.error) throw new Error(`state read failed: ${pack.error}`);
+  if (rev.error) throw new Error(`state revision read failed: ${rev.error}`);
+  return {
+    pack: typeof pack.result === "string" ? pack.result : null,
+    rev: parseRevision(rev.result),
+  };
 }
 
 /** Deletes the stored lifecycle observation so the next pass seeds silently
@@ -765,7 +865,8 @@ async function reconcileLifecycleState(): Promise<void> {
     // sample the clock per attempt: a slow settings read must not let this
     // pass write a pre-change derivation over a pack a concurrent observer
     // already advanced with newer settings.
-    const expected = (await readStatePackStrict(ANNOUNCE_LIFECYCLE_KEY)) ?? "";
+    const observed = await readStatePackStrictWithRev(ANNOUNCE_LIFECYCLE_KEY);
+    const expected = observed.pack ?? "";
     const prev = decodeLifecycleState(expected);
     const settings = await getAdminSettings();
     const derived = lifecycleSnapshotFrom(
@@ -778,7 +879,10 @@ async function reconcileLifecycleState(): Promise<void> {
     );
     const next = encodeLifecycleState({ ...derived, announced: Boolean(prev?.announced) });
     if (expected === next) return;
-    const cas = await stateCompareSet(ANNOUNCE_LIFECYCLE_KEY, expected, next);
+    const cas = await stateCompareSet(ANNOUNCE_LIFECYCLE_KEY, expected, next, [], observed.rev, true);
+    // 3 = another save configured the webhook while this one was reconciling;
+    // the live ticker owns the observation from here.
+    if (cas.code === 3) return;
     // 1 = our silent write won, 2 = seeded from no previous state. 0 = a
     // racing writer moved the pack; re-read it and reconcile again.
     if (cas.code !== 0) return;

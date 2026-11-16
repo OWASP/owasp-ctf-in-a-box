@@ -25,6 +25,7 @@ vi.mock("@/lib/announce/store", () => ({
   getAnnounceConfig: mocks.getAnnounceConfig,
   newOutboxId: mocks.newOutboxId,
   readStatePack: mocks.readStatePack,
+  readStatePackWithRev: async () => ({ pack: await mocks.readStatePack(), rev: 0 }),
   stateCompareSet: mocks.stateCompareSet,
   outboxPrune: mocks.outboxPrune,
 }));
@@ -120,7 +121,7 @@ describe("lifecycle tick", () => {
   it("seeds the first observation silently (CAS code 2) and announces nothing", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true }));
     await runAnnounceTick(T0);
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v2|L1P0C0A0", expect.any(Array));
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v2|L1P0C0A0", expect.any(Array), 0);
     expect(lifecycleEntries()).toEqual([]);
   });
 
@@ -131,7 +132,7 @@ describe("lifecycle tick", () => {
 
     await runAnnounceTick(T0);
 
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v2|L1P0C0A0", expect.any(Array));
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v2|L1P0C0A0", expect.any(Array), 0);
     expect(lifecycleEntries()).toEqual([]);
   });
 
@@ -142,7 +143,7 @@ describe("lifecycle tick", () => {
 
     await runAnnounceTick(T0);
 
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L0P0C0A0", "v2|L1P0C0A0", expect.any(Array));
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L0P0C0A0", "v2|L1P0C0A0", expect.any(Array), 0);
   });
 
   it("seeds silently and announces nothing when stored lifecycle state is unrecognized", async () => {
@@ -179,7 +180,7 @@ describe("lifecycle tick", () => {
     mocks.readStatePack.mockResolvedValue("v2|L1P0C0A0");
     mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L1P0C0A0" });
     await runAnnounceTick(T0);
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P0C0A0", "v2|L1P1C0A1", expect.any(Array));
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P0C0A0", "v2|L1P1C0A1", expect.any(Array), 0);
     expect(lifecycleEntries()).toEqual([
       expect.objectContaining({
         kind: "pause",
@@ -195,7 +196,7 @@ describe("lifecycle tick", () => {
     mocks.readStatePack.mockResolvedValue("v2|L1P1C0A1");
     mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L1P1C0A1" });
     await runAnnounceTick(T0);
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P1C0A1", "v2|L1P0C0A0", expect.any(Array));
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P1C0A1", "v2|L1P0C0A0", expect.any(Array), 0);
     expect(lifecycleEntries()).toHaveLength(1);
     expect(lifecycleEntries()).toEqual([
       expect.objectContaining({
@@ -232,7 +233,7 @@ describe("lifecycle tick", () => {
 
     // The CAS uses the pre-settings pack, so the concurrent update makes it
     // lose instead of being overwritten by this tick's stale derivation.
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L0P0C0A0", "v2|L1P0C0A0", expect.any(Array));
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L0P0C0A0", "v2|L1P0C0A0", expect.any(Array), 0);
   });
 
   it("samples the observation time after its reads so a stalled pre-launch replica cannot overwrite a newer launch", async () => {
@@ -306,7 +307,7 @@ describe("lifecycle tick", () => {
     mocks.getAdminSettings.mockResolvedValue(settings({ scoringStartsAt: "2026-10-14T12:00:00Z" }));
     mocks.stateCompareSet.mockResolvedValue({ code: 2, seq: 1, prev: "" });
     expect(await runAnnounceTick(T0 - 60_000)).toBe("active");
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v2|L0P0C0A0", expect.any(Array));
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v2|L0P0C0A0", expect.any(Array), 0);
     expect(lifecycleEntries()).toEqual([]);
 
     // At launch the next tick sees L0 → L1 and announces it.
@@ -331,7 +332,7 @@ describe("lifecycle tick", () => {
     mocks.readStatePack.mockResolvedValue("v2|L1P0C0A0");
     mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L1P0C0A0" });
     await runAnnounceTick(T0);
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P0C0A0", "v2|L1P0C1A0", expect.any(Array));
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P0C0A0", "v2|L1P0C1A0", expect.any(Array), 0);
     expect(lifecycleEntries()).toEqual([]);
   });
 
@@ -356,7 +357,7 @@ describe("lifecycle tick", () => {
     );
     mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 3, prev: "v2|L1P0C1A1" });
     await runAnnounceTick(T0 + 30_000);
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P0C1A1", "v2|L1P0C0A0", expect.any(Array));
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P0C1A1", "v2|L1P0C0A0", expect.any(Array), 0);
     expect(lifecycleEntries()).toHaveLength(1);
     expect(lifecycleEntries()).toEqual([
       expect.objectContaining({
@@ -387,7 +388,7 @@ describe("lifecycle tick", () => {
     mocks.readStatePack.mockResolvedValue("v2|L1P0C0A0");
     mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L1P0C0A0" });
     await runAnnounceTick(T0);
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P0C0A0", "v2|L1P1C0A0", expect.any(Array));
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P0C0A0", "v2|L1P1C0A0", expect.any(Array), 0);
     expect(lifecycleEntries()).toEqual([]);
 
     // Enabling pause announcements during the same freeze does not turn the
@@ -403,7 +404,7 @@ describe("lifecycle tick", () => {
     mocks.readStatePack.mockResolvedValue("v2|L1P1C0A0");
     mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 3, prev: "v2|L1P1C0A0" });
     await runAnnounceTick(T0 + 60_000);
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P1C0A0", "v2|L1P0C0A0", expect.any(Array));
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P1C0A0", "v2|L1P0C0A0", expect.any(Array), 0);
     expect(lifecycleEntries()).toEqual([]);
   });
 
@@ -498,7 +499,7 @@ describe("milestones tick", () => {
     mocks.readStatePack.mockResolvedValue(null);
     mocks.stateCompareSet.mockResolvedValue({ code: 2, seq: 1, prev: "" });
     await runAnnounceTick(T0);
-    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v2|L0P1C0A0", expect.any(Array));
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "", "v2|L0P1C0A0", expect.any(Array), 0);
     expect(lifecycleEntries()).toEqual([]);
     expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
   });

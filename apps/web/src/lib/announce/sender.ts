@@ -405,7 +405,10 @@ export async function postToDiscord(url: string, body: unknown): Promise<Discord
     }
     return { ok: true };
   } catch (err) {
-    console.error("[announce] discord post failed:", errorLabel(err));
+    // A fetch implementation may put the requested URL in its error message;
+    // the webhook URL is a bearer secret. Redact before errorLabel's length
+    // cap so a URL crossing that boundary cannot leave a partial token.
+    console.error("[announce] discord post failed:", errorLabel(err, [url]));
     return { ok: false };
   }
 }

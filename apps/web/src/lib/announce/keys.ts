@@ -58,6 +58,13 @@ export const ANNOUNCE_LIFECYCLE_KEY = "ctf:announce:lifecycle";
  *  edge repeats (pause → resume → pause). */
 export const ANNOUNCE_SEQ_KEY = "ctf:announce:seq";
 
+/** Monotonic revision of the lifecycle observation. Bumped by every
+ *  successful CAS alongside the pack, and compared with the revision the
+ *  caller read: a pack can return to an earlier value after a pause/resume
+ *  cycle, so the pack alone cannot tell a delayed observer that its snapshot
+ *  is stale. */
+export const ANNOUNCE_LIFECYCLE_REV_KEY = "ctf:announce:lifecycle-rev";
+
 /** The delivery outbox: field = announcement id, value = JSON
  *  `{kind, payload, at, n, status, webhookGeneration, kindEpoch}`. `status`
  *  is `pending` (queued here or on another replica, guarded by its lease

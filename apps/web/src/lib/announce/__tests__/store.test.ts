@@ -57,6 +57,8 @@ import {
   setAnnounceCooldown,
   setAnnounceWebhook,
   STATE_CAS_ENQUEUE_SCRIPT,
+  STATE_CAS_RECONCILE_SCRIPT,
+  STATE_CAS_SCRIPT,
   stateCompareSet,
   SWITCH_DISABLE_SCRIPT,
   updateAnnounceConfig,
@@ -66,6 +68,7 @@ import {
 import {
   ANNOUNCE_COOLDOWN_KEY,
   ANNOUNCE_FIRST_KEY,
+  ANNOUNCE_LIFECYCLE_REV_KEY,
   ANNOUNCE_OUTBOX_KEY,
   ANNOUNCE_WEBHOOK_GENERATION_KEY,
   DISCORD_CONFIG_KEY,
@@ -294,12 +297,36 @@ describe("setAnnounceWebhook", () => {
       }),
     );
     mocks.upstashEval.mockResolvedValue([1, 5, "v2|L0P0C0A0"]);
-    await setAnnounceWebhook("admin", VALID_URL);
-    expect(mocks.upstashEval).toHaveBeenCalledWith(expect.any(String), ["ctf:announce:lifecycle", "ctf:announce:seq"], [
-      "v2|L0P0C0A0",
-      "v2|L1P0C1A0",
+    await setAnnounceWebhook(ADMIN, VALID_URL);
+    expect(mocks.upstashEval).toHaveBeenCalledWith(
       expect.any(String),
-    ]);
+      ["ctf:announce:lifecycle", "ctf:announce:seq", ANNOUNCE_LIFECYCLE_REV_KEY, DISCORD_WEBHOOK_KEY],
+      ["v2|L0P0C0A0", "v2|L1P0C1A0", "0"],
+    );
+  });
+
+  it("does not advance the lifecycle pack when another save configured the webhook mid-reconcile", async () => {
+    mocks.upstashPipeline.mockImplementation(async (commands) =>
+      commands.map((cmd) => {
+        if (cmd[0] === "GET" && cmd[1] === DISCORD_WEBHOOK_KEY) return { result: null };
+        if (cmd[0] === "GET" && cmd[1] === "ctf:announce:lifecycle") return { result: "v2|L0P0C0A0" };
+        return { result: "OK" };
+      }),
+    );
+    mocks.getAdminSettings.mockResolvedValue({
+      scoringStartsAt: "2020-01-01T10:00:00Z",
+      scoringEndsAt: "2020-01-01T11:00:00Z",
+      paused: false,
+    });
+    mocks.upstashEval.mockResolvedValue([3, 0, "v2|L0P0C0A0"]);
+    await setAnnounceWebhook(ADMIN, VALID_URL);
+    const [script, keys] = mocks.upstashEval.mock.calls[0];
+    expect(script).toBe(STATE_CAS_RECONCILE_SCRIPT);
+    expect(keys).toContain(DISCORD_WEBHOOK_KEY);
+    const set = mocks.upstashPipeline.mock.calls
+      .flatMap((call) => call[0])
+      .find((cmd) => cmd[0] === "SET" && cmd[1] === DISCORD_WEBHOOK_KEY);
+    expect(set).toBeDefined();
   });
 
   it("does not reconcile when replacing an already-configured webhook, so the next tick still announces a launch", async () => {
@@ -341,12 +368,12 @@ describe("setAnnounceWebhook", () => {
       }),
     );
     mocks.upstashEval.mockResolvedValue([1, 6, "v2|L1P1C0A1"]);
-    await setAnnounceWebhook("admin", VALID_URL);
-    expect(mocks.upstashEval).toHaveBeenCalledWith(expect.any(String), ["ctf:announce:lifecycle", "ctf:announce:seq"], [
-      "v2|L1P1C0A1",
-      "v2|L1P0C1A1",
+    await setAnnounceWebhook(ADMIN, VALID_URL);
+    expect(mocks.upstashEval).toHaveBeenCalledWith(
       expect.any(String),
-    ]);
+      ["ctf:announce:lifecycle", "ctf:announce:seq", ANNOUNCE_LIFECYCLE_REV_KEY, DISCORD_WEBHOOK_KEY],
+      ["v2|L1P1C0A1", "v2|L1P0C1A1", "0"],
+    );
   });
 
   it("refuses a non-Discord URL with a validation error and writes nothing", async () => {
@@ -594,10 +621,20 @@ describe("stateCompareSet / readStatePack", () => {
       ANNOUNCE_OUTBOX_KEY,
       DISCORD_CONFIG_KEY,
       ANNOUNCE_WEBHOOK_GENERATION_KEY,
+      ANNOUNCE_LIFECYCLE_REV_KEY,
     ]);
     expect(args.slice(0, 4)).toEqual(["v1|L0P0", "v1|L1P0", expect.any(String), "1"]);
     expect(args[4]).toBe("id-1");
-    expect(args.slice(6)).toEqual(["launch", "epoch:launch", "2", "3"]);
+    expect(args.slice(6)).toEqual(["launch", "epoch:launch", "2", "3", ""]);
+  });
+
+  it("forwards the observed revision, so a pack recycled by a pause/resume cycle cannot match", async () => {
+    mocks.upstashEval.mockResolvedValue([0, 0, "v1|L0P0"]);
+    await stateCompareSet("ctf:announce:lifecycle", "v1|L0P0", "v1|L1P0", [], 9);
+    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+    expect(script).toBe(STATE_CAS_SCRIPT);
+    expect(keys).toEqual(["ctf:announce:lifecycle", "ctf:announce:seq", ANNOUNCE_LIFECYCLE_REV_KEY]);
+    expect(args).toEqual(["v1|L0P0", "v1|L1P0", "9"]);
   });
 
   it("reads the pack, null on miss or error", async () => {

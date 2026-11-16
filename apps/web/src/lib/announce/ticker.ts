@@ -64,7 +64,7 @@ import {
   getAnnounceConfig,
   newOutboxId,
   outboxPrune,
-  readStatePack,
+  readStatePackWithRev,
   stateCompareSet,
   type StateCasEntry,
 } from "./store";
@@ -161,6 +161,7 @@ export async function runAnnounceTick(nowMs?: number): Promise<TickCadence> {
 
     let observedNowMs: number | undefined = nowMs;
     let expectedLifecycle = "";
+    let expectedLifecycleRev: number | null = null;
     let settings: AdminSettings | null = null;
     if (config.launch || config.pause || config.milestones) {
       // The lifecycle pack is captured BEFORE the settings read. `next` is
@@ -169,7 +170,9 @@ export async function runAnnounceTick(nowMs?: number): Promise<TickCadence> {
       // settings — our stale CAS would then match and overwrite it. With the
       // pack from before the read, any concurrent update makes the CAS lose.
       if (config.launch || config.pause) {
-        expectedLifecycle = (await readStatePack(ANNOUNCE_LIFECYCLE_KEY)) ?? "";
+        const observed = await readStatePackWithRev(ANNOUNCE_LIFECYCLE_KEY);
+        expectedLifecycle = observed?.pack ?? "";
+        expectedLifecycleRev = observed?.rev ?? null;
       }
       try {
         settings = await getAdminSettings();
@@ -183,7 +186,9 @@ export async function runAnnounceTick(nowMs?: number): Promise<TickCadence> {
     }
     observedNowMs ??= Date.now();
     if (settings) {
-      if (config.launch || config.pause) await tickLifecycle(config, settings, observedNowMs, expectedLifecycle);
+      if (config.launch || config.pause) {
+        await tickLifecycle(config, settings, observedNowMs, expectedLifecycle, expectedLifecycleRev);
+      }
       if (config.milestones) await tickMilestones(config, settings, observedNowMs);
     }
 
@@ -281,6 +286,7 @@ async function tickLifecycle(
   settings: AdminSettings,
   nowMs: number,
   expected: string,
+  expectedRev: number | null,
 ): Promise<void> {
   try {
     const derived = lifecycleSnapshotFrom(
@@ -321,7 +327,7 @@ async function tickLifecycle(
               webhookGeneration: config.webhookGeneration,
               kindEpoch: config.kindEpochs[edge.kind],
             }));
-    const cas = await stateCompareSet(ANNOUNCE_LIFECYCLE_KEY, expected, next, entries);
+    const cas = await stateCompareSet(ANNOUNCE_LIFECYCLE_KEY, expected, next, entries, expectedRev);
     // 0 = someone else won or the state moved on; 2 = silent init. Either
     // way the script wrote no entries for this caller.
     if (cas.code !== 1) return;

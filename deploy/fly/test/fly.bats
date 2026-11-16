@@ -743,6 +743,59 @@ EOF
   echo "$output" | grep -qF 'nothing changed'
 }
 
+# Compose lets the shell environment win over --env-file. An old hash still
+# exported in the operator's shell must not reach the render in place of the
+# one --new-admin-code just wrote, or the printed code could not claim. fly
+# succeeds up to `secrets set`, which copies the render aside (it is removed
+# on exit) and fails, so nothing is deployed; docker is real for `compose
+# config` but refuses the registry lookups, so nothing leaves the machine.
+@test "deploy --new-admin-code renders the rotated hash even with an old one exported" {
+  need_docker
+  cd "$REPO"
+  mkdir -p "$BATS_TEST_TMPDIR/flybin"
+  cat > "$BATS_TEST_TMPDIR/flybin/fly" <<EOF
+#!/bin/sh
+case "\$1 \$2" in
+"volumes list") echo ctf_data ;;
+"secrets set") cp compose.fly.yml "$BATS_TEST_TMPDIR/rendered.yml"; exit 1 ;;
+esac
+exit 0
+EOF
+  real_docker="$(command -v docker)"
+  cat > "$BATS_TEST_TMPDIR/flybin/docker" <<EOF
+#!/bin/sh
+case "\$1 \$2" in
+"buildx imagetools") exit 1 ;;
+esac
+exec "$real_docker" "\$@"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/flybin/fly" "$BATS_TEST_TMPDIR/flybin/docker"
+  old=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.exported"
+  run env ADMIN_CLAIM_CODE_HASH="$old" PATH="$BATS_TEST_TMPDIR/flybin:$PATH" \
+    ./deploy/fly/deploy.sh --skip-build --new-admin-code \
+    --env-file "$BATS_TEST_TMPDIR/env.exported" --from "$BATS_TEST_TMPDIR/no-such-.env"
+  new="$(sed -n 's/^ADMIN_CLAIM_CODE_HASH=//p' "$BATS_TEST_TMPDIR/env.exported")"
+  [ "$new" != "$old" ]
+  [ -f "$BATS_TEST_TMPDIR/rendered.yml" ]
+  app_env="$(awk '/^  app:/{f=1;next} /^  [a-z]+:/{f=0} f' "$BATS_TEST_TMPDIR/rendered.yml")"
+  [ -z "$(echo "$app_env" | grep -F "$old")" ]
+  echo "$app_env" | grep -qF "ADMIN_CLAIM_CODE_HASH: $new"
+}
+
+# The announced recovery command must rotate THIS env file, not the default.
+@test "deploy --new-admin-code names a non-default env file in the recovery command" {
+  need_docker
+  cd "$REPO"
+  mkdir -p "$BATS_TEST_TMPDIR/flybin"
+  printf '#!/bin/sh\nexit 1\n' > "$BATS_TEST_TMPDIR/flybin/fly"
+  chmod +x "$BATS_TEST_TMPDIR/flybin/fly"
+  cp "$BATS_TEST_TMPDIR/env" "$BATS_TEST_TMPDIR/env.named"
+  run env PATH="$BATS_TEST_TMPDIR/flybin:$PATH" ./deploy/fly/deploy.sh --skip-build --new-admin-code \
+    --env-file "$BATS_TEST_TMPDIR/env.named" --from "$BATS_TEST_TMPDIR/no-such-.env"
+  echo "$output" | grep -qF -- "Run ./deploy/fly/deploy.sh --skip-build --new-admin-code --env-file $BATS_TEST_TMPDIR/env.named for a new one"
+}
+
 # A deploy the preflight refuses must not rotate: the box would keep the old
 # code while the operator saves a new one it does not know.
 @test "deploy --new-admin-code refused by the preflight rotates nothing and prints no code" {

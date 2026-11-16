@@ -227,7 +227,7 @@ require() {
 # write_claim_code — generate a code, put only its hash in $ENV_FILE (replacing
 # any line already there), and print the code once. Called only off --dry-run.
 write_claim_code() {
-  local code hash tmp url rc
+  local code hash tmp url rc recover
   code="$(claim_code_new)" || exit 1
   hash="$(claim_code_hash "$code")" || exit 1
   tmp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")" || exit 1
@@ -246,7 +246,13 @@ write_claim_code() {
   mv "$tmp" "$ENV_FILE" || { rm -f "$tmp"; exit 1; }
   chmod 600 "$ENV_FILE"
   url="$(env_value EVENT_URL)"
-  claim_code_announce "$code" "${url:-https://$APP.fly.dev}" "./deploy/fly/deploy.sh --skip-build --new-admin-code"
+  # The recovery command names this env file when it is not the default: the
+  # default one is another deployment's, or none at all.
+  recover="./deploy/fly/deploy.sh --skip-build --new-admin-code"
+  if [ "$ENV_FILE" != ".env.fly" ]; then
+    recover="$recover --env-file $(printf '%q' "$ENV_FILE")"
+  fi
+  claim_code_announce "$code" "${url:-https://$APP.fly.dev}" "$recover"
 }
 
 # Refuse an unusable claim-code hash, naming the key and never the value: a
@@ -1051,7 +1057,12 @@ echo "== 3/5 rendering $RENDERED from docker-compose.yml"
 if [ -n "$DRY_RUN" ] && [ ! -f "$ENV_FILE" ]; then
   echo "DRY-RUN: would render $RENDERED (no $ENV_FILE to render from)"
 else
-  "$FLY_DIR/render-compose.sh" --env-file "$ENV_FILE" --out "$RENDERED" \
+  # Compose lets the shell environment win over --env-file, so an
+  # ADMIN_CLAIM_CODE_HASH exported in this shell would replace the file's
+  # validated (and possibly just rotated) hash in the render, and the code
+  # printed for the file could not claim. The renderer gets the file's value.
+  render_claim_hash="$(env_value ADMIN_CLAIM_CODE_HASH)" || exit 1
+  ADMIN_CLAIM_CODE_HASH="$render_claim_hash" "$FLY_DIR/render-compose.sh" --env-file "$ENV_FILE" --out "$RENDERED" \
     --app-image "$APP_IMAGE" --sync-image "$SYNC_IMAGE" --scorer-image "$SCORER_IMAGE"
 fi
 

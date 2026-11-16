@@ -1,11 +1,60 @@
 import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
+import { username } from "better-auth/plugins";
 import type { BetterAuthOptions } from "better-auth";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
 import { errorLabel } from "@/lib/error-label";
 import { getGithubLink, linkOnUserWrite } from "@/lib/github-link";
 import { recordCallbackLogin } from "@/lib/activity-log";
+import { limitAuthAttempt } from "@/lib/auth-rate-limit";
+import { placeholderEmail } from "@/lib/placeholder-email";
+import { USERNAME_MAX, USERNAME_MIN, normalizeUsername, usernameProblem } from "@/lib/username-rules";
+
+type AuthCtx = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
+
+/** The only keys a `/sign-up/email` body may carry. */
+const SIGN_UP_FIELDS = new Set(["username", "password", "displayUsername", "callbackURL", "rememberMe"]);
+
+function refuseSignUp(message: string): never {
+  throw new APIError("BAD_REQUEST", { message, code: "SIGN_UP_FIELD_REFUSED" });
+}
+
+/**
+ * The `/sign-up/email` before hook. better-auth's sign-up body schema admits
+ * any extra key and runs the rest through parseUserInput, which accepts every
+ * user field whose `input` is not false: `login`, the identity everything
+ * keys on, among them. So the body is an allowlist, and an account's email
+ * and name are set here, never by the client: the email is a placeholder
+ * (a username account has no address) and the name is the username as typed.
+ * A `displayUsername` must be the same username in another case, so nobody
+ * displays as somebody else.
+ *
+ * It runs before the endpoint validates the body, and better-auth hands the
+ * endpoint the object this mutates (the username plugin's own hooks rely on
+ * the same order).
+ */
+export async function refuseSignUpFields(ctx: AuthCtx): Promise<void> {
+  if (ctx.path !== "/sign-up/email") return;
+  const body: unknown = ctx.body;
+  if (typeof body !== "object" || body === null || Array.isArray(body)) refuseSignUp("A username and password are required.");
+  const fields = body as Record<string, unknown>;
+  const extra = Object.keys(fields).filter((k) => !SIGN_UP_FIELDS.has(k));
+  if (extra.length > 0) refuseSignUp("Only a username and password can be set at sign-up.");
+  if (typeof fields.username !== "string") refuseSignUp("A username and password are required.");
+  const typed = fields.username.trim();
+  let shown = typed;
+  if (fields.displayUsername !== undefined) {
+    if (typeof fields.displayUsername !== "string" || normalizeUsername(fields.displayUsername) !== normalizeUsername(typed)) {
+      refuseSignUp("The display name must be your username.");
+    }
+    shown = fields.displayUsername.trim();
+  }
+  fields.username = typed;
+  fields.displayUsername = shown;
+  fields.email = placeholderEmail();
+  fields.name = shown;
+}
 
 /**
  * GitHub is used for identity only. better-auth forwards a client-supplied
@@ -13,7 +62,7 @@ import { recordCallbackLogin } from "@/lib/activity-log";
  * request carrying either key (any value, an empty one included) is refused
  * with a 400 instead of trimmed, which makes a tampered client fail loudly.
  */
-export async function refuseClientOAuthParams(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]): Promise<void> {
+export async function refuseClientOAuthParams(ctx: AuthCtx): Promise<void> {
   if (ctx.path !== "/sign-in/social" && ctx.path !== "/link-social") return;
   const body = ctx.body;
   if (typeof body !== "object" || body === null) return;
@@ -34,7 +83,7 @@ export async function refuseClientOAuthParams(ctx: Parameters<Parameters<typeof 
  * retried. An unreadable link fails closed. A request with no session is left
  * to the endpoint, which answers 401.
  */
-export async function refuseSecondGithubLink(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]): Promise<void> {
+export async function refuseSecondGithubLink(ctx: AuthCtx): Promise<void> {
   if (ctx.path !== "/link-social") return;
   const session = await getSessionFromCtx(ctx);
   if (!session) return;
@@ -121,11 +170,26 @@ export const authOptions = {
     // avatar out of it.
     accountLinking: { disableImplicitLinking: true, allowDifferentEmails: true, updateUserInfoOnLink: true },
   },
-  // better-auth mounts its full default endpoint set behind the catch-all at
-  // app/api/auth/[...all]. This app only ever calls five of them: /sign-in/social,
-  // /link-social, /callback/:id, /get-session and /sign-out. Everything below is a default
-  // endpoint that this app never calls and that either mutates the signed-in
-  // identity or hands back provider data, so it is closed at the network edge.
+  // Username and password accounts. No reset mail is configured, so a
+  // forgotten password is an organizer's job, and the reset endpoints stay
+  // closed below. requireEmailVerification is off: the email is a placeholder.
+  emailAndPassword: {
+    enabled: true,
+    minPasswordLength: 12,
+    maxPasswordLength: 128,
+    autoSignIn: true,
+    requireEmailVerification: false,
+  },
+  // better-auth's own limiter keeps per-instance memory and allows 3 sign-ins
+  // per 10 s per address. limitAuthAttempt (auth-rate-limit.ts) replaces it
+  // with budgets kept in Redis, shared by every app instance.
+  rateLimit: { enabled: false },
+  // better-auth mounts its full default endpoint set, and each plugin's,
+  // behind the catch-all at app/api/auth/[...all]. This app calls seven of
+  // them: /sign-up/email, /sign-in/username, /sign-in/social, /link-social,
+  // /callback/:id, /get-session and /sign-out. Everything below is an endpoint
+  // this app never calls that mutates the signed-in identity, reads account
+  // data, or hands back provider data, so it is closed at the network edge.
   //
   // disabledPaths is enforced in the router's onRequest (api/index.mjs) as an
   // unconditional 404, before originCheck, before rate limiting, and before
@@ -154,12 +218,12 @@ export const authOptions = {
     // no session.additionalFields, so the parse always comes back empty.
     // Declaring one would make this writable, silently.
     "/update-session",
-    // Identity and credential mutation. Verified inert today — /sign-up/email
-    // answers EMAIL_PASSWORD_SIGN_UP_DISABLED and /request-password-reset
-    // answers RESET_PASSWORD_DISABLED, because no email/password provider is
-    // configured. They stay closed so that enabling one later cannot quietly
-    // introduce a second identity path where `login` is settable at sign-up.
-    "/sign-up/email",
+    // Identity and credential mutation. /sign-up/email is not here: it is
+    // open, and like /update-user it parses a request body into the user row,
+    // so refuseSignUpFields allowlists its body. Sign-in is by username only,
+    // since a username account's email is a placeholder. There is no password
+    // change or reset; with no sendResetPassword configured,
+    // /request-password-reset answers RESET_PASSWORD_DISABLED anyway.
     "/sign-in/email",
     "/change-email",
     "/change-password",
@@ -190,6 +254,9 @@ export const authOptions = {
     // into a GitHub token.
     "/get-access-token",
     "/refresh-token",
+    // The username plugin's availability probe: an unthrottled oracle for
+    // which usernames exist. Sign-up answers USERNAME_IS_ALREADY_TAKEN.
+    "/is-username-available",
   ],
   databaseHooks: {
     // The GitHub login a player signs in with is recorded as their link
@@ -212,7 +279,11 @@ export const authOptions = {
     },
   },
   hooks: {
+    // In this order: the rate limit is charged before anything reads the
+    // body. Each check returns early off its own path.
     before: createAuthMiddleware(async (ctx) => {
+      await limitAuthAttempt(ctx);
+      await refuseSignUpFields(ctx);
       await refuseClientOAuthParams(ctx);
       await refuseSecondGithubLink(ctx);
     }),
@@ -252,16 +323,27 @@ export const authOptions = {
       // better-auth 1.7.16, it regresses sign-in.
       //
       // The consequence is that `login` remains writable by any endpoint that
-      // funnels a request body through parseUserInput. The only such endpoint
-      // is /update-user, which is closed above. If you add an auth plugin that
-      // registers another one (phone-number and email-otp both do), it inherits
-      // the same write path and must be closed too. The durable fix is to
-      // resolve `login` from the linked GitHub account row rather than trusting
-      // the user row's copy.
+      // funnels a request body through parseUserInput. There are two:
+      // /update-user, which is closed above, and /sign-up/email, which is
+      // open and closed to every identity field by refuseSignUpFields. If you
+      // add an auth plugin that registers another one (phone-number and
+      // email-otp both do), it inherits the same write path and must be
+      // closed too. The durable fix is to resolve `login` from the linked
+      // GitHub account row rather than trusting the user row's copy.
       login: { type: "string", required: false },
     },
   },
-  plugins: [nextCookies()], // keep last
+  plugins: [
+    // usernameNormalization is the throttle's key function too, so the stored
+    // username and the sign-in budget it is charged to always agree.
+    username({
+      minUsernameLength: USERNAME_MIN,
+      maxUsernameLength: USERNAME_MAX,
+      usernameValidator: (u) => usernameProblem(u) === null,
+      usernameNormalization: normalizeUsername,
+    }),
+    nextCookies(), // keep last
+  ],
 } satisfies BetterAuthOptions;
 
 export const auth = betterAuth(authOptions);

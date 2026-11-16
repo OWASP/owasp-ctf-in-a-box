@@ -2,10 +2,9 @@ import "server-only";
 import { APIError, type createAuthMiddleware } from "better-auth/api";
 import { clientIp } from "@/lib/client-ip";
 import { RATE_LIMITS, consumeRateLimit } from "@/lib/rate-limit-store";
+import { normalizeUsername } from "@/lib/username-rules";
 
 type AuthCtx = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
-
-const normalizeUsername = (u: unknown): string => (typeof u === "string" ? u.trim().toLowerCase() : "");
 
 async function charge(r: { bucket: string; limit: number; windowSeconds: number }, key: string): Promise<void> {
   // Fail closed: these guard account creation and a password compare, and
@@ -38,6 +37,9 @@ export async function limitAuthAttempt(ctx: AuthCtx): Promise<void> {
   if (ctx.path === "/sign-in/username") {
     const ip = clientIp(ctx.headers ?? new Headers());
     await charge(RATE_LIMITS.signInIp, ip);
-    await charge(RATE_LIMITS.signInUser, `${ip}|${normalizeUsername((ctx.body as { username?: unknown } | null)?.username)}`);
+    // Keyed on the username as the plugin stores it, so case and spaces
+    // cannot buy a fresh budget for one account.
+    const typed = (ctx.body as { username?: unknown } | null)?.username;
+    await charge(RATE_LIMITS.signInUser, `${ip}|${typeof typed === "string" ? normalizeUsername(typed) : ""}`);
   }
 }

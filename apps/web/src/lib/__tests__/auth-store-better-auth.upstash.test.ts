@@ -15,6 +15,8 @@ import * as keys from "@/lib/auth-store/keys";
 import { LINK_AT_KEY, LINK_USER_PREFIX, linkKey } from "@/lib/github-link";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
 import { upstashPipeline as pipeline } from "@/lib/upstash";
+import { ADMIN_SETTINGS_KEY } from "@/lib/admin-store";
+import { isPlaceholderEmail } from "@/lib/placeholder-email";
 import { freshId, liveConfigured, liveKey, RUN } from "./live-redis";
 
 vi.mock("server-only", () => ({}));
@@ -450,6 +452,118 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
       expect(await link(input)).toEqual({ linked: true });
       expect((await linkKeys(u1.id, login)).owner).toBe(u1.id);
       expect((await ia.findAccounts(u1.id)).map((a) => a.accountId)).toEqual(["gh-3"]);
+    });
+  });
+
+  describe("username and password sign-up and sign-in over HTTP", () => {
+    // The app's own plugins (username, nextCookies) and hooks, over a
+    // suite-scoped prefix. Each test signs up from its own address, so the
+    // real per-address budgets of limitAuthAttempt never carry over.
+    async function buildPasswordAuth(overrides: Partial<typeof authOptions> = {}) {
+      const prefix = liveKey("auth-password", freshId("p"));
+      const instance = betterAuth({ ...authOptions, database: redisAdapter({ prefix }), ...overrides });
+      const ctx = await instance.$context;
+      const ip = `live-${RUN}-${freshId("ip")}`;
+      const post = async (path: string, body: unknown) => {
+        const res = await instance.handler(
+          new Request(`http://localhost:3000/api/auth${path}`, {
+            method: "POST",
+            headers: { "content-type": "application/json", origin: "http://localhost:3000", "x-forwarded-for": ip },
+            body: typeof body === "string" ? body : JSON.stringify(body),
+          }),
+        );
+        const text = await res.text();
+        return { res, body: (text ? JSON.parse(text) : null) as Record<string, unknown> | null };
+      };
+      return { prefix, ctx, post };
+    }
+    const pw = (n: number) => "p".repeat(n);
+    type Row = { id: string; email: string; name: string; username?: string; displayUsername?: string; login?: string };
+
+    it("sign-up creates an account with a placeholder email and the username as name", async () => {
+      const { ctx, post } = await buildPasswordAuth();
+      const { res, body } = await post("/sign-up/email", { username: "Alice", password: pw(12) });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("set-cookie")).toContain(ctx.authCookies.sessionToken.name);
+      const rows = await ctx.adapter.findMany<Row>({ model: "user" });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ username: "alice", displayUsername: "Alice", name: "Alice" });
+      expect(rows[0].login).toBeUndefined();
+      expect(isPlaceholderEmail(rows[0].email)).toBe(true);
+      expect((body?.user as Row).id).toBe(rows[0].id);
+      const accounts = await ctx.internalAdapter.findAccounts(rows[0].id);
+      expect(accounts.map((a) => a.providerId)).toEqual(["credential"]);
+    });
+
+    it.each(["login", "email", "name", "image", "emailVerified", "id", "foo"])("refuses a sign-up body carrying %s and writes no user", async (field) => {
+      const { ctx, post } = await buildPasswordAuth();
+      const value = field === "emailVerified" ? true : field === "email" ? "a@b.test" : "someone";
+      const { res, body } = await post("/sign-up/email", { username: "alice", password: pw(12), [field]: value });
+      expect(res.status).toBe(400);
+      expect(body?.code).toBe("SIGN_UP_FIELD_REFUSED");
+      expect(await ctx.adapter.count({ model: "user" })).toBe(0);
+    });
+
+    it("refuses passwords of 11 and 129 characters and takes 12 and 128", async () => {
+      const { ctx, post } = await buildPasswordAuth();
+      expect((await post("/sign-up/email", { username: "short", password: pw(11) })).res.status).toBe(400);
+      expect((await post("/sign-up/email", { username: "long", password: pw(129) })).res.status).toBe(400);
+      expect(await ctx.adapter.count({ model: "user" })).toBe(0);
+      expect((await post("/sign-up/email", { username: "twelve", password: pw(12) })).res.status).toBe(200);
+      expect((await post("/sign-up/email", { username: "maxlen", password: pw(128) })).res.status).toBe(200);
+      expect(await ctx.adapter.count({ model: "user" })).toBe(2);
+    });
+
+    it("refuses a username taken in another case", async () => {
+      const { ctx, post } = await buildPasswordAuth();
+      expect((await post("/sign-up/email", { username: "alice", password: pw(12) })).res.status).toBe(200);
+      const second = await post("/sign-up/email", { username: "ALICE", password: pw(12) });
+      expect(second.res.status).toBe(400);
+      expect(second.body?.code).toBe("USERNAME_IS_ALREADY_TAKEN");
+      expect(await ctx.adapter.count({ model: "user" })).toBe(1);
+    });
+
+    it("signs in by username in any case, and answers a wrong password with the generic 401", async () => {
+      const { post } = await buildPasswordAuth();
+      expect((await post("/sign-up/email", { username: "alice", password: pw(12) })).res.status).toBe(200);
+      const ok = await post("/sign-in/username", { username: "ALICE", password: pw(12) });
+      expect(ok.res.status).toBe(200);
+      expect(ok.res.headers.get("set-cookie")).toBeTruthy();
+      const wrong = await post("/sign-in/username", { username: "alice", password: pw(13) });
+      expect(wrong.res.status).toBe(401);
+      expect(wrong.body?.message).toBe("Invalid username or password");
+      const nobody = await post("/sign-in/username", { username: "nobody", password: pw(12) });
+      expect(nobody.res.status).toBe(401);
+      expect(nobody.body?.message).toBe("Invalid username or password");
+    });
+
+    it("signs up and in while team registration is closed", async () => {
+      // Account creation is not team registration: closing the registration
+      // window must not lock players out of the box.
+      const fields = ["teamRegistrationOpen", "registrationStartsAt", "registrationEndsAt"];
+      const saved = (await redis(["HMGET", ADMIN_SETTINGS_KEY, ...fields])) as (string | null)[];
+      const past = new Date(Date.now() - 3_600_000).toISOString();
+      await redis(["HSET", ADMIN_SETTINGS_KEY, "teamRegistrationOpen", "0", "registrationStartsAt", past, "registrationEndsAt", past]);
+      try {
+        const { post } = await buildPasswordAuth();
+        expect((await post("/sign-up/email", { username: "latecomer", password: pw(12) })).res.status).toBe(200);
+        expect((await post("/sign-in/username", { username: "latecomer", password: pw(12) })).res.status).toBe(200);
+      } finally {
+        for (const [i, f] of fields.entries()) {
+          await redis(saved[i] === null ? ["HDEL", ADMIN_SETTINGS_KEY, f] : ["HSET", ADMIN_SETTINGS_KEY, f, saved[i] as string]);
+        }
+      }
+    });
+
+    it("does not refuse 5 sign-ins inside 10 s from one address with better-auth's own limiter", async () => {
+      // better-auth turns its limiter on by default in production, where it
+      // allows 3 sign-ins per 10 s. NODE_ENV is "test" here, so an unset
+      // `enabled` is stood in for by the production default.
+      const { post } = await buildPasswordAuth({ rateLimit: { ...authOptions.rateLimit, enabled: authOptions.rateLimit?.enabled ?? true } });
+      expect((await post("/sign-up/email", { username: "burst", password: pw(12) })).res.status).toBe(200);
+      for (let i = 0; i < 5; i++) {
+        expect((await post("/sign-in/username", { username: "burst", password: pw(12) })).res.status).toBe(200);
+      }
     });
   });
 });

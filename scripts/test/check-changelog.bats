@@ -230,6 +230,32 @@ _entry() {
   _has "  changelog.d/4-bad.md"
 }
 
+@test "editing an existing fragment into invalid text fails" {
+  mkdir -p changelog.d
+  printf -- '- **Fixed: a thing (#5).** prose.\n' > changelog.d/5-old.md
+  git add -A
+  git commit -q -m "existing fragment"
+  git tag -f base >/dev/null
+  printf 'prose\n' > changelog.d/5-old.md
+  _commit docs/x.md
+  run "$SCRIPT" base HEAD
+  [ "$status" -eq 1 ]
+  _has "  changelog.d/5-old.md"
+}
+
+@test "an edited valid fragment does not count as this PR's entry" {
+  mkdir -p changelog.d
+  printf -- '- **Fixed: a thing (#6).** prose.\n' > changelog.d/6-old.md
+  git add -A
+  git commit -q -m "existing fragment"
+  git tag -f base >/dev/null
+  printf -- '- **Fixed: a thing, reworded (#6).** prose.\n' > changelog.d/6-old.md
+  _commit apps/web/src/a.ts
+  run "$SCRIPT" base HEAD
+  [ "$status" -eq 1 ]
+  _has "no changelog fragment added"
+}
+
 @test "a fragment alone, with no shipped code, passes" {
   mkdir -p changelog.d
   printf -- '- **Changed: docs (#9).** prose.\n' > changelog.d/9-x.md

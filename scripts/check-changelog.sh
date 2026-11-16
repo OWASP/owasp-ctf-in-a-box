@@ -64,12 +64,17 @@ done
 #   so moving shipped code into docs/ would have passed as a docs change.
 list="$(mktemp)"
 added="$(mktemp)"
-trap 'rm -f "$list" "$added"' EXIT
+modified="$(mktemp)"
+trap 'rm -f "$list" "$added" "$modified"' EXIT
 if ! git -c core.quotePath=false diff --no-renames --name-only -z "${base}...${head}" > "$list"; then
   echo "check-changelog: git diff ${base}...${head} failed — no merge base? refusing to guess" >&2
   exit 2
 fi
 if ! git -c core.quotePath=false diff --no-renames --diff-filter=A --name-only -z "${base}...${head}" > "$added"; then
+  echo "check-changelog: git diff ${base}...${head} failed — no merge base? refusing to guess" >&2
+  exit 2
+fi
+if ! git -c core.quotePath=false diff --no-renames --diff-filter=M --name-only -z "${base}...${head}" > "$modified"; then
   echo "check-changelog: git diff ${base}...${head} failed — no merge base? refusing to guess" >&2
   exit 2
 fi
@@ -96,26 +101,43 @@ exempt() {
 }
 
 # A fragment is a file directly in changelog.d/ ending in .md, not the README.
-# Every added fragment must be one the release assembler accepts: its first
-# non-blank line is a bullet with text after the "- ". One bad fragment fails
-# the check even beside a good one, and even on a PR that needs no entry,
-# because the assembler would stop on it at release.
+# Every fragment the PR adds or edits must be one the release assembler
+# accepts: its first non-blank line is a bullet with text after the "- ". One
+# bad fragment fails the check even beside a good one, and even on a PR that
+# needs no entry, because the assembler would stop on it at release. Only an
+# ADDED valid fragment counts as this PR's entry.
 fragment=""
 invalid=""
-while IFS= read -r -d '' path; do
+
+# Prints "valid", "invalid" or "skip" for one changed path.
+fragment_state() {
+  local path="$1" first
   case "$path" in
-    changelog.d/README.md) ;;
-    changelog.d/*/*) ;;
-    changelog.d/*.md)
-      first="$(git show "${head}:${path}" | grep -m1 -v '^[[:space:]]*$' || true)"
-      case "$first" in
-        "- "*[![:space:]]*) fragment="$path" ;;
-        *) invalid="${invalid}  ${path}
+    changelog.d/README.md | changelog.d/*/*) echo skip; return ;;
+    changelog.d/*.md) ;;
+    *) echo skip; return ;;
+  esac
+  first="$(git show "${head}:${path}" | grep -m1 -v '^[[:space:]]*$' || true)"
+  case "$first" in
+    "- "*[![:space:]]*) echo valid ;;
+    *) echo invalid ;;
+  esac
+}
+
+while IFS= read -r -d '' path; do
+  case "$(fragment_state "$path")" in
+    valid) fragment="$path" ;;
+    invalid) invalid="${invalid}  ${path}
 " ;;
-      esac
-      ;;
   esac
 done < "$added"
+
+while IFS= read -r -d '' path; do
+  if [ "$(fragment_state "$path")" = invalid ]; then
+    invalid="${invalid}  ${path}
+"
+  fi
+done < "$modified"
 
 if [ -n "$invalid" ]; then
   {

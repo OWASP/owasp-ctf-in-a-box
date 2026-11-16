@@ -16,6 +16,14 @@ describe("displayNameOf on a session user", () => {
   });
 });
 
+describe("displayNameOf with a username", () => {
+  it("shows the typed username over the normalized one, the login and the name", () => {
+    expect(displayNameOf({ id: ID, displayUsername: "Alice", username: "alice", login: "gh", name: "A" })).toBe("Alice");
+    expect(displayNameOf({ id: ID, displayUsername: null, username: "alice", login: "gh" })).toBe("alice");
+    expect(displayNameOf({ id: ID, username: "", login: "gh" })).toBe("gh");
+  });
+});
+
 describe("unnamed", () => {
   it("gives the id fallback and no image", () => {
     expect(unnamed(ID)).toEqual({ name: "player 3f2b8c1e", image: null });

@@ -210,7 +210,7 @@ describe("redisAdapter (mocked pipeline)", () => {
   it("passes the model's unique fields to the write script", async () => {
     fakeRedis({});
     await adapter.create({ model: "user", data: { name: "A", email: "a@x.test", emailVerified: false } });
-    expect(evalArgs().slice(5)).toEqual(["email", "email"]);
+    expect(evalArgs().slice(5)).toEqual(["email,username", "email,username"]);
     pipeline.mockClear();
     await adapter.create({ model: "account", data: { userId: "u", providerId: "github", accountId: "1" } });
     expect(evalArgs().slice(5)).toEqual(["userId,accountId,providerId+accountId", "providerId+accountId"]);
@@ -223,7 +223,7 @@ describe("redisAdapter (mocked pipeline)", () => {
     fakeRedis({}, [2]);
     await expect(
       adapter.create({ model: "user", data: { name: "A", email: "a@x.test", emailVerified: false } }),
-    ).rejects.toThrow("auth store: create user failed: unique email taken");
+    ).rejects.toThrow("auth store: create user failed: unique email, username taken");
 
     const user = { id: "u1", name: "A", email: "a@x.test", emailVerified: false };
     fakeRedis({ u1: JSON.stringify(user) }, [2]);

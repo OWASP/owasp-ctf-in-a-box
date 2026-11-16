@@ -144,10 +144,38 @@ describe.skipIf(!liveConfigured)("redisAdapter against a live SRH proxy", () => 
     ]);
     expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
     const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
-    expect(String(rejected.reason)).toMatch(/auth store: create user failed: unique email taken/);
+    expect(String(rejected.reason)).toMatch(/auth store: create user failed: unique email, username taken/);
     const won = (results.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<Row>).value;
     expect(await adapter.count({ model: "user" })).toBe(1);
     expect(await smembers(indexKey(prefix, "user", "email", "same@example.test"))).toEqual([won.id]);
+  });
+
+  it("two creates with case-variant usernames leave one row", async () => {
+    // The factory drops data fields the schema does not declare; the username
+    // plugin declares these two on the user model.
+    const prefix = liveKey("auth-adapter", freshId("p"));
+    const adapter = make({ prefix })({
+      user: { additionalFields: { username: { type: "string" }, displayUsername: { type: "string" } } },
+    } as BetterAuthOptions);
+    const mk = (username: string, displayUsername: string) =>
+      adapter.create<Record<string, unknown>, Row>({
+        model: "user",
+        data: { name: "Ada", email: `${freshId("u")}@example.test`, emailVerified: false, username, displayUsername },
+      });
+    const results = await Promise.allSettled([mk("alice", "Alice"), mk("alice", "alice")]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(String(rejected.reason)).toMatch(/auth store: create user failed: unique email, username taken/);
+    const won = (results.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<Row>).value;
+    expect(await adapter.count({ model: "user" })).toBe(1);
+    expect(await smembers(indexKey(prefix, "user", "username", "alice"))).toEqual([won.id]);
+  });
+
+  it("does not index a user row that has no username", async () => {
+    const { adapter } = freshWithPrefix();
+    await makeUser(adapter);
+    await makeUser(adapter);
+    expect(await adapter.count({ model: "user" })).toBe(2);
   });
 
   it("lets exactly one of two concurrent accounts with the same provider and accountId be created", async () => {
@@ -175,7 +203,7 @@ describe.skipIf(!liveConfigured)("redisAdapter against a live SRH proxy", () => 
     const before = await adapter.findMany({ model: "user", where: [{ field: "id", value: [a.id, b.id], operator: "in" }] });
     await expect(
       adapter.update({ model: "user", where: [{ field: "id", value: b.id }], update: { email: (a as { email?: string }).email } }),
-    ).rejects.toThrow(/auth store: update user failed: unique email taken/);
+    ).rejects.toThrow(/auth store: update user failed: unique email, username taken/);
     const after = await adapter.findMany({ model: "user", where: [{ field: "id", value: [a.id, b.id], operator: "in" }] });
     expect(after).toHaveLength(2);
     expect(after).toEqual(before);

@@ -432,7 +432,7 @@ git push -u origin fix/<short-description>`,
       {
         title: "Claim the first admin at /admin/claim",
         where: "outside",
-        body: "Sign in, open /admin/claim and enter the admin claim code. Until setup generates it, make one by hand: openssl rand -hex 16, then put the SHA-256 of that code in .env as ADMIN_CLAIM_CODE_HASH and recreate the app container (docs/troubleshooting.md). Without a claimed seat nobody is an admin, even the deployer. Issue codes from the Admins tab to add more organizers.",
+        body: "Sign in, open /admin/claim and enter the admin claim code. On a Docker Compose box, make one by hand: openssl rand -hex 16, then put the SHA-256 of that code in .env as ADMIN_CLAIM_CODE_HASH and recreate the app container (docs/troubleshooting.md). The Fly and AWS deploys do not pass that hash to the app yet. Without a claimed seat nobody is an admin, even the deployer. Issue codes from the Admins tab to add more organizers.",
       },
       {
         title: "Set the re-run cooldown",

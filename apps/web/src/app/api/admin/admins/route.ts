@@ -13,8 +13,9 @@ import { getPlayerProfiles, PLAYER_ID_RE } from "@/lib/player";
  * a claim code (POST /api/admin/codes issues one, /admin/claim spends it).
  *
  * The revoke script refuses to remove a grant unless another grant belongs to
- * an account that still exists, so no sequence of clicks leaves the box with
- * nobody who can open /admin; a "(deleted account)" grant does not count.
+ * an account that still exists; a "(deleted account)" grant does not count.
+ * It cannot tell whether that admin can still sign in: the bootstrap code
+ * (ADR 72, Recovery) is the way back in when none can.
  * Removing yourself is allowed while another usable admin remains; the tab
  * confirms first.
  */

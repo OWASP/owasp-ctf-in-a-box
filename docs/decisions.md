@@ -4398,10 +4398,14 @@ event exists.
   `ADMIN_CLAIM_CODE_HASH`. A signed-in player enters the code at
   `/admin/claim`. Input is normalized (lowercase, hyphens and whitespace
   dropped) and must be exactly 32 hex. The hash is unsalted: the code has 128
-  bits of entropy, which a slow KDF would not add to. Until setup, Fly and
-  AWS generate the code, the organizer does it by hand
+  bits of entropy, which a slow KDF would not add to. On a Docker
+  Compose box the organizer does it by hand, since setup does not write the
+  hash yet
   ([troubleshooting](troubleshooting.md#admin-says-forbidden-for-everyone-including-you)):
-  `openssl rand -hex 16`, its SHA-256 into `.env`, a recreated app container.
+  `openssl rand -hex 16`, its SHA-256 into `.env`, a recreated app
+  container. The Fly and AWS deploys do not pass `ADMIN_CLAIM_CODE_HASH` to
+  the app yet (#738), so a box deployed there cannot claim its first admin
+  until they do.
 - **Admins issue more codes.** An issued code is stored as
   `ctf:admin:code:<sha256>` for 15 minutes and works once.
 - **Claim, issue and revoke are atomic Lua scripts**, each writing one audit
@@ -4437,8 +4441,8 @@ event exists.
   "nobody has claimed this box" notice reads the grant count best-effort and
   shows nothing when the read fails.
 
-**Recovery.** Rotating the hash (by hand in `.env` until setup, Fly and AWS
-generate the code) makes a new bootstrap code, and the old one stops working at
+**Recovery.** Rotating the hash (by hand in `.env` on a Docker Compose box;
+not yet possible on Fly or AWS, #738) makes a new bootstrap code, and the old one stops working at
 once because only the current env hash is compared. The bootstrap code works
 whether or not admins exist: the lock-out case includes an admin who still
 holds a grant but cannot sign in, and v2.0 has no email recovery. Rotating

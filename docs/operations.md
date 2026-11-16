@@ -165,9 +165,11 @@ Everyone else gets a 403 on `/admin` and its API routes; the Forbidden page
 links to `/admin/claim`.
 
 The first code's SHA-256 goes in `.env` as `ADMIN_CLAIM_CODE_HASH`; the
-code itself is never stored. Until setup, Fly and AWS generate the code,
-make it by hand as [the Forbidden runbook](troubleshooting.md#admin-says-forbidden-for-everyone-including-you) shows: `openssl rand -hex 16`,
-its SHA-256 into `.env`, then a recreated app container. Sign in, open
+code itself is never stored. On a Docker Compose box, make it by hand as [the Forbidden runbook](troubleshooting.md#admin-says-forbidden-for-everyone-including-you) shows: `openssl rand -hex 16`,
+its SHA-256 into `.env`, then a recreated app container; setup does not
+write it yet. The Fly and AWS deploys do not pass `ADMIN_CLAIM_CODE_HASH` to
+the app yet (#738), so a box deployed there cannot claim its first admin
+until they do. Sign in, open
 `/admin/claim` and enter the code: the account you are signed in with becomes an admin. Each code
 works once. Further organizers get a code from the **Admins** tab (see
 below). Until somebody claims, `/admin` refuses everyone and its Forbidden
@@ -1073,9 +1075,10 @@ hash is ever stored.
 
 **To remove one**, press *Remove* and confirm. You can remove yourself while
 another admin remains. **The last admin cannot be removed**: the panel
-refuses, so no sequence of clicks leaves the box with nobody who can open
-`/admin`. An admin listed as "(deleted account)" does not count, since nobody
-can sign in as them. Issue a code and have someone claim it first. Removing
+refuses. An admin listed as "(deleted account)" does not count, since nobody
+can sign in as them. The panel cannot tell whether a listed admin can still
+sign in; if none can, rotate `ADMIN_CLAIM_CODE_HASH` for a new bootstrap
+code, which works whether or not admins exist. Issue a code and have someone claim it first. Removing
 an admin also voids every code they issued that nobody has claimed yet, and
 those codes stay void if the admin is later granted again, so a removed
 admin cannot claim their way back in.

@@ -821,8 +821,10 @@ readable and writable while the stack is running, without a restart:
   admin grant: the only roster. A set rather than a settings field because
   membership *is* the whole value. Grants are made only by claiming a code at
   `/admin/claim` and removed from the Admins tab; the revoke script refuses
-  to remove the last grant whose account still exists, so no sequence of
-  clicks leaves `/admin` unreachable.
+  to remove the last grant whose account still exists. It cannot tell
+  whether that admin can still sign in; if none can, rotating
+  `ADMIN_CLAIM_CODE_HASH` makes a bootstrap code that works whether or not
+  admins exist (ADR 72, Recovery).
   `requireAdmin` **fails closed** — an unreachable store denies rather than
   resolving to "no grant".
 - **`ctf:admin:code:<sha256>`** (STRING, 15-minute TTL) — an admin-issued

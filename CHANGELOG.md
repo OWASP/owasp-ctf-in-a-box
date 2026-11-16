@@ -34,12 +34,14 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   **Breaking:** `ADMIN_LOGINS` is ignored; a GitHub login no longer makes
   anyone an admin, and grants made from the v1 panel (`ctf:admin:admins`)
   are not read. The Admins tab's add-by-login form and
-  `POST /api/admin/admins` are gone. **Upgrade note:** until setup, Fly and
-  AWS generate the code themselves, set the hash by hand: run
+  `POST /api/admin/admins` are gone. **Upgrade note:** on a Docker Compose
+  box, set the hash by hand, since setup does not write it yet: run
   `c=$(openssl rand -hex 16); echo "$c"; printf %s "$c" | openssl dgst -sha256`,
   put the digest in `.env` as `ADMIN_CLAIM_CODE_HASH`, recreate the app
   container (`docker compose up -d --no-deps --force-recreate app`; a plain restart does not reload `.env`), and
-  claim with the printed code.
+  claim with the printed code. The Fly and AWS deploys do not pass
+  `ADMIN_CLAIM_CODE_HASH` to the app yet (#738), so a box deployed there
+  cannot claim its first admin until they do.
 - **Added: GitHub linking, and held Secure Development scores (#741).** With
   Secure Development on, a player links a GitHub account from their profile
   or by signing in with GitHub; one GitHub account links to one kit account,

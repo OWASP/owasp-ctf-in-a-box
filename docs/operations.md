@@ -228,8 +228,6 @@ controls sit behind a **left sidebar** in three groups (it collapses to a
   size, the schedule, then demo seed and the master reset at the bottom),
   **Hints**, **Admins**, **Sponsors**.
 
-![The admin panel's Event tab: the per-module switches, the freeze and team-registration toggles, the players-per-team cap, and the schedule fields with a live "right now: scoring is live" readout](assets/admin-event.jpg)
-
 **Overview is the default** on load, regardless of how many modules are
 enabled — unless the URL names another destination (see the deep links
 below). It answers "is scoring on, how many teams, is anything stuck" in one
@@ -1032,6 +1030,87 @@ hashes and the award times the leaderboard reads) but deliberately
 same organizer content/contestant progress line the quiz reset draws. A
 rehearsal on the `classic` module wipes back to the challenge set you wrote,
 ready to run for real. See [Jeopardy](#jeopardy) below.
+
+### Discord announcements
+
+The Event tab has a **Discord announcements** card. Paste a Discord webhook
+URL into **Webhook URL** and press **Save** — it must be an
+`https://discord.com/api/webhooks/<id>/<token>` URL from **Server Settings →
+Integrations → Webhooks**. **Clear** deletes it (the panel cannot show it to
+you again). Nothing is posted until at least one type is switched on: saving a
+webhook turns nothing on by itself.
+
+![The Event tab's Discord announcements card, below the projector QR setting: a write-only Webhook URL field with Save, Clear and Send test buttons; switches for First blood, Event launch, Scoring paused / resumed and Remaining-time checks; a Marks before close field; and a live-format preview of the paused message](assets/admin-event.jpg)
+
+The four switches cover five announcement kinds:
+
+- **First blood** — posts when a team or solo player is the first to solve a
+  challenge. The post is claimed from the true first-solver record the award
+  script writes, so only that solver's notification can send it; a classic
+  step still locked behind its story gate is withheld entirely. Turning the
+  switch on after solves have happened does not replay them.
+- **Event launch** — posts "The event is live!" once when scoring opens (the
+  scheduled scoring start is reached). A box that has not observed the
+  pre-launch state seeds silently, so enabling announcements after the event
+  has already launched does not send a retroactive launch.
+- **Scoring paused / resumed** — both edges of one freeze switch. A live,
+  unclosed event that enters a held pause posts "Scoring is paused"; lifting
+  that pause posts "Scoring resumed" once. A pause that begins while scoring
+  is already closed is never announced, so lifting it later posts nothing.
+- **Remaining-time checks** — posts a "Time check" at each mark in **Marks
+  before close** (default `1h, 15m`; each at least `1m`, at most `7d`, up to
+  10 comma-separated marks). Marks post only while the event is launched,
+  unpaused and before scoring closes. A tick that sees several marks crossed
+  claims them all but sends **one** check with the current time left, so a
+  restart, a duplicate tick or turning the switch on mid-event cannot burst a
+  backlog. Moving **Scoring closes** re-arms the marks for the new close.
+
+Each switch also offers **Preview**, which renders the live message format
+with sample data without reading the webhook or sending anything.
+
+**Send test** posts a test message straight to the configured webhook and
+reports the outcome beside the button: "Saved" on success, or the reason the
+server refused it (no webhook configured, the announcement store being
+unavailable, or Discord rejecting the message — the server log carries the
+status). It has no separate per-test timer: it obeys the same shared Discord
+rate-limit cooldown as the scheduled deliveries. If Discord has already
+returned a 429, Send test refuses with the retry time instead of hitting the
+limit again, and a test that itself draws a 429 parks the scheduled
+deliveries too, until the retry instant. The line under the card shows the
+last successful post and the last delivery failure.
+
+![A Discord channel message from the kit: a red "First blood" embed reading that bhushan4work solved Discord Announcement Demo first, with a Points field showing 10](assets/discord-announcement.jpg)
+
+**Launch, freeze and close.** The announcer observes the same launch, freeze
+and schedule state the box already uses, once every 30 seconds while armed
+(and much less often while idle). Launch posts at the scoring start. Freezing
+a live event posts the pause, and **reopening while still frozen** — extending
+or moving the scoring window without un-freezing — is not a new edge. Closing
+at **Scoring closes** is deliberately not announced (there is nothing to
+resume) and it silences the remaining-time checks. One freeze that spans the
+close and a later extension is still one announced pause.
+
+**Enabling announcements shortly before launch is the intended way to start.**
+The save nudges the observer to record the current pre-launch state
+immediately, so the launch itself is announced instead of being swallowed as
+the first observation. Enabling after launch is likewise silent until the
+next real edge.
+
+**The master reset clears `ctf:announce:*`.** That is the announcer's run
+state — the first-blood and time-mark claims, the observed lifecycle pack, the
+outbox, leases and the delivery status — so a reset event starts silent: no
+old launch is replayed, a fresh first blood is claimable again, and retained
+posts are cancelled. The webhook and the per-kind switches/marks live outside
+that prefix and **survive the reset**, like the event's other organizer-set
+things. The reset also advances the webhook generation, so an entry produced
+from a pre-reset snapshot cannot be delivered afterwards.
+
+**The webhook is a secret.** It is stored in its own Redis key
+(`ctf:admin:discord:webhook`), not in the settings hash and not in any event
+export; the API returns only a `webhookConfigured` boolean, the panel's field
+is write-only, and the URL is never logged or audited by value (the audit line
+records only "set" or "cleared"). An event archive carries content and policy
+settings, never the Discord webhook or the announcement configuration.
 
 ### Targets
 

@@ -4333,8 +4333,12 @@ this ADR) or a held release; that race is #775.
 **Context.** ADR 69 deprecated the `ai` module in v1.1.0 and scheduled its
 deletion for v2.0.0, alongside kit-owned accounts (#731). v2.0.0 is a clean
 break: it refuses a Redis that holds v1 data and does not read v1 archives.
-No AI points, settings, challenges or keys can therefore reach a v2 box, so
-nothing in v2.0.0 has to read, fold or migrate them.
+Both refusals ship with #743, before v2.0.0 is cut; until it lands the
+importer still parses archive versions 1–3. The archive half of this ADR
+holds either way: the importer refuses any archive that carries an `ai`
+section (`event-io.ts`), so no AI challenges, settings or keys arrive by
+import. With #743, no AI points arrive from an old Redis either, and nothing
+in v2.0.0 has to read, fold or migrate them.
 
 **Decision.** v2.0.0 deletes the module as a plain deletion:
 - **Code.** The `/ai` and `/ai/[id]` pages, every `/api/ai/*` route
@@ -4356,7 +4360,8 @@ nothing in v2.0.0 has to read, fold or migrate them.
   [docs/reviewing.md](reviewing.md) invariant 11 is seven routes, without
   `GET /api/ai/launch-key`.
 - **No compatibility layer.** No read-only fold of old AI totals, no
-  tombstone module id, no archive-import handling, and no reset of
+  tombstone module id, no import of an archive's `ai` section (the
+  importer refuses one rather than dropping it), and no reset of
   `ctf:ai:*` keys: a v2 box never holds them.
 
 This was chosen over keeping the module's keys in the master reset "just in

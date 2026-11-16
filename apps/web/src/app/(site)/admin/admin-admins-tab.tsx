@@ -8,7 +8,7 @@
 // than threading through admin-controls' `apply`, because it talks to
 // different endpoints with a different shape (a set, not a settings patch).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ConfirmModal from "@/components/confirm-modal";
 
 type AdminRow = { id: string; name: string; self: boolean };
@@ -62,7 +62,15 @@ export default function AdminAdminsTab({ viewerId, visible = true }: { viewerId:
     }
   }
 
-  // The one legitimate effect here: fetch the current list once, on mount.
+  /** Bumped whenever the tab is hidden. An issue request remembers the value
+   *  it started under and drops its code if that has changed, so a response
+   *  that lands after the organizer left never shows the code again. */
+  const issueGen = useRef(0);
+  useEffect(() => {
+    if (!visible) issueGen.current += 1;
+  }, [visible]);
+
+  // The other effect: fetch the current list once, on mount.
   // Every setState is inside a promise callback, never in the effect body.
   useEffect(() => {
     let live = true;
@@ -106,6 +114,7 @@ export default function AdminAdminsTab({ viewerId, visible = true }: { viewerId:
   }
 
   async function issue() {
+    const gen = issueGen.current;
     setPending(true);
     setError(null);
     setNotice(null);
@@ -113,6 +122,7 @@ export default function AdminAdminsTab({ viewerId, visible = true }: { viewerId:
     try {
       const res = await fetch("/api/admin/codes", { method: "POST" });
       const data = (await res.json().catch(() => ({}))) as { code?: string; expiresAt?: string; error?: string };
+      if (gen !== issueGen.current) return;
       if (!res.ok || !data.code || !data.expiresAt) {
         setError(data.error ?? "Could not issue a code");
         return;

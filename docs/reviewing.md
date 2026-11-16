@@ -140,7 +140,9 @@ misleading anyway); admin-ness is decided by the player id in
 `ctf:admin:grants` (`admin-auth.ts`/`isAdminPlayer`, ADR 72), never by a
 GitHub login, and a grant read that errors denies; an empty or malformed
 `ADMIN_CLAIM_CODE_HASH` means nobody can claim, never "anyone may"; a claim
-code or its full hash is never logged, audited or rendered; an empty `GITHUB_ORG` degrades
+code or its full hash is never logged or audited, the hash is never
+rendered, and a code is rendered only once, to the admin who just issued it (the Admins tab clears it when they
+leave); an empty `GITHUB_ORG` degrades
 gracefully in the app (`apps.ts` renders a bare repo name instead of a fork
 link) but sync's `loadConfig(env)` throws on it instead, because for sync a
 missing org is a genuine misconfiguration, not "nothing to poll" — the two

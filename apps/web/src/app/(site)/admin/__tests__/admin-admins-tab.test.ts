@@ -58,4 +58,29 @@ describe("an issued code", () => {
     view.rerender(createElement(AdminAdminsTab, { viewerId: "x", visible: true }));
     expect(screen.queryByText(CODE)).toBeNull();
   });
+
+  it("is dropped when it arrives after the tab was hidden, so returning never shows it", async () => {
+    let answer: (res: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        url === "/api/admin/codes"
+          ? new Promise<Response>((resolve) => {
+              answer = resolve;
+            })
+          : Promise.resolve(new Response(JSON.stringify({ admins: [] }), { status: 200 })),
+      ),
+    );
+    const view = render(createElement(AdminAdminsTab, { viewerId: "x", visible: true }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Issue admin code" }));
+    });
+    view.rerender(createElement(AdminAdminsTab, { viewerId: "x", visible: false }));
+    await act(async () => {
+      answer(new Response(JSON.stringify({ code: CODE, expiresAt: "2026-11-15T12:34:00.000Z" }), { status: 200 }));
+    });
+    view.rerender(createElement(AdminAdminsTab, { viewerId: "x", visible: true }));
+    await act(async () => {});
+    expect(screen.queryByText(CODE)).toBeNull();
+  });
 });

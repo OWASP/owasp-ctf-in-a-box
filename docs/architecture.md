@@ -1285,7 +1285,10 @@ build.
   and the server fills the name and a placeholder `@accounts.invalid` email
   itself, so a client cannot set either. better-auth's built-in in-memory
   limiter is off; the Redis limiter in `apps/web/src/lib/auth-rate-limit.ts`
-  keys on the rightmost `X-Forwarded-For` entry and fails closed (budgets in
+  keys on the address the one trusted proxy vouches for (the rightmost
+  `X-Forwarded-For` entry behind Caddy or the ALB, `Fly-Client-IP` on Fly,
+  where the rendered compose file sets `TRUSTED_CLIENT_IP_HEADER`; see
+  `apps/web/src/lib/client-ip.ts`) and fails closed (budgets in
   [Operations](operations.md#account-sign-up-and-sign-in-limits)).
 - **Trust filter before parse.** `sync/src/github.js` filters comments by
   `cfg.commentAuthor` *before* `sync/src/parse.js` ever runs `JSON.parse`
@@ -1399,9 +1402,11 @@ build.
   against a fixed window keyed on the **authenticated player id**
   (`src/lib/rate-limit-store.ts`), not an IP. That distinction is
   the point:
-  an IP key is spoofable (Caddy *appends* to `x-forwarded-for`), and the app
-  stores no IP address at all since the pre-event password gate and its
-  per-IP throttle were removed (#464). These routes run after `getSession()`,
+  a client's leftmost `x-forwarded-for` entries are its own choice, and a
+  shared address (a NAT, a CDN edge) would merge players. Only the sign-up
+  and sign-in budgets, which run before any session exists, key on a client
+  address; those counters hold that address in their Redis key until the
+  window expires. These routes run after `getSession()`,
   so there is a key a caller cannot forge without forging the session. They
   fail **open** on a Redis error because they bound abuse of routes that have
   their own correctness gates underneath.

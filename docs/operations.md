@@ -77,9 +77,18 @@ attempts. Try again in N seconds."
 | Sign-in (password, and starting a GitHub sign-in or link), per client address | 600 | 10 minutes |
 | Password attempts, per client address and username | 10 | 15 minutes |
 
-The address is the **rightmost** `X-Forwarded-For` entry, the one the box's
-own proxy appended (`apps/web/src/lib/client-ip.ts`); a client cannot choose
-it. Behind Cloudflare that rightmost entry is Cloudflare's edge, so every
+The address is the one the box's own proxy vouches for, never a value the
+client chooses (`apps/web/src/lib/client-ip.ts`):
+
+| Deploy path | Address |
+|---|---|
+| Compose (Caddy) | the rightmost `X-Forwarded-For` entry, which Caddy appends |
+| AWS (ALB) | the rightmost `X-Forwarded-For` entry, which the ALB appends |
+| Fly | `Fly-Client-IP`, set by Fly's proxy; the rendered compose file sets `TRUSTED_CLIENT_IP_HEADER=fly-client-ip` on the app |
+
+`TRUSTED_CLIENT_IP_HEADER` is not set by hand. On compose or AWS it would
+let a client choose its own address, and an invalid header name stops the
+app at startup. Behind Cloudflare every path sees Cloudflare's edge, so every
 player routed through the same edge shares the two per-address budgets. They
 are sized for a room of a few hundred people to sign up together. The
 per-username budget keys on address and username together, so one player

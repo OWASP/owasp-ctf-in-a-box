@@ -444,6 +444,13 @@ On top of that, the render:
 - **drops `restart:`** — Fly Machines reject Docker's `unless-stopped`
   (flyctl 0.4.120 refuses the machine update over it), so every container
   inherits the machine's own `on-failure` policy
+- **sets `TRUSTED_CLIENT_IP_HEADER: fly-client-ip` on the app** — Fly's proxy
+  appends the app's own address as the rightmost `X-Forwarded-For` entry, so
+  the rule compose and AWS use would put every player on one sign-up and
+  sign-in budget. `Fly-Client-IP` is set by Fly's proxy from the connection it
+  accepted, and that proxy is the machine's only ingress
+  ([budgets](operations.md#account-sign-up-and-sign-in-limits)). Behind
+  Cloudflare it is the edge's address
 
 Never edit the rendered file. Every change belongs in `docker-compose.yml`,
 which is the point of rendering it.

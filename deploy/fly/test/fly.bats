@@ -362,6 +362,37 @@ ENV
   echo "$app_env" | grep -qF 'ADMIN_CLAIM_CODE_HASH: 3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9'
 }
 
+@test "render: the app keys clients on Fly-Client-IP, exactly once" {
+  need_docker
+  render
+  # Fly's proxy appends the app's own address as the rightmost
+  # X-Forwarded-For entry, so without this every client shares one auth
+  # rate-limit key (apps/web/src/lib/client-ip.ts).
+  app_env="$(awk '/^  app:/{f=1;next} /^  [a-z]+:/{f=0} f' "$RENDERED")"
+  [ -n "$app_env" ]
+  [ "$(echo "$app_env" | grep -c 'TRUSTED_CLIENT_IP_HEADER')" -eq 1 ]
+  echo "$app_env" | grep -qx '      TRUSTED_CLIENT_IP_HEADER: fly-client-ip'
+}
+
+@test "render: no other service gets TRUSTED_CLIENT_IP_HEADER" {
+  need_docker
+  render
+  rest="$(awk '/^  app:/{f=0;next} /^  [a-z]+:/{f=1} f' "$RENDERED")"
+  [ -n "$rest" ]
+  [ -z "$(echo "$rest" | grep -F 'TRUSTED_CLIENT_IP_HEADER')" ]
+}
+
+@test "compose (behind Caddy) does not set TRUSTED_CLIENT_IP_HEADER" {
+  need_docker
+  # Behind Caddy, Fly-Client-IP is whatever the client sent; compose must
+  # leave the app on Caddy's X-Forwarded-For.
+  run env REDIS_PASSWORD=x SRH_TOKEN=y BETTER_AUTH_SECRET=z \
+    docker compose -f "$REPO/docker-compose.yml" --env-file /dev/null --profile app config app
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'BETTER_AUTH_SECRET'
+  [ -z "$(echo "$output" | grep -F 'TRUSTED_CLIENT_IP_HEADER')" ]
+}
+
 @test "render: the output is mode 600" {
   need_docker
   render

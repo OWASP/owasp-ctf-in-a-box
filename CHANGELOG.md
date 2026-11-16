@@ -21,7 +21,9 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   sign-in.**
 - **Security: sign-up and sign-in are rate-limited per address in Redis
   (#737).** better-auth's in-memory limiter is off. The kit's limiter keys on
-  the rightmost `X-Forwarded-For` entry and fails closed with a 429 and
+  the address the box's proxy vouches for (the rightmost `X-Forwarded-For`
+  entry behind Caddy or the ALB, `Fly-Client-IP` on Fly through the new
+  `TRUSTED_CLIENT_IP_HEADER`, which the Fly render sets) and fails closed with a 429 and
   `Retry-After`: 300 sign-ups and 600 sign-ins (password and GitHub start or
   link) per address per 10 minutes, and 10 password attempts per address and
   username per 15 minutes. Behind Cloudflare the address is the edge's. A

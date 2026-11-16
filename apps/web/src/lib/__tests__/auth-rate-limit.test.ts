@@ -18,7 +18,7 @@ beforeEach(() => {
 });
 
 describe("limitAuthAttempt", () => {
-  it("keys sign-up on the rightmost address whatever the client prepends", async () => {
+  it("keys sign-up on the rightmost address whatever the client prepends (no trusted header set)", async () => {
     for (let i = 0; i < 60; i++) await limitAuthAttempt(ctx("/sign-up/email", `${Math.random()}, 10.0.0.1`));
     expect(mocks.consume).toHaveBeenCalledTimes(60);
     for (const c of mocks.consume.mock.calls) {

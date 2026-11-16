@@ -190,7 +190,7 @@ export const authOptions = {
   // chooses), and allows 3 sign-ins per 10 s on every /sign-in* path, which
   // would lock a NAT'd room out of GitHub sign-in. limitAuthAttempt
   // (auth-rate-limit.ts) charges Redis budgets, shared by every instance and
-  // keyed on the rightmost address, on /sign-up/email, /sign-in/username,
+  // keyed on the proxy-vouched address (client-ip.ts), on /sign-up/email, /sign-in/username,
   // /sign-in/social and /link-social. It leaves /callback/:id (it consumes a
   // state row a charged request wrote), /get-session and /sign-out (every
   // page load) and the closed paths alone.

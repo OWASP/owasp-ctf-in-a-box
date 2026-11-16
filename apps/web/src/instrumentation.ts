@@ -1,3 +1,4 @@
+import { trustedClientIpHeader } from "@/lib/client-ip";
 import { checkEventUrl } from "@/lib/secure-url";
 
 /**
@@ -16,6 +17,10 @@ import { checkEventUrl } from "@/lib/secure-url";
  * Node built-ins, so it runs identically in both.
  */
 export function register() {
+  // Throws on a malformed TRUSTED_CLIENT_IP_HEADER, refusing to boot rather
+  // than keying every client on one address (see client-ip.ts).
+  trustedClientIpHeader();
+
   const verdict = checkEventUrl({
     url: process.env.BETTER_AUTH_URL,
     nodeEnv: process.env.NODE_ENV,

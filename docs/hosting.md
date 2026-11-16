@@ -710,10 +710,11 @@ an event that must not be a factor at all: set `FLY_AUTO_STOP=off` in
 The reference deployment's domain is on Cloudflare DNS with the proxy on
 ("orange cloud"), so every request reaches Fly through Cloudflare's edge — a
 `cf-ray` header on any response is how you can tell. That is the only place
-a **trustworthy** per-IP control can live: the `x-forwarded-for` value a caller
-can set is appended to, not replaced, so the app keys its limits on the
-rightmost entry, the address of the hop that connected to Fly. Behind
-Cloudflare that is the edge's address, which is usable for a coarse limit on
+a **trustworthy** per-IP control can live: the app keys its sign-up and
+sign-in limits on the address of the hop that connected to the box's proxy
+(`Fly-Client-IP` on Fly, the rightmost `x-forwarded-for` entry behind Caddy or
+the ALB), never on a value the caller sets. Behind Cloudflare that is the
+edge's address, which is usable for a coarse limit on
 sign-up and sign-in
 ([Operations](operations.md#account-sign-up-and-sign-in-limits)) but never a
 client identity. An unauthenticated `curl` loop against `/api/*` therefore
@@ -751,7 +752,8 @@ ten seconds, and `/leaderboard` answered 200 throughout.
 This is the layer above the app's own controls, not a replacement for them:
 per-item cooldowns and the quiz attempt cap stop *guessing* (they run inside
 the grading scripts); the per-login limiter stops one account hammering team
-join and hint reveal (the app keys nothing on IP and stores no IP address);
+join and hint reveal; the sign-up and sign-in budgets key on the client
+address, held in Redis only until each window expires;
 Cloudflare stops gross floods before they reach the box.
 Issue #438 tracks the per-login buckets still missing on the two submit
 routes and an Insights view of throttled logins.

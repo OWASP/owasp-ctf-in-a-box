@@ -394,8 +394,12 @@ you gave up.
 300 account creations and 600 sign-ins per 10 minutes; per address and
 username: 10 password attempts per 15 minutes
 ([budgets](operations.md#account-sign-up-and-sign-in-limits)). The address is
-the rightmost `X-Forwarded-For` entry, so behind Cloudflare it is the edge's
-and everyone sharing that edge shares the per-address budgets. The message
+the rightmost `X-Forwarded-For` entry on compose and AWS and `Fly-Client-IP`
+on Fly, so behind Cloudflare it is the edge's and everyone sharing that edge
+shares the per-address budgets. On Fly, if every player shares one budget
+with no CDN in front, check that the app container has
+`TRUSTED_CLIENT_IP_HEADER=fly-client-ip` (`deploy/fly/render-compose.sh`
+sets it); without it the key is Fly's own app address. The message
 carries the wait; `Retry-After` has it too. The limiter fails closed, so a
 429 on every attempt with no crowd can also mean Redis is unreachable (see
 the `NOAUTH` entry above and `/health/deep`).

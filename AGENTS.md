@@ -300,9 +300,12 @@ suggestions.
   event with no `SCORE_IMAGE`). Three `.env` keys are read at RUNTIME and
   nothing falls back to a baked default: `ADMIN_CLAIM_CODE_HASH` (the SHA-256
   of the one-time admin claim code, never the code; empty or malformed means
-  nobody can claim the first seat at `/admin/claim` — fail-closed,
-  `bootstrap-env.ts`, ADR 72; an admin is a player id in `ctf:admin:grants`,
-  and `ADMIN_LOGINS` is read by nothing), `GITHUB_ORG` (empty means no fork links
+  nobody can claim the first seat at `/admin/claim` with a bootstrap code —
+  fail-closed, `bootstrap-env.ts`, ADR 72; an admin is a player id in
+  `ctf:admin:grants`, and the app does not read `ADMIN_LOGINS`. Provisioning
+  still requires and validates `ADMIN_LOGINS` — `ctf-setup.sh`,
+  `deploy/fly/deploy.sh` and the Terraform module — and does not yet write the
+  hash, so set it by hand as `docs/troubleshooting.md` shows), `GITHUB_ORG` (empty means no fork links
   on `/challenges`, and `sync` refuses to start at all, logging
   `ctf-sync: GITHUB_ORG is not set`), and **`SCORE_IMAGE`, which is how a box
   says whether it runs Secure Development** — non-empty means the scorer and

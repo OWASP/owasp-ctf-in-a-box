@@ -139,7 +139,7 @@ must never see the claim-code hash, and `process.env` there is empty or
 misleading anyway); admin-ness is decided by the player id in
 `ctf:admin:grants` (`admin-auth.ts`/`isAdminPlayer`, ADR 72), never by a
 GitHub login, and a grant read that errors denies; an empty or malformed
-`ADMIN_CLAIM_CODE_HASH` means nobody can claim, never "anyone may"; a claim
+`ADMIN_CLAIM_CODE_HASH` means nobody can claim with a bootstrap code (codes an admin issued still work), never "anyone may"; a claim
 code or its full hash is never logged or audited, the hash is never
 rendered, and a code is rendered only once, to the admin who just issued it (the Admins tab clears it when they
 leave); an empty `GITHUB_ORG` degrades

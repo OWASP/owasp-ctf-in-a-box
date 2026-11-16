@@ -61,12 +61,14 @@ the Forbidden page.
 The Forbidden page names which case you are in:
 
 - **"No organizer has claimed this box yet."** Nobody has claimed. Sign in,
-  open `/admin/claim` and enter the code setup printed.
+  open `/admin/claim` and enter the code whose hash is in `.env`. Until
+  setup, Fly and AWS generate the code, make one by hand (**Fix**, below).
 - **"ADMIN_CLAIM_CODE_HASH is not set or is not a SHA-256"** as well. The app
-  has no usable hash, so no code can work: the key is missing from `.env`, the
-  app container was not recreated after it was set (`docker compose restart`
-  keeps the old environment), or the value is the code itself
-  pasted where its hash belongs (64 lowercase hex is a hash; eight groups of
+  has no usable hash, so nobody can claim with a bootstrap code. A code an
+  admin issued would still work, but with nobody claimed there is none. The
+  key is missing from `.env`, the app container was not recreated after it
+  was set (`docker compose restart` keeps the old environment), or the value
+  is the code itself pasted where its hash belongs (64 lowercase hex is a hash; eight groups of
   four is a code). Compose must also pass `ADMIN_CLAIM_CODE_HASH` through to
   the app service's environment — `docker-compose.yml` does, but a customized
   override file that dropped it reproduces this symptom.

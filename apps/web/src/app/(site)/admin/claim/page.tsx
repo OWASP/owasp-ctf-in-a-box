@@ -33,7 +33,7 @@ export default async function AdminClaimPage() {
     body = (
       <p className="text-sm text-zinc-400">
         You are already an organizer.{" "}
-        <Link href="/admin" className="text-white hover:underline">
+        <Link href="/admin" className="ds-link">
           Open the admin panel
         </Link>
         .

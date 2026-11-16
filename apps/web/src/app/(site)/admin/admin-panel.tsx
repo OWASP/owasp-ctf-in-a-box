@@ -23,9 +23,9 @@ import AdminControls from "@/app/(site)/admin/admin-controls";
 import AdminHeader from "@/app/(site)/admin/admin-header";
 
 const WALL_NO_ADMINS =
-  "No organizer has claimed this box yet. Open /admin/claim and enter the admin claim code from setup.";
+  "No organizer has claimed this box yet. Open /admin/claim and enter the admin claim code whose hash is in .env.";
 const WALL_NO_HASH =
-  "ADMIN_CLAIM_CODE_HASH is not set or is not a SHA-256 — run ./setup/ctf-setup.sh admin-code (or redeploy with --new-admin-code) and recreate the app container.";
+  "ADMIN_CLAIM_CODE_HASH is not set or is not a SHA-256 — generate a code with openssl rand -hex 16, put the SHA-256 of that code in .env as ADMIN_CLAIM_CODE_HASH, and recreate the app container (docker compose up -d --no-deps --force-recreate app).";
 
 export default async function AdminPanel({ tab }: { tab?: string }) {
   const gate = await requireAdmin(await headers());
@@ -46,7 +46,7 @@ export default async function AdminPanel({ tab }: { tab?: string }) {
         <div className="ds-card rounded-lg border border-white/[0.06] bg-[#16162a] px-5 py-10 text-center">
           <p className="text-sm text-zinc-400">
             You need to be an organizer to view this page. Have an admin claim code?{" "}
-            <Link href="/admin/claim" className="text-white hover:underline">
+            <Link href="/admin/claim" className="ds-link">
               Enter it at /admin/claim
             </Link>
             .

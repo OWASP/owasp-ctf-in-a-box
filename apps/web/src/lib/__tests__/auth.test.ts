@@ -39,7 +39,7 @@ vi.hoisted(() => {
   process.env.GITHUB_CLIENT_SECRET ??= "test-client-secret";
 });
 
-import { auth, authOptions, refuseSecondGithubLink } from "@/lib/auth";
+import { auth, authOptions, refuseClientOAuthParams, refuseSecondGithubLink } from "@/lib/auth";
 import { APIError } from "better-auth/api";
 
 /**
@@ -275,5 +275,45 @@ describe("refuseSecondGithubLink (/link-social before hook)", () => {
     await expect(refuseSecondGithubLink(ctx(path))).resolves.toBeUndefined();
     expect(getSessionFromCtx).not.toHaveBeenCalled();
     expect(getGithubLink).not.toHaveBeenCalled();
+  });
+});
+
+describe("refuseClientOAuthParams (OAuth for identity only)", () => {
+  // better-auth forwards a client-supplied `scopes` and `additionalParams`
+  // into the provider authorization URL. The kit uses the provider for
+  // identity alone, so a request carrying either key is refused, not trimmed.
+  const ctx = (path: string, body: unknown) => ({ path, body }) as unknown as Parameters<typeof refuseClientOAuthParams>[0];
+  const refused = async (p: Promise<unknown>) => {
+    const err = await p.then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    return err as APIError;
+  };
+
+  it.each(["/sign-in/social", "/link-social"])("refuses scopes and additionalParams on %s, whatever the value", async (path) => {
+    const values: unknown[] = [["repo"], [], { prompt: "consent" }, {}, "repo", null, undefined];
+    for (const key of ["scopes", "additionalParams"]) {
+      for (const value of values) {
+        const err = await refused(refuseClientOAuthParams(ctx(path, { provider: "github", [key]: value })));
+        expect(err.status).toBe("BAD_REQUEST");
+        expect(err.body?.code).toBe("OAUTH_PARAMS_NOT_ALLOWED");
+      }
+    }
+  });
+
+  it("is wired into the before hook ahead of the link check", async () => {
+    getSessionFromCtx.mockClear();
+    const hook = auth.options.hooks?.before as unknown as (c: unknown) => Promise<unknown>;
+    const err = await refused(hook({ path: "/link-social", body: { provider: "github", scopes: ["repo"] } }));
+    expect(err.status).toBe("BAD_REQUEST");
+    expect(getSessionFromCtx).not.toHaveBeenCalled();
+  });
+
+  it.each(["/sign-in/social", "/link-social"])("lets a plain %s request through", async (path) => {
+    await expect(refuseClientOAuthParams(ctx(path, { provider: "github", callbackURL: "/profile" }))).resolves.toBeUndefined();
+  });
+
+  it("leaves other paths and a missing body alone", async () => {
+    await expect(refuseClientOAuthParams(ctx("/get-session", { scopes: ["repo"] }))).resolves.toBeUndefined();
+    await expect(refuseClientOAuthParams(ctx("/sign-in/social", undefined))).resolves.toBeUndefined();
   });
 });

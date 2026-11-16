@@ -8,6 +8,24 @@ import { getGithubLink, linkOnUserWrite } from "@/lib/github-link";
 import { recordCallbackLogin } from "@/lib/activity-log";
 
 /**
+ * GitHub is used for identity only. better-auth forwards a client-supplied
+ * `scopes` and `additionalParams` into the provider authorization URL, so a
+ * request carrying either key (any value, an empty one included) is refused
+ * with a 400 instead of trimmed, which makes a tampered client fail loudly.
+ */
+export async function refuseClientOAuthParams(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]): Promise<void> {
+  if (ctx.path !== "/sign-in/social" && ctx.path !== "/link-social") return;
+  const body = ctx.body;
+  if (typeof body !== "object" || body === null) return;
+  if (Object.hasOwn(body, "scopes") || Object.hasOwn(body, "additionalParams")) {
+    throw new APIError("BAD_REQUEST", {
+      message: "OAuth scopes and parameters cannot be set by the client.",
+      code: "OAUTH_PARAMS_NOT_ALLOWED",
+    });
+  }
+}
+
+/**
  * The `/link-social` before hook. One GitHub account links to one kit
  * account and a player cannot unlink, so a player whose link is recorded
  * cannot start a second one: better-auth would add a second account row and
@@ -194,7 +212,10 @@ export const authOptions = {
     },
   },
   hooks: {
-    before: createAuthMiddleware(refuseSecondGithubLink),
+    before: createAuthMiddleware(async (ctx) => {
+      await refuseClientOAuthParams(ctx);
+      await refuseSecondGithubLink(ctx);
+    }),
     // Sign-in timestamps for the admin activity log (issue #212). The after
     // hook runs on EVERY auth endpoint; recordCallbackLogin filters to the
     // OAuth callback (the one path where a fresh session means "signed in")

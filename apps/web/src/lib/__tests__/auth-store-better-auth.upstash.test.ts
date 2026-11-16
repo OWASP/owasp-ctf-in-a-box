@@ -391,6 +391,42 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
       expect(res.url).toMatch(/^https:\/\/github\.com\/login\/oauth\/authorize\?/);
     });
 
+    it("builds the authorization URL with the kit's scope, and refuses client scopes and params on both paths", async () => {
+      const { instance, ctx } = await build();
+      const u1 = await kitUser(ctx.internalAdapter, "scoped");
+      const headers = await sessionHeaders(ctx, u1.id);
+      const base = { provider: "github", callbackURL: "/profile" };
+      const scopeOf = (url: string) => new URL(url).searchParams.get("scope");
+
+      const plainSignIn = await instance.api.signInSocial({ body: base });
+      const plainLink = await instance.api.linkSocialAccount({ body: base, headers });
+      const kitScope = scopeOf(plainSignIn.url ?? "");
+      expect(kitScope).toBeTruthy();
+      expect(scopeOf(plainLink.url)).toBe(kitScope);
+      expect(kitScope).not.toContain("repo");
+
+      const verificationsBefore = await ctx.adapter.count({ model: "verification" });
+      const extras: Array<{ scopes?: string[]; additionalParams?: Record<string, string> }> = [
+        { scopes: ["repo"] },
+        { scopes: [] },
+        { additionalParams: { prompt: "consent" } },
+        { additionalParams: {} },
+      ];
+      for (const extra of extras) {
+        const signIn = await instance.api
+          .signInSocial({ body: { ...base, ...extra } })
+          .then(() => null, (e: unknown) => e as { status?: string; body?: { code?: string } });
+        expect(signIn?.status).toBe("BAD_REQUEST");
+        expect(signIn?.body?.code).toBe("OAUTH_PARAMS_NOT_ALLOWED");
+        const link = await instance.api
+          .linkSocialAccount({ body: { ...base, ...extra }, headers })
+          .then(() => null, (e: unknown) => e as { status?: string; body?: { code?: string } });
+        expect(link?.status).toBe("BAD_REQUEST");
+        expect(link?.body?.code).toBe("OAUTH_PARAMS_NOT_ALLOWED");
+      }
+      expect(await ctx.adapter.count({ model: "verification" })).toBe(verificationsBefore);
+    });
+
     it("re-runs the link write when the same player links the same GitHub account again", async () => {
       // A first link whose login key another player held: better-auth keeps
       // the account row, the link write is refused. Once the key is free, the

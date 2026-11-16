@@ -8,6 +8,12 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Security: client-chosen OAuth scopes are refused (#768).** better-auth
+  forwards a `scopes` or `additionalParams` key on `/sign-in/social` and
+  `/link-social` into the GitHub authorization URL. The kit uses GitHub for
+  identity only, so a request carrying either key, with any value, now
+  answers 400 `OAUTH_PARAMS_NOT_ALLOWED` and no authorization URL is built.
+  The kit's own sign-in and link buttons never send them.
 - **Removed: the AI module (#729).** The module ADR 69 deprecated in v1.1.0
   is deleted: the `/ai` and `/ai/[id]` pages, every `/api/ai/*` route
   (`submit`, `event`, `state`, `launch-key`), `/api/admin/ai` and the AI admin

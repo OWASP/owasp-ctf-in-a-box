@@ -2,6 +2,7 @@
 // and a Redis failure that must not 500 the page. Static render only.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 const { getSession, getUser, getLeaderboard, moduleLive, getGithubLink, hasPassword } = vi.hoisted(() => ({
   hasPassword: vi.fn(),
@@ -176,11 +177,12 @@ describe("profile Add a password card", () => {
 
   it("is hidden, and logged, when the read fails, without breaking the page", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    hasPassword.mockRejectedValue(new Error("redis down"));
+    hasPassword.mockRejectedValue(decoratedError("redis down"));
     const html = await render();
     expect(html).not.toContain("Add a password");
     expect(html).toContain("Agent dossier");
     expect(err.mock.calls.flat().join(" ")).toContain("profile: password read failed");
+    expectLabelOnly(err, { label: "redis down" });
     err.mockRestore();
   });
 });

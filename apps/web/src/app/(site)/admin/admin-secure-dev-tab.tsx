@@ -6,7 +6,7 @@
 //
 // The four hint knobs used to render here. They are not this module's: the
 // same `hintsEnabled`/`hintCost`/`hintsMinSolves`/`hintsUnlockAfterMin`
-// govern Classic's and AI's paid hints too (hint-store.ts), and this tab
+// govern Classic's paid hints too (hint-store.ts), and this tab
 // exists only while secure-development is enabled — so an event without it
 // had no hint switch at all (UX audit F1). They live on the Event tab now.
 // The stored keys and their server-side validation in `lib/admin-store.ts`

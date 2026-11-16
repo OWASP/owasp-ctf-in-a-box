@@ -15,7 +15,7 @@ const launchLock = vi.hoisted(() => ({
 const firstBloods = vi.hoisted(() => ({ map: new Map<string, { playerId: string; name: string; at: string | null }>() }));
 vi.mock("@/lib/team-solve-counts", () => ({
   teamSolveCounts,
-  teamSolveBoard: async (module: "classic" | "ai") => {
+  teamSolveBoard: async (module: "classic") => {
     const counts = (await teamSolveCounts(module)) as Map<string, number> | null;
     return counts ? { counts, firstBlood: firstBloods.map } : null;
   },
@@ -245,9 +245,7 @@ describe("flags page view model", () => {
     expect(html).toMatch(/sign in with github to submit flags/i);
   });
 
-  // Finding A: getAdminSettings() must fail OPEN at the page level, same
-  // doctrine ai-store.ts's resolveSettings applies to this exact read (its
-  // /ai counterpart mirrors this test) — a Redis blip on the settings read
+  // Finding A: getAdminSettings() must fail OPEN at the page level — a Redis blip on the settings read
   // must not take the whole public board down, only fall the cooldown back
   // to the module default.
   it("still renders the board when the settings read rejects, falling the cooldown back to the module default", async () => {

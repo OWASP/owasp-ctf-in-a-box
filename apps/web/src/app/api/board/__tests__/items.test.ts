@@ -1,4 +1,4 @@
-// /api/board/items — the expanded leaderboard rows' per-item quiz/classic/ai
+// /api/board/items — the expanded leaderboard rows' per-item quiz/classic
 // completion. The pins that matter: player-id validation (this is a public
 // route), the members' UNION for team rosters, module gating, and that
 // nothing grading-shaped can reach the payload.
@@ -10,8 +10,6 @@ const mocks = vi.hoisted(() => ({
   getViewerQuiz: vi.fn(),
   listChallenges: vi.fn(),
   getViewerClassic: vi.fn(),
-  listAiChallenges: vi.fn(),
-  getViewerAi: vi.fn(),
   getSession: vi.fn(),
   requireLaunchedApi: vi.fn(),
   listStories: vi.fn(async () => [] as { id: string; title: string; intro: string; steps: string[] }[]),
@@ -32,7 +30,6 @@ vi.mock("@/lib/classic-store", () => ({
   getViewerClassic: mocks.getViewerClassic,
   listStories: mocks.listStories,
 }));
-vi.mock("@/lib/ai-store", () => ({ listAiChallenges: mocks.listAiChallenges, getViewerAi: mocks.getViewerAi }));
 
 import { GET } from "@/app/api/board/items/route";
 
@@ -54,8 +51,6 @@ beforeEach(() => {
   mocks.getViewerQuiz.mockResolvedValue({ answered: {}, attempts: {} });
   mocks.listChallenges.mockResolvedValue([{ id: "c1", title: "Robots Only", points: 50 }]);
   mocks.getViewerClassic.mockResolvedValue({ solved: {}, attempts: {} });
-  mocks.listAiChallenges.mockResolvedValue([{ id: "a1", title: "Prompt Leak", points: 50 }]);
-  mocks.getViewerAi.mockResolvedValue({ solved: {}, attempts: {} });
 });
 
 describe("GET /api/board/items", () => {
@@ -79,15 +74,11 @@ describe("GET /api/board/items", () => {
       answered: login === P.bob ? { q1: { points: 50, at: "2026-08-24T00:00:00.000Z" } } : {},
       attempts: {},
     }));
-    mocks.getViewerAi.mockImplementation(async (login: string) => ({
-      solved: login === P.bob ? { a1: { points: 50, at: "2026-08-24T00:00:00.000Z", source: "flag" } } : {},
-      attempts: {},
-    }));
     const res = await GET(req("alice,bob"));
     const body = await res.json();
     expect(body.quiz).toEqual([{ id: "q1", label: "What is XSS?", points: 50, done: true, earnedPoints: 50 }]);
     expect(body.classic).toEqual([{ id: "c1", label: "Robots Only", points: 50, done: false }]);
-    expect(body.ai).toEqual([{ id: "a1", label: "Prompt Leak", points: 50, done: true, earnedPoints: 50 }]);
+    expect(Object.keys(body).sort()).toEqual(["classic", "classicHiddenSolved", "quiz"]);
   });
 
   it("returns null for a module that is not live, and never reads its store", async () => {
@@ -96,9 +87,6 @@ describe("GET /api/board/items", () => {
     expect(body.classic).toBeNull();
     expect(mocks.listChallenges).not.toHaveBeenCalled();
     expect(mocks.getViewerClassic).not.toHaveBeenCalled();
-    expect(body.ai).toBeNull();
-    expect(mocks.listAiChallenges).not.toHaveBeenCalled();
-    expect(mocks.getViewerAi).not.toHaveBeenCalled();
   });
 
   // Simulates the leak this route must be immune to: a store record that
@@ -111,16 +99,10 @@ describe("GET /api/board/items", () => {
     mocks.listQuestions.mockResolvedValue([
       { id: "q1", prompt: "What is XSS?", points: 50, correct: ["a"] },
     ]);
-    mocks.listAiChallenges.mockResolvedValue([
-      { id: "a1", title: "Prompt Leak", points: 50, flag: "CTF{ai-leak}", hint: "psst", signingKey: "sk-secret" },
-    ]);
     const text = await (await GET(req("alice"))).text();
     expect(text).not.toContain("CTF{leak}");
     expect(text).not.toContain("ctf{leak}");
     expect(text).not.toContain("correct");
-    expect(text).not.toContain("CTF{ai-leak}");
-    expect(text).not.toContain("psst");
-    expect(text).not.toContain("sk-secret");
   });
 });
 
@@ -132,7 +114,6 @@ describe("GET /api/board/items pre-launch lock (#464)", () => {
     expect(await res.json()).toEqual({ error: "not-launched" });
     expect(mocks.listChallenges).not.toHaveBeenCalled();
     expect(mocks.listQuestions).not.toHaveBeenCalled();
-    expect(mocks.listAiChallenges).not.toHaveBeenCalled();
   });
 
   it("asks the lock about the caller's session login, so an admin preview works", async () => {

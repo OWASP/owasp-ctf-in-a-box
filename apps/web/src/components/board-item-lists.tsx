@@ -1,8 +1,7 @@
 "use client";
 
-// The quiz/classic/ai Show-N item lists for an EXPANDED leaderboard row —
-// which questions a contestant answered, which flags a team has solved,
-// which ai challenges are done. Per-item data isn't in the board payload
+// The quiz/classic Show-N item lists for an EXPANDED leaderboard row —
+// which questions a contestant answered, which flags a team has solved. Per-item data isn't in the board payload
 // (embedding it for every row would bloat a no-store page nobody has
 // expanded), so this fetches from /api/board/items on mount — i.e. on
 // expand — and renders the same ModuleItemList the profile blocks use.
@@ -15,7 +14,6 @@ import ModuleItemList, { type ModuleItem } from "@/components/module-item-list";
 type ItemsResponse = {
   quiz: ModuleItem[] | null;
   classic: ModuleItem[] | null;
-  ai: ModuleItem[] | null;
   /** How many story steps hidden from the viewer the queried players solved —
    *  one count, nothing per position (ADR 60). */
   classicHiddenSolved?: number;
@@ -103,7 +101,6 @@ export default function BoardItemLists({
       setData({
         quiz: mergeItems(ok.map((p) => p.quiz)),
         classic: mergeItems(ok.map((p) => p.classic)),
-        ai: mergeItems(ok.map((p) => p.ai)),
         classicHiddenSolved: mergeHiddenSolved(ok.map((p) => p.classicHiddenSolved)),
       });
     });
@@ -115,8 +112,7 @@ export default function BoardItemLists({
   if (!data) return null;
   const quiz = data.quiz ?? [];
   const classic = data.classic ?? [];
-  const ai = data.ai ?? [];
-  if (quiz.length === 0 && classic.length === 0 && ai.length === 0) return null;
+  if (quiz.length === 0 && classic.length === 0) return null;
 
   return (
     <div className="mt-3 flex flex-col gap-2">
@@ -130,9 +126,6 @@ export default function BoardItemLists({
           doneLabel="Solved"
           note={hiddenSummary(data.classicHiddenSolved ?? 0, classic, classicPoints)}
         />
-      )}
-      {ai.length > 0 && (
-        <ModuleItemList items={ai} noun={ai.length === 1 ? "challenge" : "challenges"} doneLabel="Solved" />
       )}
     </div>
   );

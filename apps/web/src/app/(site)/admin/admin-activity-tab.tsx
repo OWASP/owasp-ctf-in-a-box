@@ -65,11 +65,9 @@ export const TYPE_LABELS: Record<string, string> = {
   login: "signed in",
   // Each solve is named for the module whose tab an organizer would open to
   // find it, which is that module's registry name (vocabulary.ts, audit F25).
-  // A classic solve read "flag solve" under a tab called Classic CTF; an ai
-  // solve read "ai solve", the raw id.
+  // A classic solve read "flag solve" under a tab called Classic CTF.
   "quiz-solve": `${MODULE_LABEL.quiz} solve`,
   "classic-solve": `${MODULE_LABEL.classic} solve`,
-  "ai-solve": `${MODULE_LABEL.ai} solve`,
   "team-create": "created team",
   "team-join": "joined team",
   "team-leave": "left team",

@@ -86,8 +86,7 @@ vi.mock("@/lib/quiz-store", () => ({
   QuizValidationError,
 }));
 // `adminErrorLabel` is the real (name+message, capped) implementation, not a
-// mock — mirrors admin/classic/route.test.ts and admin/ai/route.test.ts's
-// idiom.
+// mock — mirrors admin/classic/route.test.ts's idiom.
 vi.mock("@/lib/admin-store", () => ({
   writeAdminAudit,
   adminErrorLabel: (err: unknown) => (err instanceof Error ? `${err.name}: ${err.message}`.slice(0, 200) : "non-Error throw"),
@@ -483,9 +482,8 @@ describe("POST /api/admin/quiz", () => {
     expect(res.status).toBe(503);
 
     // Every logged argument must be a primitive STRING, never the raw error
-    // object — see admin/ai/route.test.ts's equivalent case for why this,
-    // rather than a `logged.not.toContain(...)` string check alone, is what
-    // actually distinguishes redacted logging from raw logging.
+    // object: that, rather than a `logged.not.toContain(...)` string check
+    // alone, is what distinguishes redacted logging from raw logging.
     for (const call of spy.mock.calls) {
       for (const arg of call) {
         expect(typeof arg).toBe("string");

@@ -8,8 +8,8 @@ import { getEnabledApps, getEnabledTotals } from "@/lib/enabled-apps";
 import { getChallengeCatalog } from "@/lib/challenges";
 import { getLeaderboardSource } from "@/lib/leaderboard/source";
 // No hint imports: Secure Development has no hint text and no producer for
-// it, so this page shows no hint banner and no bulbs (issue #334). Classic and
-// ai keep theirs on their own boards.
+// it, so this page shows no hint banner and no bulbs (issue #334). Classic
+// keeps its own on its own board.
 import { getPlayer } from "@/lib/player";
 import { headers } from "next/headers";
 import { getGithubOrg } from "@/lib/bootstrap-env";

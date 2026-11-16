@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { getViewerAi, listAiChallenges } from "@/lib/ai-store";
 import { getViewerClassic, listChallenges, listStories } from "@/lib/classic-store";
 import { visibleNow } from "@/lib/classic-release";
 import { isLocked, lockedLabel, storyPositions } from "@/lib/story-lock";
@@ -17,7 +16,7 @@ const MAX_PLAYERS = 8;
 type Item = { id: string; label: string; points: number; done: boolean; earnedPoints?: number; hidden?: true };
 
 /**
- * Per-item quiz/classic/ai completion for a player id (an expanded leaderboard
+ * Per-item quiz/classic completion for a player id (an expanded leaderboard
  * row) or a roster (an expanded team row, whose completion is the members'
  * union — the same union the team's banked points already reflect).
  *
@@ -25,10 +24,7 @@ type Item = { id: string; label: string; points: number; done: boolean; earnedPo
  * is already on the board as counts, and every label here (a question's
  * prompt, a challenge's title) is on a public page. What must never leave
  * this route is grading material — items are built field by field from the
- * public records, and the viewer maps carry only ids and banked points. The
- * ai arm reads through `listAiChallenges` (the contestant-safe lister) and
- * `getViewerAi` — never `listAiChallengesForAdmin`, which is the only ai
- * reader that carries flags, hints and signing keys.
+ * public records, and the viewer maps carry only ids and banked points.
  */
 export async function GET(request: Request) {
   // #464 pre-launch lock: this returns challenge titles and points, which is
@@ -44,11 +40,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "bad players" }, { status: 400 });
   }
 
-  const [quizLive, classicLive, aiLive] = await Promise.all([
-    isModuleLive("quiz"),
-    isModuleLive("classic"),
-    isModuleLive("ai"),
-  ]);
+  const [quizLive, classicLive] = await Promise.all([isModuleLive("quiz"), isModuleLive("classic")]);
 
   let quiz: Item[] | null = null;
   if (quizLive) {
@@ -106,17 +98,5 @@ export async function GET(request: Request) {
     });
   }
 
-  let ai: Item[] | null = null;
-  if (aiLive) {
-    const [challenges, viewers] = await Promise.all([
-      listAiChallenges(),
-      Promise.all(players.map((p) => getViewerAi(p))),
-    ]);
-    ai = challenges.map((c) => {
-      const hit = viewers.map((v) => v.solved[c.id]).find(Boolean);
-      return { id: c.id, label: c.title, points: c.points, done: Boolean(hit), earnedPoints: hit?.points };
-    });
-  }
-
-  return NextResponse.json({ quiz, classic, ai, classicHiddenSolved });
+  return NextResponse.json({ quiz, classic, classicHiddenSolved });
 }

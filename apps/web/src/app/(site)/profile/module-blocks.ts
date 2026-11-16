@@ -1,5 +1,5 @@
 // The profile's per-module numbers, lifted out of the page so that file stays
-// a data-fetching Server Component rather than a fetcher plus four modules'
+// a data-fetching Server Component rather than a fetcher plus three modules'
 // worth of arithmetic. Pure functions over what the page has already read —
 // no store access of their own.
 //
@@ -14,7 +14,6 @@ import { moduleUnit } from "@/components/progress/progress-row";
 import { atLeast, unionDenominators } from "@/lib/leaderboard/denominators";
 import type { ProgressItem } from "@/components/progress/challenge-list";
 import type { RemainingModule } from "@/components/progress/remaining-line";
-import type { AiChallenge, AiTotal, ViewerAi } from "@/lib/ai-store";
 import type { Challenge, ClassicTotal, ViewerClassic } from "@/lib/classic-store";
 import type { Question, QuizTotal, ViewerQuiz } from "@/lib/quiz-store";
 
@@ -51,7 +50,6 @@ export type ProfileModuleInput = {
     /** Number of locked story steps, for the disclaimer under the row. */
     lockedCount?: number;
   };
-  ai?: { total?: AiTotal; challenges: AiChallenge[]; maxPoints: number; viewer: ViewerAi };
 };
 
 /** Each enabled module's contribution, keyed the way `withModuleContributions`
@@ -142,20 +140,6 @@ export function buildModuleProgress(input: ProfileModuleInput): Partial<Record<M
       },
     };
   }
-  const ai = input.ai?.total;
-  if (ai && ai.solved > 0) {
-    blocks.ai = {
-      points: ai.points,
-      completed: ai.solved,
-      lastActivityAt: ai.lastAt,
-      detail: {
-        kind: "ai",
-        solved: ai.solved,
-        total: Math.max(input.ai!.challenges.length, ai.solved),
-        points: ai.points,
-      },
-    };
-  }
   return blocks;
 }
 
@@ -216,10 +200,6 @@ export function moduleRow(progress: ModuleProgress, input: ProfileModuleInput): 
       const d = unionDenominators(input.classic?.challenges ?? [], input.classic?.viewer.solved ?? {});
       return { done: detail.solved, total: d.total, unit: moduleUnit("classic"), earned: progress.points, max: d.max };
     }
-    case "ai": {
-      const d = unionDenominators(input.ai?.challenges ?? [], input.ai?.viewer.solved ?? {});
-      return { done: detail.solved, total: d.total, unit: moduleUnit("ai"), earned: progress.points, max: d.max };
-    }
     case "secure-development":
       return {
         done: progress.completed,
@@ -242,7 +222,7 @@ export function moduleRow(progress: ModuleProgress, input: ProfileModuleInput): 
 
 /** Per-item rows for a module's expanded list: which questions are answered,
  *  which flags are solved. Classic groups by the category an organizer
- *  authored (Web, Crypto…); quiz and ai have no grouping of their own and
+ *  authored (Web, Crypto…); quiz has no grouping of its own and
  *  render one flat bucket. secure-development has its own per-target rows via
  *  AppBreakdown and returns nothing here. */
 export function moduleItemsFor(id: ModuleId, input: ProfileModuleInput): { items: ProgressItem[]; doneWord: string } | null {
@@ -281,23 +261,6 @@ export function moduleItemsFor(id: ModuleId, input: ProfileModuleInput): { items
       }),
     };
   }
-  if (id === "ai" && input.ai && input.ai.challenges.length > 0) {
-    const { challenges, viewer } = input.ai;
-    return {
-      doneWord: "cleared",
-      items: challenges.map((c) => {
-        const done = Boolean(viewer.solved[c.id]);
-        return {
-          key: c.id,
-          name: c.title,
-          points: viewer.solved[c.id]?.points ?? c.points,
-          done,
-          status: done ? "Cleared" : "Open",
-          tone: done ? "done" : "open",
-        };
-      }),
-    };
-  }
   return null;
 }
 
@@ -315,7 +278,6 @@ export function remainingFor(modules: readonly ResolvedModule[], input: ProfileM
   const classic = input.classic?.reachableTotal != null
     ? { total: input.classic.reachableTotal, max: input.classic.maxPoints }
     : unionDenominators(input.classic?.challenges ?? [], input.classic?.viewer.solved ?? {});
-  const ai = unionDenominators(input.ai?.challenges ?? [], input.ai?.viewer.solved ?? {});
   const pairs: Partial<Record<ModuleId, { earned: number; max: number }>> = {
     // Clamped rather than unioned, for the reason `atLeast` gives: this
     // catalogue is baked from the rubrics, so it has no per-item identity to
@@ -331,7 +293,6 @@ export function remainingFor(modules: readonly ResolvedModule[], input: ProfileM
       : undefined,
     quiz: input.quiz ? { earned: input.quiz.total?.points ?? 0, max: quiz.max } : undefined,
     classic: input.classic ? { earned: input.classic.total?.points ?? 0, max: classic.max } : undefined,
-    ai: input.ai ? { earned: input.ai.total?.points ?? 0, max: ai.max } : undefined,
   };
   return modules
     .map((m) => ({ title: m.title, ...pairs[m.id] }))
@@ -352,6 +313,5 @@ export function maxPointsAcrossModules(input: ProfileModuleInput, securePoints: 
   const classic = input.classic?.reachableTotal != null
     ? { total: input.classic.reachableTotal, max: input.classic.maxPoints }
     : unionDenominators(input.classic?.challenges ?? [], input.classic?.viewer.solved ?? {});
-  const ai = unionDenominators(input.ai?.challenges ?? [], input.ai?.viewer.solved ?? {});
-  return secureDevCeiling(input, securePoints) + quiz.max + classic.max + ai.max;
+  return secureDevCeiling(input, securePoints) + quiz.max + classic.max;
 }

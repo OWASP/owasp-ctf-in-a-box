@@ -29,7 +29,7 @@ const launchLock = vi.hoisted(() => ({
 const firstBloods = vi.hoisted(() => ({ map: new Map<string, { login: string; at: string | null }>() }));
 vi.mock("@/lib/team-solve-counts", () => ({
   teamSolveCounts,
-  teamSolveBoard: async (module: "classic" | "ai") => {
+  teamSolveBoard: async (module: "classic") => {
     const counts = (await teamSolveCounts(module)) as Map<string, number> | null;
     return counts ? { counts, firstBlood: firstBloods.map } : null;
   },

@@ -76,11 +76,6 @@ vi.mock("@/lib/quiz-store", () => ({
   listQuestions: async () => [],
   getViewerQuiz: async () => ({ answered: {}, attempts: {} }),
 }));
-vi.mock("@/lib/ai-store", () => ({
-  getAiTotals: async () => new Map(),
-  listAiChallenges: async () => [],
-  getViewerAi: async () => ({ solved: {}, attempts: {} }),
-}));
 vi.mock("@/lib/upstash", () => ({ upstashPipeline }));
 // Only the classic slice matters here; every other module is switched off
 // through `moduleLive` above and its reads are never reached.

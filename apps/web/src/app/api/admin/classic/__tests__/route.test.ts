@@ -238,9 +238,8 @@ describe("GET /api/admin/classic", () => {
     expect(res.status).toBe(503);
 
     // Every logged argument must be a primitive STRING, never the raw error
-    // object — see ai/route.test.ts's equivalent case for why this, rather
-    // than a `logged.not.toContain(...)` string check alone, is what
-    // actually distinguishes redacted logging from raw logging.
+    // object: that, rather than a `logged.not.toContain(...)` string check
+    // alone, is what distinguishes redacted logging from raw logging.
     for (const call of spy.mock.calls) {
       for (const arg of call) {
         expect(typeof arg).toBe("string");

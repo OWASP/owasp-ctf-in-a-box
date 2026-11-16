@@ -48,6 +48,8 @@ export async function POST(request: Request) {
   const newPassword = await readNewPassword(request);
   if (newPassword === null) return json({ error: "invalid" }, 400);
 
+  // Fail open (consumeRateLimit's default), like /api/team/join: the budget
+  // bounds request volume, and setPassword refuses on its own.
   const { bucket, limit, windowSeconds } = RATE_LIMITS.setPassword;
   const budget = await consumeRateLimit(bucket, player.id, limit, windowSeconds);
   if (!budget.allowed) {

@@ -2,6 +2,7 @@
 // before any write. better-auth is mocked here; the real hash-and-sign-in
 // proof is in auth-store-better-auth.upstash.test.ts.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 const player = { id: "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f", name: "Alice", image: null, githubLogin: "octocat", username: "alice" };
 
@@ -9,14 +10,18 @@ const m = vi.hoisted(() => ({
   getPlayer: vi.fn(),
   setPassword: vi.fn(),
   consumeRateLimit: vi.fn(),
+  upstashEval: vi.fn(),
+  realConsume: null as null | ((...a: never[]) => Promise<unknown>),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { setPassword: m.setPassword } } }));
 vi.mock("@/lib/player", () => ({ getPlayer: m.getPlayer }));
-vi.mock("@/lib/rate-limit-store", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/rate-limit-store")>()),
-  consumeRateLimit: m.consumeRateLimit,
-}));
+vi.mock("@/lib/upstash", () => ({ upstashEval: m.upstashEval }));
+vi.mock("@/lib/rate-limit-store", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/rate-limit-store")>();
+  m.realConsume = real.consumeRateLimit as never;
+  return { ...real, consumeRateLimit: m.consumeRateLimit };
+});
 
 import { POST } from "@/app/api/me/password/route";
 
@@ -88,13 +93,27 @@ describe("POST /api/me/password", () => {
     expect(m.setPassword).not.toHaveBeenCalled();
   });
 
-  it("500s unavailable on any other failure, without echoing it", async () => {
+  it("500s unavailable on any other failure, logging a label and never the error or the password", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    m.setPassword.mockRejectedValue(new Error("redis exploded"));
-    const res = await POST(req({ newPassword: "hunter2hunter2" }));
+    const password = "hunter2hunter2";
+    // The rejection carries the submitted password the way a driver decorates
+    // an error with its request, so a raw `console.error(err)` would leak it.
+    m.setPassword.mockRejectedValue(decoratedError("redis exploded", password));
+    const res = await POST(req({ newPassword: password }));
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: "unavailable" });
-    expect(err.mock.calls.flat().join(" ")).not.toContain("hunter2hunter2");
+    expectLabelOnly(err, { label: "redis exploded", secret: password });
+    err.mockRestore();
+  });
+
+  it("lets the request through when the budget's store fails (fail open)", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    m.consumeRateLimit.mockImplementation(m.realConsume as never);
+    m.upstashEval.mockRejectedValue(new Error("redis down"));
+    const res = await POST(req({ newPassword: "p".repeat(12) }));
+    expect(m.upstashEval).toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(m.setPassword).toHaveBeenCalled();
     err.mockRestore();
   });
 });

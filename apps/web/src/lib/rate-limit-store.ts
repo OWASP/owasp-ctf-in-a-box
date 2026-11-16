@@ -12,10 +12,10 @@ import { upstashEval } from "@/lib/upstash";
  * on that a caller cannot forge without forging the session itself.
  *
  * The auth buckets (`signUpIp`, `signInIp`, `signInUser`) run before any
- * session exists and key on the client address instead, taken from the
- * RIGHTMOST `x-forwarded-for` entry, the one the single trusted proxy
- * appended (see `client-ip.ts`). Those counters are not a player's state, so
- * `rateLimitKeysFor` does not list them.
+ * session exists and key on the client address instead, the one the single
+ * trusted proxy vouches for (`client-ip.ts` says which header, per deploy
+ * path). Those counters are not a player's state, so `rateLimitKeysFor` does
+ * not list them; they hold that address until their window expires.
  *
  * Fixed window, not a sliding one: the thing being bounded is a burst (scripted
  * join-code guessing, a hammering client), and a fixed window costs one Lua
@@ -127,9 +127,13 @@ export const RATE_LIMITS = {
    *  closed. Guessing is bounded per source, and a stranger elsewhere cannot
    *  spend a player's budget and lock them out. */
   signInUser: { bucket: "signin-user", limit: 10, windowSeconds: 15 * 60 },
-  /** Username changes, keyed on the user id. */
+  /** Username picks, keyed on the user id, charged FAIL OPEN like teamJoin:
+   *  it bounds request volume, and the write refuses on its own (a username
+   *  is set once, and the unique index refuses one already held). */
   usernamePick: { bucket: "username-pick", limit: 20, windowSeconds: 10 * 60 },
-  /** Password set/change, keyed on the user id. */
+  /** Password adds, keyed on the user id, charged FAIL OPEN: it bounds
+   *  request volume, and better-auth's setPassword refuses on its own when a
+   *  password already exists and enforces the length bounds. */
   setPassword: { bucket: "set-password", limit: 10, windowSeconds: 10 * 60 },
 } as const;
 

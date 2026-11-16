@@ -2,6 +2,7 @@
 // before any write. The store is mocked here; username-cookies.test.ts runs
 // the real store and better-auth for the cookie refresh.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
 const player = { id: "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f", name: "Alice", image: null, githubLogin: "octocat", username: null };
 
@@ -10,22 +11,29 @@ const m = vi.hoisted(() => ({
   setUsernameOnce: vi.fn(),
   consumeRateLimit: vi.fn(),
   getSession: vi.fn(),
+  upstashEval: vi.fn(),
+  realConsume: null as null | ((...a: never[]) => Promise<unknown>),
 }));
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: m.getSession } } }));
+const SESSION_DATA = vi.hoisted(() => ({ name: "better-auth.session_data", attributes: { path: "/", httpOnly: true, sameSite: "lax", secure: false, maxAge: 300 } }));
+vi.mock("@/lib/auth", () => ({
+  auth: { api: { getSession: m.getSession }, $context: Promise.resolve({ authCookies: { sessionData: SESSION_DATA } }) },
+}));
+vi.mock("@/lib/upstash", () => ({ upstashEval: m.upstashEval }));
 vi.mock("@/lib/player", () => ({ getPlayer: m.getPlayer }));
 vi.mock("@/lib/username-store", () => ({ setUsernameOnce: m.setUsernameOnce }));
-vi.mock("@/lib/rate-limit-store", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/rate-limit-store")>()),
-  consumeRateLimit: m.consumeRateLimit,
-}));
+vi.mock("@/lib/rate-limit-store", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/rate-limit-store")>();
+  m.realConsume = real.consumeRateLimit as never;
+  return { ...real, consumeRateLimit: m.consumeRateLimit };
+});
 
 import { POST } from "@/app/api/me/username/route";
 
-const req = (body: unknown) =>
+const req = (body: unknown, cookie = "") =>
   new Request("http://box.test/api/me/username", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
 
@@ -102,11 +110,54 @@ describe("POST /api/me/username", () => {
     expect(res.headers.getSetCookie()).toEqual(["better-auth.session_data=abc; Path=/", "better-auth.session_token=def; Path=/"]);
   });
 
+  it("carries refreshed cookies on already_set too, so a stale cache in another browser stops bouncing", async () => {
+    m.setUsernameOnce.mockResolvedValue("already_set");
+    const res = await POST(req({ username: "bob" }));
+    expect(res.status).toBe(409);
+    expect(m.getSession).toHaveBeenCalledWith(expect.objectContaining({ query: { disableCookieCache: true } }));
+    expect(res.headers.getSetCookie()).toEqual(["better-auth.session_data=abc; Path=/", "better-auth.session_token=def; Path=/"]);
+  });
+
+  it.each(["taken", "invalid"] as const)("does not touch the cookies on %s", async (result) => {
+    m.setUsernameOnce.mockResolvedValue(result);
+    const res = await POST(req({ username: "bob" }));
+    expect(m.getSession).not.toHaveBeenCalled();
+    expect(res.headers.getSetCookie()).toEqual([]);
+  });
+
+  it("expires the cookie cache (every chunk sent), not the session token, when the refresh fails", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    m.getSession.mockRejectedValue(decoratedError("store down"));
+    const res = await POST(
+      req({ username: "bob" }, "better-auth.session_token=t; better-auth.session_data.0=x; better-auth.session_data.1=y; other=z"),
+    );
+    expect(res.status).toBe(200);
+    const set = res.headers.getSetCookie();
+    const names = set.map((c) => c.split("=")[0]).sort();
+    expect(names).toEqual(["better-auth.session_data", "better-auth.session_data.0", "better-auth.session_data.1"]);
+    for (const c of set) expect(c).toMatch(/Max-Age=0/);
+    expect(set.join("\n")).not.toContain("session_token");
+    expectLabelOnly(err, { label: "store down" });
+    err.mockRestore();
+  });
+
+  it("lets the pick through when the budget's store fails (fail open)", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    m.consumeRateLimit.mockImplementation(m.realConsume as never);
+    m.upstashEval.mockRejectedValue(new Error("redis down"));
+    const res = await POST(req({ username: "bob" }));
+    expect(m.upstashEval).toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(m.setUsernameOnce).toHaveBeenCalled();
+    err.mockRestore();
+  });
+
   it("lets a store failure surface as a 500, not a success", async () => {
-    m.setUsernameOnce.mockRejectedValue(new Error("redis down"));
+    m.setUsernameOnce.mockRejectedValue(decoratedError("redis down"));
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await POST(req({ username: "bob" }));
     expect(res.status).toBe(500);
+    expectLabelOnly(err, { label: "redis down" });
     err.mockRestore();
   });
 });

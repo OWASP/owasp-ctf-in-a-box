@@ -58,5 +58,5 @@ Also from `AGENTS.md`:
 ## Changing code
 
 Conventional Commits, no AI attribution. A change under `apps/`, `sync/`,
-`scorer/`, `setup/` or `deploy/` adds a line under `## Unreleased` in
-`CHANGELOG.md`. Bash must run on macOS bash 3.2. Run the suites on Node 22.
+`scorer/`, `setup/` or `deploy/` adds a fragment
+`changelog.d/<issue>-<slug>.md` (not a line in `CHANGELOG.md`). Bash must run on macOS bash 3.2. Run the suites on Node 22.

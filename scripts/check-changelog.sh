@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-changelog.sh — fail a change set that touches shipped code without a
-# CHANGELOG.md entry (#483).
+# changelog fragment (#483, #785).
 #
 # Usage: scripts/check-changelog.sh <base-ref> <head-ref>
 #
@@ -10,8 +10,13 @@
 # and head SHAs; run it locally as `scripts/check-changelog.sh origin/main HEAD`.
 #
 # What needs an entry: any changed path under apps/, sync/, scorer/, setup/ or
-# deploy/ — the trees that ship to an organizer's box — unless the root
-# CHANGELOG.md is also in the diff.
+# deploy/ — the trees that ship to an organizer's box — unless the diff also
+# ADDS a fragment: a new `changelog.d/<name>.md` other than its README.md.
+# Entries live in fragments, one file per PR, because every PR appending to
+# the same `## Unreleased` block of CHANGELOG.md made every open PR conflict
+# with every merge. scripts/changelog-assemble.mjs folds the fragments into
+# CHANGELOG.md at release. An edit to CHANGELOG.md does NOT satisfy the check:
+# it is the conflict source the fragments exist to avoid.
 #
 # What does NOT, by decision: test-only and doc-only paths inside those trees.
 # A path counts as test-only when it sits under a `__tests__/`, `test/` or
@@ -58,8 +63,13 @@ done
 # - `--no-renames`, because a detected rename reports only its destination,
 #   so moving shipped code into docs/ would have passed as a docs change.
 list="$(mktemp)"
-trap 'rm -f "$list"' EXIT
+added="$(mktemp)"
+trap 'rm -f "$list" "$added"' EXIT
 if ! git -c core.quotePath=false diff --no-renames --name-only -z "${base}...${head}" > "$list"; then
+  echo "check-changelog: git diff ${base}...${head} failed — no merge base? refusing to guess" >&2
+  exit 2
+fi
+if ! git -c core.quotePath=false diff --no-renames --diff-filter=A --name-only -z "${base}...${head}" > "$added"; then
   echo "check-changelog: git diff ${base}...${head} failed — no merge base? refusing to guess" >&2
   exit 2
 fi
@@ -85,14 +95,9 @@ exempt() {
   return 1
 }
 
-has_changelog=0
 triggers=""
 while IFS= read -r -d '' path; do
   [ -n "$path" ] || continue
-  if [ "$path" = "CHANGELOG.md" ]; then
-    has_changelog=1
-    continue
-  fi
   case "$path" in
     apps/* | sync/* | scorer/* | setup/* | deploy/*)
       if ! exempt "$path"; then
@@ -108,44 +113,27 @@ if [ -z "$triggers" ]; then
   exit 0
 fi
 
-# A changed CHANGELOG.md is not enough (#486 review): at least one added,
-# non-blank line must sit inside head's `## Unreleased` section, so rewording
-# an older release does not pass for a new entry.
-unreleased_entry() {
-  local range
-  range="$(git show "${head}:CHANGELOG.md" | awk '
-    /^## Unreleased/ { s = NR; next }
-    s && /^## / { print s, NR; found = 1; exit }
-    END { if (s && !found) print s, NR + 1 }')"
-  [ -n "$range" ] || return 1
-  # shellcheck disable=SC2086
-  set -- $range
-  git diff --no-renames -U0 "${base}...${head}" -- CHANGELOG.md | awk -v s="$1" -v e="$2" '
-    /^@@/ { split($3, a, ","); n = substr(a[1], 2) + 0; next }
-    /^\+\+\+/ { next }
-    /^\+/ { if (n > s && n < e && $0 !~ /^\+[[:space:]]*$/) hit = 1; n++; next }
-    END { exit hit ? 0 : 1 }'
-}
+# A fragment is a file directly in changelog.d/ ending in .md, not the README.
+fragment=""
+while IFS= read -r -d '' path; do
+  case "$path" in
+    changelog.d/README.md) ;;
+    changelog.d/*/*) ;;
+    changelog.d/*.md) fragment="$path" ;;
+  esac
+done < "$added"
 
-if [ "$has_changelog" = "1" ]; then
-  if unreleased_entry; then
-    echo "check-changelog: ok — code changed and CHANGELOG.md has a new entry under '## Unreleased'"
-    exit 0
-  fi
-  {
-    echo "check-changelog: CHANGELOG.md changed, but no new line landed under '## Unreleased' — this change touches shipped code:"
-    printf '%s' "$triggers"
-    echo "Fix: add the entry under the '## Unreleased' heading (editing an older release does not count),"
-    echo "or ask a maintainer to apply the 'no-changelog' label."
-  } >&2
-  exit 1
+if [ -n "$fragment" ]; then
+  echo "check-changelog: ok — code changed and the PR adds the fragment ${fragment}"
+  exit 0
 fi
 
 {
-  echo "check-changelog: CHANGELOG.md is not updated, but this change touches shipped code:"
+  echo "check-changelog: no changelog fragment added, but this change touches shipped code:"
   printf '%s' "$triggers"
-  echo "Fix: add a line under '## Unreleased' in CHANGELOG.md describing the change,"
-  echo "or, for an internal change with nothing to tell an organizer (a pure refactor),"
-  echo "ask a maintainer to apply the 'no-changelog' label."
+  echo "Fix: add a new file changelog.d/<issue>-<slug>.md (for example changelog.d/123-fix-login.md)"
+  echo "holding the entry as a '- **Kind: summary (#N).** ...' bullet; see changelog.d/README.md."
+  echo "Editing CHANGELOG.md does not count. For an internal change with nothing to tell an"
+  echo "organizer (a pure refactor), ask a maintainer to apply the 'no-changelog' label."
 } >&2
 exit 1

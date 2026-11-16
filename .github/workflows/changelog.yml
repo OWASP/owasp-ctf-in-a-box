@@ -1,6 +1,6 @@
 name: changelog
 # A PR that changes shipped code (apps/, sync/, scorer/, setup/, deploy/) must
-# add a CHANGELOG.md entry (#483). Test-only and doc-only paths are exempt; the
+# add a changelog fragment, a new changelog.d/<issue>-<slug>.md (#483, #785). Test-only and doc-only paths are exempt; the
 # rules live in scripts/check-changelog.sh, which bats covers under the shell
 # job. The `no-changelog` label bypasses it for an internal change with nothing
 # to tell an organizer, and Dependabot PRs are skipped.
@@ -34,7 +34,7 @@ jobs:
       # Only SHAs and a computed '1'/'0' reach the step, and through env, not
       # inlined into the script: no PR-controlled text (title, body, branch
       # name) is ever interpolated into a shell command.
-      - name: CHANGELOG updated
+      - name: Changelog fragment added
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}

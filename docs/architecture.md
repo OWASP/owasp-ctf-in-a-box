@@ -1271,6 +1271,25 @@ build.
 
 ## Security model
 
+- **Open auth endpoints and the sign-up allowlist.** better-auth's
+  `disabledPaths` in `apps/web/src/lib/auth.ts` closes everything the app
+  does not use, so the open endpoints are `/sign-up/email`,
+  `/sign-in/username`, `/sign-in/social`, `/link-social`, `/callback/:id`,
+  `/get-session` and `/sign-out`. `/sign-in/email`, `/is-username-available`,
+  `/update-user`, `/change-password` and the rest of the credential and
+  session management paths stay closed; the username pick and the add-a-password
+  step go through the app's own routes (`/api/me/username`,
+  `/api/me/password`), which call better-auth server side. A sign-up body may
+  carry only `username`, `password` and a matching `displayUsername` (plus
+  `callbackURL` and `rememberMe`): `refuseSignUpFields` refuses any other key,
+  and the server fills the name and a placeholder `@accounts.invalid` email
+  itself, so a client cannot set either. better-auth's built-in in-memory
+  limiter is off; the Redis limiter in `apps/web/src/lib/auth-rate-limit.ts`
+  keys on the address the one trusted proxy vouches for (the rightmost
+  `X-Forwarded-For` entry behind Caddy or the ALB, `Fly-Client-IP` on Fly,
+  where the rendered compose file sets `TRUSTED_CLIENT_IP_HEADER`; see
+  `apps/web/src/lib/client-ip.ts`) and fails closed (budgets in
+  [Operations](operations.md#account-sign-up-and-sign-in-limits)).
 - **Trust filter before parse.** `sync/src/github.js` filters comments by
   `cfg.commentAuthor` *before* `sync/src/parse.js` ever runs `JSON.parse`
   on the comment body. A forged comment authored by anyone else is
@@ -1383,9 +1402,11 @@ build.
   against a fixed window keyed on the **authenticated player id**
   (`src/lib/rate-limit-store.ts`), not an IP. That distinction is
   the point:
-  an IP key is spoofable (Caddy *appends* to `x-forwarded-for`), and the app
-  stores no IP address at all since the pre-event password gate and its
-  per-IP throttle were removed (#464). These routes run after `getSession()`,
+  a client's leftmost `x-forwarded-for` entries are its own choice, and a
+  shared address (a NAT, a CDN edge) would merge players. Only the sign-up
+  and sign-in budgets, which run before any session exists, key on a client
+  address; those counters hold that address in their Redis key until the
+  window expires. These routes run after `getSession()`,
   so there is a key a caller cannot forge without forging the session. They
   fail **open** on a Redis error because they bound abuse of routes that have
   their own correctness gates underneath.

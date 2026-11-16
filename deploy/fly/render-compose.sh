@@ -64,6 +64,14 @@
 #      (flyctl 0.4.120 refuses the whole machine update over it), and with the
 #      key absent every container inherits the machine's own `on-failure`
 #      policy — the behaviour the container-kill drill verified.
+#   7. The app gets `TRUSTED_CLIENT_IP_HEADER: fly-client-ip`. Fly's proxy
+#      appends the app's own address as the rightmost X-Forwarded-For entry,
+#      so the rule compose and AWS use would key every client's auth rate
+#      limit on one address. Fly-Client-IP is set by Fly's proxy from the
+#      connection it accepted, overwriting a client-sent copy, and that proxy
+#      is the machine's only ingress. Set here, never in docker-compose.yml:
+#      behind Caddy the header is whatever the client sent. See
+#      apps/web/src/lib/client-ip.ts. A render that cannot place it fails.
 set -euo pipefail
 
 # The env-file reader every shell entry point shares; resolved from this
@@ -290,7 +298,19 @@ indent == 4 && section == "services" {
   # The scorer runs a prebuilt image that must be the one the forks judge with,
   # mirrored into the Fly registry, so its image line is replaced, not kept.
   if (key == "image" && service == "scorer") { print "    image: " scorer_image; next }
+  # Header item 7. The environment key line carries no URL, so it skips the
+  # rewriting below.
+  if (key == "environment" && service == "app") {
+    print
+    print "      TRUSTED_CLIENT_IP_HEADER: fly-client-ip"
+    trusted_ip_set = 1
+    next
+  }
 }
+
+# One value only: a copy passed through from docker-compose.yml would be a
+# duplicate key, and the Fly value is the one that is true here.
+indent == 6 && section == "services" && service == "app" && in_env && $0 ~ /^ +TRUSTED_CLIENT_IP_HEADER:/ { next }
 
 # --- environment values ---------------------------------------------------
 # --- environment values ---------------------------------------------------
@@ -337,6 +357,13 @@ indent == 4 && section == "services" {
     rest = substr(rest, RSTART + RLENGTH)
   }
   print out rest
+}
+
+END {
+  if (!trusted_ip_set) {
+    print "FAIL: the app service has no environment block to carry TRUSTED_CLIENT_IP_HEADER" > "/dev/stderr"
+    exit 1
+  }
 }
 ' | awk '
 # SECOND PASS: drop `environment:` keys left with nothing under them.

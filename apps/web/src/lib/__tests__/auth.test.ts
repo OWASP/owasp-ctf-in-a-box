@@ -30,6 +30,30 @@ vi.mock("better-auth/api", async (orig) => ({
   getSessionFromCtx,
 }));
 
+// No Redis here: a sign-up that reached the store would call one of these,
+// so a refused request is proven refused by neither being called.
+const redisCalls = vi.hoisted(() => ({
+  pipeline: vi.fn(async () => {
+    throw new Error("no Redis in the unit suite");
+  }),
+  eval: vi.fn(async () => {
+    throw new Error("no Redis in the unit suite");
+  }),
+}));
+vi.mock("@/lib/upstash", async (orig) => ({
+  ...(await orig<typeof import("@/lib/upstash")>()),
+  upstashPipeline: redisCalls.pipeline,
+  upstashEval: redisCalls.eval,
+}));
+
+const consumeRateLimit = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => Promise<{ allowed: true } | { allowed: false; retryAfterSeconds: number }>>(async () => ({ allowed: true })),
+);
+vi.mock("@/lib/rate-limit-store", async (orig) => ({
+  ...(await orig<typeof import("@/lib/rate-limit-store")>()),
+  consumeRateLimit,
+}));
+
 vi.hoisted(() => {
   // betterAuth() runs at import time and warns on a weak secret. Only fills
   // gaps, so a real .env.local still wins locally.
@@ -39,24 +63,30 @@ vi.hoisted(() => {
   process.env.GITHUB_CLIENT_SECRET ??= "test-client-secret";
 });
 
-import { auth, authOptions, refuseClientOAuthParams, refuseSecondGithubLink } from "@/lib/auth";
+import { auth, authOptions, refuseClientOAuthParams, refuseSecondGithubLink, refuseSignUpFields } from "@/lib/auth";
+import { isPlaceholderEmail } from "@/lib/placeholder-email";
 import { APIError } from "better-auth/api";
 
 /**
- * The only endpoints this app actually exercises over HTTP.
+ * The endpoints this app exercises over HTTP: every path a client can reach.
  *
- *   /sign-in/social  authClient.signIn.social({ provider: "github" })
- *   /link-social     authClient.linkSocial({ provider: "github" }), the
- *                    signed-in player's Link GitHub button
- *   /callback/:id    GitHub's OAuth redirect back, for sign-in and for a link
- *   /get-session     authClient.useSession()
- *   /sign-out        authClient.signOut()
- *   /ok, /error      better-auth's own health and error surfaces
+ *   /sign-up/email     username + password sign-up (refuseSignUpFields closes
+ *                      it to every identity field but the username)
+ *   /sign-in/username  username + password sign-in
+ *   /sign-in/social    authClient.signIn.social({ provider: "github" })
+ *   /link-social       authClient.linkSocial({ provider: "github" }), the
+ *                      signed-in player's Link GitHub button
+ *   /callback/:id      GitHub's OAuth redirect back, for sign-in and for a link
+ *   /get-session       authClient.useSession()
+ *   /sign-out          authClient.signOut()
  *
  * Server-side auth.api.getSession() is a direct function call and never
  * touches the router, so it does not belong here.
  */
-const IN_USE = ["/sign-in/social", "/link-social", "/callback/:id", "/get-session", "/sign-out", "/ok", "/error"];
+const IN_USE = ["/sign-up/email", "/sign-in/username", "/sign-in/social", "/link-social", "/callback/:id", "/get-session", "/sign-out"];
+
+/** better-auth's own health and error surfaces: reachable, and they read no input. */
+const BUILTIN = ["/ok", "/error"];
 
 /**
  * Mounted, unused, and NOT closeable by disabledPaths.
@@ -76,7 +106,7 @@ const NOT_CLOSEABLE = ["/reset-password/:token"];
 const disabledPaths = auth.options.disabledPaths ?? [];
 
 describe("better-auth exposed surface", () => {
-  it("classifies every mounted endpoint as in use, disabled, or documented-inert", () => {
+  it("leaves open exactly the paths the app uses, besides the built-in and documented-inert ones", () => {
     const mounted = Object.values(auth.api)
       .map((endpoint) => (endpoint as { path?: string }).path)
       .filter((path): path is string => typeof path === "string");
@@ -84,10 +114,8 @@ describe("better-auth exposed surface", () => {
     // Sanity: if this ever reads zero, the assertion below is vacuous.
     expect(mounted.length).toBeGreaterThan(20);
 
-    const unclassified = mounted.filter(
-      (p) => !IN_USE.includes(p) && !NOT_CLOSEABLE.includes(p) && !disabledPaths.includes(p),
-    );
-    expect(unclassified).toEqual([]);
+    const open = mounted.filter((p) => !BUILTIN.includes(p) && !NOT_CLOSEABLE.includes(p) && !disabledPaths.includes(p));
+    expect([...open].sort()).toEqual([...IN_USE].sort());
   });
 
   it("contains no parameterized path, which disabledPaths cannot match", () => {
@@ -171,7 +199,7 @@ describe("user.additionalFields.login", () => {
 
 describe("sign-in activity hook (issue #212)", () => {
   it("registers an after hook, the login capture point", () => {
-    // The hook body is a thin wrapper around recordCallbackLogin, whose path
+    // The hook body is a thin wrapper around recordSignIn, whose path
     // filter and login extraction are pinned in activity-log.test.ts. This
     // pins only that the wiring exists — remove the hook and sign-ins
     // silently stop being recorded.
@@ -315,5 +343,143 @@ describe("refuseClientOAuthParams (OAuth for identity only)", () => {
   it("leaves other paths and a missing body alone", async () => {
     await expect(refuseClientOAuthParams(ctx("/get-session", { scopes: ["repo"] }))).resolves.toBeUndefined();
     await expect(refuseClientOAuthParams(ctx("/sign-in/social", undefined))).resolves.toBeUndefined();
+  });
+});
+
+const BASE = "http://localhost:3000/api/auth";
+const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+  auth.handler(
+    new Request(`${BASE}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "http://localhost:3000", "x-forwarded-for": "10.0.0.1", ...headers },
+      body: JSON.stringify(body),
+    }),
+  );
+const VALID = { username: "Alice", password: "x".repeat(12) };
+
+describe("username and password configuration", () => {
+  it("enables email/password with the kit's password bounds and no reset mail", () => {
+    const ep = authOptions.emailAndPassword as Record<string, unknown>;
+    expect(ep).toMatchObject({ enabled: true, minPasswordLength: 12, maxPasswordLength: 128, autoSignIn: true, requireEmailVerification: false });
+    expect(ep.sendResetPassword).toBeUndefined();
+  });
+
+  it("turns better-auth's own limiter off, leaving limitAuthAttempt's budgets", () => {
+    expect(authOptions.rateLimit.enabled).toBe(false);
+  });
+
+  it.each(["/sign-in/social", "/link-social"])("charges the kit limiter on %s through the before hook", async (path) => {
+    consumeRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 9 });
+    const res = await post(path, { provider: "github", callbackURL: "/profile" });
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("9");
+  });
+
+  it("runs the username plugin, with nextCookies last", () => {
+    expect(authOptions.plugins.map((p) => p.id)).toEqual(["username", "next-cookies"]);
+  });
+});
+
+describe("refuseSignUpFields (/sign-up/email before hook)", () => {
+  const ctx = (path: string, body: unknown) => ({ path, body }) as unknown as Parameters<typeof refuseSignUpFields>[0];
+  const refused = async (p: Promise<unknown>) => {
+    const err = await p.then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    return err as APIError;
+  };
+
+  it("fills a placeholder email and the typed username as the name", async () => {
+    const c = ctx("/sign-up/email", { username: " Alice ", password: "x".repeat(12) });
+    await refuseSignUpFields(c);
+    const body = c.body as Record<string, string>;
+    expect(isPlaceholderEmail(body.email)).toBe(true);
+    expect(body.username).toBe("Alice");
+    expect(body.displayUsername).toBe("Alice");
+    expect(body.name).toBe("Alice");
+  });
+
+  it("takes a displayUsername that is the same username in another case", async () => {
+    const c = ctx("/sign-up/email", { username: "alice", displayUsername: "ALICE", password: "x".repeat(12) });
+    await refuseSignUpFields(c);
+    expect((c.body as Record<string, string>).name).toBe("ALICE");
+  });
+
+  it("refuses a displayUsername that only lowercases to the username", async () => {
+    // U+212A KELVIN SIGN lowercases to "k".
+    const err = await refused(refuseSignUpFields(ctx("/sign-up/email", { username: "kate", displayUsername: "\u212Aate", password: "x".repeat(12) })));
+    expect(err.body?.code).toBe("SIGN_UP_FIELD_REFUSED");
+  });
+
+  it("refuses a displayUsername that names someone else", async () => {
+    const err = await refused(refuseSignUpFields(ctx("/sign-up/email", { username: "alice", displayUsername: "dcotelo", password: "x".repeat(12) })));
+    expect(err.body?.code).toBe("SIGN_UP_FIELD_REFUSED");
+  });
+
+  it.each([undefined, null, "alice", ["alice"], { password: "x".repeat(12) }, { username: 7, password: "x".repeat(12) }])(
+    "refuses body %j",
+    async (body) => {
+      const err = await refused(refuseSignUpFields(ctx("/sign-up/email", body)));
+      expect(err.status).toBe("BAD_REQUEST");
+    },
+  );
+
+  it("leaves other paths alone", async () => {
+    const body = { login: "someone" };
+    await expect(refuseSignUpFields(ctx("/sign-in/username", body))).resolves.toBeUndefined();
+    expect(body).toEqual({ login: "someone" });
+  });
+});
+
+describe("sign-up over HTTP", () => {
+  it.each(["login", "email", "name", "image", "emailVerified", "id", "foo", "username ", "__proto__", "createdAt", "role"])(
+    "refuses a body carrying %j before anything reaches Redis",
+    async (field) => {
+      redisCalls.pipeline.mockClear();
+      redisCalls.eval.mockClear();
+      const res = await auth.handler(
+        new Request(`${BASE}/sign-up/email`, {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: "http://localhost:3000", "x-forwarded-for": "10.0.0.1" },
+          // Raw JSON so "__proto__" arrives as an own key, as an attacker's would.
+          body: `{"username":"alice","password":"${"x".repeat(12)}",${JSON.stringify(field)}:"x"}`,
+        }),
+      );
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("SIGN_UP_FIELD_REFUSED");
+      expect(redisCalls.pipeline).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses an identity field sent as a form body too", async () => {
+    redisCalls.pipeline.mockClear();
+    const res = await auth.handler(
+      new Request(`${BASE}/sign-up/email`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", origin: "http://localhost:3000", "x-forwarded-for": "10.0.0.1" },
+        body: new URLSearchParams({ username: "alice", password: "x".repeat(12), login: "someone" }).toString(),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("SIGN_UP_FIELD_REFUSED");
+    expect(redisCalls.pipeline).not.toHaveBeenCalled();
+  });
+
+  it("charges the rate limit before it reads the body", async () => {
+    consumeRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 42 });
+    const res = await post("/sign-up/email", { ...VALID, login: "someone" });
+    expect(res.status).toBe(429);
+  });
+
+  it.each(["/sign-up/email", "/sign-in/username"])("answers a refused %s with 429, Retry-After and the seconds in the body", async (path) => {
+    consumeRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 42 });
+    const res = await post(path, VALID);
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("42");
+    expect(await res.json()).toMatchObject({ code: "RATE_LIMITED", retryAfterSeconds: 42 });
+  });
+
+  it.each(["/sign-in/email", "/is-username-available", "/update-user", "/change-password", "/set-password"])("answers %s with 404", async (path) => {
+    const res = await post(path, { ...VALID, email: "a@b.test", newPassword: "y".repeat(12), currentPassword: "x".repeat(12) });
+    expect(res.status).toBe(404);
   });
 });

@@ -24,12 +24,12 @@ const OTHER = "1c0f5a4d-2e3b-4d6c-9f70-8b9cad0e1f30";
 const players = vi.hoisted(() => ({ getPlayerProfiles: vi.fn() }));
 vi.mock("@/lib/player", async () => {
   const PLAYER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-  const displayNameOf = (r: { id: string; username?: string | null; login?: string | null; name?: string | null }) =>
-    r.username || r.login || r.name || `player ${r.id.slice(0, 8)}`;
+  const displayNameOf = (r: { id: string; displayUsername?: string | null; username?: string | null; login?: string | null; name?: string | null }) =>
+    r.displayUsername || r.username || r.login || r.name || `player ${r.id.slice(0, 8)}`;
   return { PLAYER_ID_RE, displayNameOf, getPlayerProfiles: players.getPlayerProfiles };
 });
 
-import { listActivity, logActivity, recordCallbackLogin } from "@/lib/activity-log";
+import { listActivity, logActivity, recordSignIn } from "@/lib/activity-log";
 
 beforeEach(() => {
   upstash.upstashPipeline.mockReset();
@@ -132,12 +132,12 @@ describe("logActivity", () => {
   });
 });
 
-describe("recordCallbackLogin", () => {
+describe("recordSignIn", () => {
   const session = { user: { id: ID, login: "octocat", name: "The Octocat" } };
 
   it("logs a login for the OAuth callback path, template or literal", async () => {
-    await recordCallbackLogin("/callback/:id", session);
-    await recordCallbackLogin("/callback/github", session);
+    await recordSignIn("/callback/:id", session);
+    await recordSignIn("/callback/github", session);
     expect(upstash.upstashPipeline).toHaveBeenCalledTimes(2);
     const entry = JSON.parse(String((upstash.upstashPipeline.mock.calls[0][0] as string[][])[0][2]));
     expect(entry.type).toBe("login");
@@ -149,17 +149,30 @@ describe("recordCallbackLogin", () => {
   // A fresh session on any OTHER path (a /get-session cookie refresh, a
   // sign-out) is not a sign-in. Logging those would turn every page load
   // into a "login" row and drown the log.
-  it("ignores every non-callback path, session or not", async () => {
-    await recordCallbackLogin("/get-session", session);
-    await recordCallbackLogin("/sign-out", session);
+  it("ignores every other path, session or not", async () => {
+    await recordSignIn("/get-session", session);
+    await recordSignIn("/sign-in/social", session);
+    await recordSignIn("/sign-out", session);
+    expect(upstash.upstashPipeline).not.toHaveBeenCalled();
+  });
+
+  it.each(["/sign-in/username", "/sign-up/email"])("logs a login for a password %s that made a session, by the typed username", async (path) => {
+    await recordSignIn(path, { user: { id: ID, username: "alice", displayUsername: "Alice", name: "Alice" } });
+    expect(upstash.upstashPipeline).toHaveBeenCalledTimes(1);
+    const entry = JSON.parse(String((upstash.upstashPipeline.mock.calls[0][0] as string[][])[0][2]));
+    expect(entry).toMatchObject({ type: "login", userId: ID, name: "Alice" });
+  });
+
+  it.each(["/sign-in/username", "/sign-up/email"])("logs nothing for a %s that made no session", async (path) => {
+    await recordSignIn(path, null);
     expect(upstash.upstashPipeline).not.toHaveBeenCalled();
   });
 
   it("ignores a callback with no session or no player id", async () => {
-    await recordCallbackLogin("/callback/:id", null);
-    await recordCallbackLogin("/callback/:id", { user: {} });
-    await recordCallbackLogin("/callback/:id", { user: { id: 42 } });
-    await recordCallbackLogin("/callback/:id", { user: { id: "octocat", login: "octocat" } });
+    await recordSignIn("/callback/:id", null);
+    await recordSignIn("/callback/:id", { user: {} });
+    await recordSignIn("/callback/:id", { user: { id: 42 } });
+    await recordSignIn("/callback/:id", { user: { id: "octocat", login: "octocat" } });
     expect(upstash.upstashPipeline).not.toHaveBeenCalled();
   });
 });

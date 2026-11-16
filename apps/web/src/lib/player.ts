@@ -10,7 +10,7 @@ import { parseScanPage, upstashPipeline } from "@/lib/upstash";
 // the solves hash relies on to split `<player>:<challenge>`.
 export const PLAYER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-export type Player = { id: string; name: string; image: string | null; githubLogin: string | null };
+export type Player = { id: string; name: string; image: string | null; githubLogin: string | null; username: string | null };
 
 export { displayNameOf };
 
@@ -20,6 +20,7 @@ function toPlayer(row: NameParts & { image?: string | null }): Player {
     name: displayNameOf(row),
     image: row.image ?? null,
     githubLogin: row.login || null,
+    username: row.username || null,
   };
 }
 
@@ -61,7 +62,7 @@ export async function getPlayerProfiles(
 const FIND_SCAN_COUNT = 200;
 
 /**
- * Players whose display name or GitHub login contains `query`, ignoring case,
+ * Players whose display name, username or GitHub login contains `query`, ignoring case,
  * in scan order, at most `limit` of them. Walks the user rows hash with HSCAN
  * and stops as soon as it has `limit` matches. A blank query matches nobody.
  * Throws on a command error or a row that is not JSON: an admin search must
@@ -82,7 +83,10 @@ export async function findPlayers(query: string, limit = 20, prefix: string = AU
       const row = JSON.parse(flat[i + 1]) as NameParts & { image?: string | null };
       const player = toPlayer({ ...row, id });
       const login = (player.githubLogin ?? "").toLowerCase();
-      if (player.name.toLowerCase().includes(needle) || login.includes(needle)) found.push(player);
+      const username = (player.username ?? "").toLowerCase();
+      if (player.name.toLowerCase().includes(needle) || login.includes(needle) || username.includes(needle)) {
+        found.push(player);
+      }
     }
   } while (cursor !== "0" && found.length < limit);
   return found;

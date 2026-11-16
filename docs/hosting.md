@@ -598,9 +598,24 @@ optionally, `GITHUB_APP_INSTALLATION_ID` in `.env`. Both `GITHUB_APP_ID` and
 `GITHUB_APP_PRIVATE_KEY` are required — `sync` refuses to start without them.
 You can also set all three by hand instead of using the helpers.
 
+## Player accounts
+
+Players create accounts on the box itself: `/sign-in` offers *Sign in* and
+*Create an account* (a username and a password) beside the GitHub button.
+Usernames are 3 to 30 characters of letters, digits, `_` and `.`, unique
+regardless of case and shown as typed; passwords are 12 to 128 characters
+with no composition rules. Account creation is always open — the
+registration window gates creating and joining teams, not accounts — and
+needs no GitHub account, so a Quiz or Jeopardy event can run with none
+beyond the organizers'. A player who signs in with GitHub and has no
+username is asked to pick one first, and can add a password from `/profile`.
+There is no password change or recovery yet; a player who loses a password
+signs in with GitHub if the account has one, or makes a new account.
+
 ## GitHub OAuth app
 
-Contestants (and admins) sign in with GitHub, so you need an OAuth app —
+Contestants (and admins) can sign in with GitHub, which Secure Development
+needs to link a player to their pull requests, so you need an OAuth app —
 separate from the sync GitHub App above. OAuth apps have no manifest/create
 API, so this is a guided flow rather than an auto-filled one:
 
@@ -695,12 +710,15 @@ an event that must not be a factor at all: set `FLY_AUTO_STOP=off` in
 The reference deployment's domain is on Cloudflare DNS with the proxy on
 ("orange cloud"), so every request reaches Fly through Cloudflare's edge — a
 `cf-ray` header on any response is how you can tell. That is the only place
-a **trustworthy** per-IP control can live: the app never sees a client
-address it can rely on (Fly sees Cloudflare's, and the `x-forwarded-for`
-value a caller can set is appended to, not replaced), and the app's own
-rate limiter is per login, which starts only after sign-in. An
-unauthenticated `curl` loop against `/api/*` therefore still costs the box a
-session lookup per hit unless the edge stops it.
+a **trustworthy** per-IP control can live: the app keys its sign-up and
+sign-in limits on the address of the hop that connected to the box's proxy
+(`Fly-Client-IP` on Fly, the rightmost `x-forwarded-for` entry behind Caddy or
+the ALB), never on a value the caller sets. Behind Cloudflare that is the
+edge's address, which is usable for a coarse limit on
+sign-up and sign-in
+([Operations](operations.md#account-sign-up-and-sign-in-limits)) but never a
+client identity. An unauthenticated `curl` loop against `/api/*` therefore
+still costs the box a session lookup per hit unless the edge stops it.
 
 **One rate-limiting rule, on the Free plan.** Cloudflare's Free plan includes
 exactly one rate-limiting rule, counted by IP over a 10-second window with a
@@ -734,7 +752,8 @@ ten seconds, and `/leaderboard` answered 200 throughout.
 This is the layer above the app's own controls, not a replacement for them:
 per-item cooldowns and the quiz attempt cap stop *guessing* (they run inside
 the grading scripts); the per-login limiter stops one account hammering team
-join and hint reveal (the app keys nothing on IP and stores no IP address);
+join and hint reveal; the sign-up and sign-in budgets key on the client
+address, held in Redis only until each window expires;
 Cloudflare stops gross floods before they reach the box.
 Issue #438 tracks the per-login buckets still missing on the two submit
 routes and an Insights view of throttled logins.

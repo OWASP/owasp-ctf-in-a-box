@@ -111,19 +111,22 @@ export async function logActivity(type: ActivityType, actor: string | ActivityAc
 
 /**
  * Records a sign-in from better-auth's `hooks.after`, which fires on EVERY
- * auth endpoint — so this filters to the OAuth callback itself. A session
- * present on any other path (a `/get-session` cookie refresh, `/sign-out`)
- * is not a sign-in and must not be logged as one.
+ * auth endpoint — so this filters to the three paths that sign a player in:
+ * the OAuth callback, `/sign-in/username` and `/sign-up/email` (which signs
+ * the new account in). Each sets `newSession` only on success, so a refused
+ * attempt logs nothing. A session present on any other path (a
+ * `/get-session` cookie refresh, `/sign-out`) is not a sign-in and must not
+ * be logged as one.
  *
  * Split out of the hook closure in auth.ts so the path filter and the
  * player extraction are directly testable without standing up a better-auth
  * middleware context.
  */
-export async function recordCallbackLogin(path: string, newSession: unknown): Promise<void> {
-  // Matches both the endpoint template ("/callback/:id") and a literal
-  // request path ("/callback/github") — which of the two the hook sees is a
-  // better-auth internal this deliberately doesn't depend on.
-  if (!path.startsWith("/callback")) return;
+export async function recordSignIn(path: string, newSession: unknown): Promise<void> {
+  // The callback matches both the endpoint template ("/callback/:id") and a
+  // literal request path ("/callback/github") — which of the two the hook
+  // sees is a better-auth internal this deliberately doesn't depend on.
+  if (!path.startsWith("/callback") && path !== "/sign-in/username" && path !== "/sign-up/email") return;
   // Fail-open like the writer: this runs inside the sign-in hook.
   let actor: ActivityActor;
   try {
@@ -132,7 +135,13 @@ export async function recordCallbackLogin(path: string, newSession: unknown): Pr
     const id = row?.id;
     if (typeof id !== "string" || !PLAYER_ID_RE.test(id)) return;
     const text = (v: unknown) => (typeof v === "string" ? v : null);
-    actor = { id, name: displayNameOf({ id, username: text(row?.username), login: text(row?.login), name: text(row?.name) }) };
+    actor = { id, name: displayNameOf({
+        id,
+        displayUsername: text(row?.displayUsername),
+        username: text(row?.username),
+        login: text(row?.login),
+        name: text(row?.name),
+      }) };
   } catch (err) {
     console.warn("[activity] sign-in entry skipped", errorLabel(err));
     return;

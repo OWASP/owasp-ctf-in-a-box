@@ -36,6 +36,8 @@ import { getPlayer } from "@/lib/player";
 import { getGithubLink } from "@/lib/github-link";
 import { errorLabel } from "@/lib/error-label";
 import LinkGithubButton from "@/components/link-github-button";
+import AddPasswordForm from "@/components/add-password-form";
+import { hasPassword } from "@/lib/username-store";
 import { firstParam, linkNotice } from "@/app/(site)/profile/link-notice";
 import { listStories,
   getClassicTotals,
@@ -106,6 +108,7 @@ export default async function ProfilePage({
 } = {}) {
   const player = await getPlayer(await headers());
   if (!player) redirect("/");
+  if (!player.username) redirect("/welcome?next=/profile");
   const playerId = player.id;
   const avatar = player.image ?? (player.githubLogin ? `https://avatars.githubusercontent.com/${player.githubLogin}` : null);
 
@@ -123,6 +126,14 @@ export default async function ProfilePage({
     } catch (err) {
       console.error(`profile: github link read failed: ${errorLabel(err)}`);
     }
+  }
+  // A failed read hides the card: offering to add a password the account may
+  // already have would only end in a refusal.
+  let canAddPassword = false;
+  try {
+    canAddPassword = !(await hasPassword(playerId));
+  } catch (err) {
+    console.error(`profile: password read failed: ${errorLabel(err)}`);
   }
   const linkMessage =
     githubLink === undefined ? null : linkNotice(firstParam(params?.error), firstParam(params?.linked), githubLink !== null);
@@ -410,6 +421,18 @@ export default async function ProfilePage({
           </p>
           <LinkGithubButton />
         </div>
+      )}
+
+      {canAddPassword && (
+        <section aria-labelledby="add-password" className="ds-card flex flex-col gap-3 rounded-lg border border-white/[0.06] bg-[#16162a] p-5">
+          <h2 id="add-password" className="font-mono text-sm text-white">
+            Add a password
+          </h2>
+          <p className="text-sm text-zinc-400">
+            Sign in with your username and a password as well as GitHub. You can&apos;t change it here afterwards.
+          </p>
+          <AddPasswordForm />
+        </section>
       )}
 
       <div className="ds-card flex flex-col gap-4 rounded-lg border border-white/[0.06] bg-[#16162a] p-5 sm:flex-row sm:items-center">

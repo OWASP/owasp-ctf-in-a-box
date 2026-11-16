@@ -37,6 +37,6 @@ export async function GET(request: Request) {
   // team card; a failed admin check counts as not an admin, which only means
   // an organizer sees the team card once — annoying, not wrong.
   const [isAdmin, teamed] = await Promise.all([isAdminPlayer(player.id).catch(() => false), hasTeam(player.id)]);
-  const target = resolvePostSigninTarget({ next, isAdmin, teamless: !teamed });
+  const target = resolvePostSigninTarget({ next, isAdmin, teamless: !teamed, needsUsername: !player.username });
   return redirect(target);
 }

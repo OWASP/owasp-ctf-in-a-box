@@ -10,6 +10,7 @@ import {
   postSigninCallbackURL,
   resolvePostSigninTarget,
   sanitizeNext,
+  signInHref,
 } from "@/lib/post-signin";
 
 describe("postSigninCallbackURL", () => {
@@ -63,22 +64,53 @@ describe("oauthErrorCallbackURL", () => {
 
 describe("resolvePostSigninTarget", () => {
   it("sends a teamless contestant to team setup, not their destination", () => {
-    expect(resolvePostSigninTarget({ next: "/quiz", isAdmin: false, teamless: true })).toBe(
+    expect(resolvePostSigninTarget({ next: "/quiz", isAdmin: false, teamless: true, needsUsername: false })).toBe(
       TEAM_SETUP_PATH,
     );
   });
 
   it("lets a teamed contestant through to their destination", () => {
-    expect(resolvePostSigninTarget({ next: "/quiz", isAdmin: false, teamless: false })).toBe("/quiz");
+    expect(resolvePostSigninTarget({ next: "/quiz", isAdmin: false, teamless: false, needsUsername: false })).toBe("/quiz");
   });
 
   it("lets an admin through even when teamless — checking content is not playing", () => {
-    expect(resolvePostSigninTarget({ next: "/admin", isAdmin: true, teamless: true })).toBe("/admin");
+    expect(resolvePostSigninTarget({ next: "/admin", isAdmin: true, teamless: true, needsUsername: false })).toBe("/admin");
   });
 
   it("passes a /join/<code> invite through even when teamless — the invite IS the team step", () => {
-    expect(resolvePostSigninTarget({ next: "/join/ab12cd", isAdmin: false, teamless: true })).toBe(
+    expect(resolvePostSigninTarget({ next: "/join/ab12cd", isAdmin: false, teamless: true, needsUsername: false })).toBe(
       "/join/ab12cd",
     );
+  });
+});
+
+describe("resolvePostSigninTarget with no username yet", () => {
+  const base = { isAdmin: false, teamless: false, needsUsername: true };
+
+  it("goes to /welcome first, carrying the destination it would otherwise return", () => {
+    expect(resolvePostSigninTarget({ ...base, next: "/quiz" })).toBe("/welcome?next=%2Fquiz");
+    expect(resolvePostSigninTarget({ ...base, next: "/quiz", teamless: true })).toBe(
+      "/welcome?next=%2Fprofile%23team",
+    );
+  });
+
+  it("outranks the /join/ and admin exemptions", () => {
+    expect(resolvePostSigninTarget({ ...base, next: "/join/abc", teamless: true })).toBe("/welcome?next=%2Fjoin%2Fabc");
+    expect(resolvePostSigninTarget({ ...base, next: "/admin", isAdmin: true })).toBe("/welcome?next=%2Fadmin");
+  });
+
+  it("changes nothing once a username is set", () => {
+    expect(resolvePostSigninTarget({ ...base, needsUsername: false, next: "/quiz" })).toBe("/quiz");
+  });
+});
+
+describe("signInHref", () => {
+  it("sends the destination to the sign-in page, encoded", () => {
+    expect(signInHref("/flags")).toBe("/sign-in?next=%2Fflags");
+    expect(signInHref("/profile#team")).toBe("/sign-in?next=%2Fprofile%23team");
+  });
+
+  it("sanitizes a protocol-relative destination", () => {
+    expect(signInHref("//evil")).toBe("/sign-in?next=%2Fprofile");
   });
 });

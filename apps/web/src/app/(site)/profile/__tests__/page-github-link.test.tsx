@@ -2,8 +2,10 @@
 // and a Redis failure that must not 500 the page. Static render only.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 
-const { getSession, getUser, getLeaderboard, moduleLive, getGithubLink } = vi.hoisted(() => ({
+const { getSession, getUser, getLeaderboard, moduleLive, getGithubLink, hasPassword } = vi.hoisted(() => ({
+  hasPassword: vi.fn(),
   getSession: vi.fn(),
   getUser: vi.fn(),
   getLeaderboard: vi.fn(),
@@ -23,6 +25,7 @@ vi.mock("next/navigation", async (importOriginal) => ({
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/auth-client", () => ({ authClient: { linkSocial: vi.fn() } }));
 vi.mock("@/lib/github-link", () => ({ getGithubLink }));
+vi.mock("@/lib/username-store", () => ({ hasPassword }));
 vi.mock("@/lib/leaderboard/source", () => ({ getLeaderboardSource: async () => ({ getUser, getLeaderboard }) }));
 vi.mock("@/lib/team-store", () => ({
   getViewerTeam: async () => null,
@@ -64,9 +67,10 @@ const NOT_FINISHED = "Linking GitHub didn&#x27;t finish. Press Link GitHub accou
 beforeEach(() => {
   vi.clearAllMocks();
   moduleLive.mockImplementation((id: string) => id === "secure-development");
-  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
   getUser.mockResolvedValue(profile);
   getGithubLink.mockResolvedValue(null);
+  hasPassword.mockResolvedValue(true);
 });
 
 describe("profile GitHub link block", () => {
@@ -153,5 +157,32 @@ describe("profile GitHub link block", () => {
   it("takes the first value of a repeated error parameter", async () => {
     const html = await render({ error: ["unable_to_link_account", "x"] as unknown as string });
     expect(html).toContain("Couldn&#x27;t link that GitHub account.");
+  });
+});
+
+describe("profile Add a password card", () => {
+  it("shows for an account with no password, and reads by the player id", async () => {
+    hasPassword.mockResolvedValue(false);
+    const html = await render();
+    expect(hasPassword).toHaveBeenCalledWith(ADA_ID);
+    expect(html).toContain("Add a password");
+    expect(html).toContain("Confirm password");
+    expect(html).toContain("Passwords are 12 to 128 characters.");
+  });
+
+  it("is hidden once the account has a password", async () => {
+    hasPassword.mockResolvedValue(true);
+    expect(await render()).not.toContain("Add a password");
+  });
+
+  it("is hidden, and logged, when the read fails, without breaking the page", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    hasPassword.mockRejectedValue(decoratedError("redis down"));
+    const html = await render();
+    expect(html).not.toContain("Add a password");
+    expect(html).toContain("Agent dossier");
+    expect(err.mock.calls.flat().join(" ")).toContain("profile: password read failed");
+    expectLabelOnly(err, { label: "redis down" });
+    err.mockRestore();
   });
 });

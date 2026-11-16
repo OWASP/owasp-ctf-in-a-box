@@ -56,6 +56,7 @@ vi.mock("next/navigation", async (importOriginal) => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
+vi.mock("@/lib/username-store", () => ({ hasPassword: async () => true }));
 vi.mock("@/lib/leaderboard/source", () => ({
   getLeaderboardSource: async () => ({ getUser, getLeaderboard: vi.fn() }),
 }));
@@ -117,7 +118,7 @@ const STORY2 = { id: "s2", title: "Second Operation", intro: "", steps: ["beta-1
 /** The page's own reads, for a viewer whose team has solved `solvedIds`. */
 function givenTeam(solvedIds: readonly string[], classicPoints: number, classicSolved: number) {
   moduleLive.mockImplementation((id: string) => id === "classic");
-  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
   getUser.mockResolvedValue({ points: 0, maxPoints: 0, patched: 0, failed: 0, total: 0 });
   getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
   getResolvedModules.mockResolvedValue([
@@ -233,7 +234,7 @@ describe("the profile's story-lock disclaimer (#570)", () => {
   // stay off the page either way (#463).
   it("folds a teammate's deleted solve into the ceiling at its solve-time points", async () => {
     moduleLive.mockImplementation((id: string) => id === "classic");
-    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue({ points: 0, maxPoints: 0, patched: 0, failed: 0, total: 0 });
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
     getResolvedModules.mockResolvedValue([
@@ -292,7 +293,7 @@ describe("the profile's story-lock disclaimer (#570)", () => {
   // issued at all.
   it("advances a solo contestant's own story, preserving their banked points", async () => {
     moduleLive.mockImplementation((id: string) => id === "classic");
-    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue({ points: 0, maxPoints: 0, patched: 0, failed: 0, total: 0 });
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
     getResolvedModules.mockResolvedValue([
@@ -362,7 +363,7 @@ describe("the profile's story-lock disclaimer (#570)", () => {
   // the ceiling exactly as the fold reported them.
   it("hides a locked step even when a teammate's banked solve holds its record", async () => {
     moduleLive.mockImplementation((id: string) => id === "classic");
-    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue({ points: 0, maxPoints: 0, patched: 0, failed: 0, total: 0 });
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
     getResolvedModules.mockResolvedValue([

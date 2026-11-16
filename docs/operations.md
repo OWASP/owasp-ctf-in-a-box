@@ -63,13 +63,50 @@ event before: push ingest was removed in v0.6
 them and they are just credentials every contestant-triggered run can read.
 Check the org's **Settings → Secrets and variables → Actions** page — `ctf-setup.sh doctor` no longer does (#503).
 
+## Account sign-up and sign-in limits
+
+Players create accounts and sign in at `/sign-in` ([Hosting](hosting.md#player-accounts)).
+The app throttles those endpoints itself, in Redis, and **fails closed**: if
+Redis cannot be reached the request is refused rather than allowed. A refusal
+is HTTP 429 with a `Retry-After` header, and the form says "Too many
+attempts. Try again in N seconds."
+
+| Budget | Limit | Window |
+|---|---|---|
+| Account creation, per client address | 300 | 10 minutes |
+| Sign-in (password, and starting a GitHub sign-in or link), per client address | 600 | 10 minutes |
+| Password attempts, per client address and username | 10 | 15 minutes |
+
+The address is the one the box's own proxy vouches for, never a value the
+client chooses (`apps/web/src/lib/client-ip.ts`):
+
+| Deploy path | Address |
+|---|---|
+| Compose (Caddy) | the rightmost `X-Forwarded-For` entry, which Caddy appends |
+| AWS (ALB) | the rightmost `X-Forwarded-For` entry, which the ALB appends |
+| Fly | `Fly-Client-IP`, set by Fly's proxy; the rendered compose file sets `TRUSTED_CLIENT_IP_HEADER=fly-client-ip` on the app |
+
+`TRUSTED_CLIENT_IP_HEADER` is not set by hand. On compose or AWS it would
+let a client choose its own address, and an invalid header name stops the
+app at startup. Behind Cloudflare every path sees Cloudflare's edge, so every
+player routed through the same edge shares the two per-address budgets. They
+are sized for a room of a few hundred people to sign up together. The
+per-username budget keys on address and username together, so one player
+mistyping a password does not lock anyone else out. The limits live in
+`RATE_LIMITS` in `apps/web/src/lib/rate-limit-store.ts`; there is no setting
+for them in `/admin`.
+
+Password sign-ins and sign-ups appear in the admin activity log. A player who
+loses a password has no recovery yet: they can sign in with GitHub if the
+account has one, or make a new account.
+
 ## Teams
 
 Scoring is per team, and **a team is required** — nothing a contestant solves
 counts until they are on one. Contestants self-register in the app: create a
 team to become its captain and get a join code, join an existing team by code,
-or hit **Play solo** for a one-click team of one named after their GitHub
-login. Everyone ends up on a team — a solo player is simply a team of one.
+or hit **Play solo** for a one-click team of one named after their
+username. Everyone ends up on a team — a solo player is simply a team of one.
 
 The requirement is enforced in three places, earliest first. **At sign-in**:
 every GitHub sign-in lands on a post-signin step that sends a contestant with

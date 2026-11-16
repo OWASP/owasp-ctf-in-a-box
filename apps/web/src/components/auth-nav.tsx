@@ -1,6 +1,6 @@
 "use client";
 
-// GitHub sign-in control rendered inside <SiteHeader>. Reads the session
+// Sign-in control rendered inside <SiteHeader>. Reads the session
 // reactively via authClient.useSession() — there's a brief signed-out flash
 // on first paint (deliberate: fetching the session in the root layout would
 // force every static marketing page to become dynamic).
@@ -11,7 +11,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { authClient } from "@/lib/auth-client";
-import { oauthErrorCallbackURL, postSigninCallbackURL } from "@/lib/post-signin";
+import { signInHref } from "@/lib/post-signin";
 import MenuChevron from "@/components/menu-chevron";
 
 // Admin menu VISIBILITY only. The real gate is server-side in
@@ -143,30 +143,20 @@ export default function AuthNav() {
   }
 
   if (!session) {
+    // To the sign-in page, which routes through the post-signin step: a
+    // teamless contestant meets the team card first; a teamed one lands on
+    // /profile.
     return (
-      <button
-        type="button"
-        onClick={() =>
-          // Through the post-signin step (issue #217): a teamless contestant
-          // meets the team card first; a teamed one lands on /profile as before.
-          // errorCallbackURL points a failed callback at the landing page's
-          // own error banner rather than better-auth's default `/error`,
-          // which this app has no page for (issue #380), carrying /profile
-          // through as `?next=` so the retry offers the same destination.
-          authClient.signIn.social({
-            provider: "github",
-            callbackURL: postSigninCallbackURL("/profile"),
-            errorCallbackURL: oauthErrorCallbackURL("/profile"),
-          })
-        }
+      <Link
+        href={signInHref("/profile")}
         className="flex-none rounded-md border border-white/10 bg-white/[0.03] px-3 py-1.5 font-mono text-xs text-zinc-300 transition-colors hover:border-[#2563eb]/50 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
       >
-        <span className="text-[#22c55e]">$</span> sign-in --github
-      </button>
+        <span className="text-[#22c55e]">$</span> sign-in
+      </Link>
     );
   }
 
-  // The kit's display rule (username, then GitHub login, then profile name),
+  // The kit's display rule (displayUsername, username, GitHub login, profile name),
   // the same one every board row uses.
   const displayName = displayNameOf(session.user);
   const showAdmin = showAdminLink(userId, granted);

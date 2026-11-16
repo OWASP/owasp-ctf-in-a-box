@@ -52,9 +52,13 @@ describe("getPlayer", () => {
     getSession.mockResolvedValue({ user: { id: "AbC123", login: "x" } });
     expect(await getPlayer(new Headers())).toBeNull();
   });
+  it("maps the normalized username and shows the typed one", async () => {
+    getSession.mockResolvedValue({ user: { id: ID, username: "alice", displayUsername: "Alice" } });
+    expect(await getPlayer(new Headers())).toEqual({ id: ID, name: "Alice", image: null, githubLogin: null, username: "alice" });
+  });
   it("maps the session user", async () => {
     getSession.mockResolvedValue({ user: { id: ID, login: "octo", name: "Octo", image: "http://i" } });
-    expect(await getPlayer(new Headers())).toEqual({ id: ID, name: "octo", image: "http://i", githubLogin: "octo" });
+    expect(await getPlayer(new Headers())).toEqual({ id: ID, name: "octo", image: "http://i", githubLogin: "octo", username: null });
   });
 });
 
@@ -70,7 +74,7 @@ describe("getPlayerProfiles", () => {
     const map = await getPlayerProfiles(["a", "b"]);
     expect(upstash.upstashPipeline).toHaveBeenCalledTimes(1);
     expect(upstash.upstashPipeline).toHaveBeenCalledWith([["HMGET", "ctf:auth:user", "a", "b"]]);
-    expect(map.get("a")).toEqual({ id: "a", name: "octo", image: null, githubLogin: "octo" });
+    expect(map.get("a")).toEqual({ id: "a", name: "octo", image: null, githubLogin: "octo", username: null });
     expect(map.has("b")).toBe(false);
   });
   it("throws when the command carries an error", async () => {
@@ -91,8 +95,15 @@ describe("findPlayers", () => {
     ]);
     const found = await findPlayers("oct");
     expect(found.map((p) => p.id)).toEqual([A, B]);
-    expect(found[0]).toEqual({ id: A, name: "OctoCat", image: null, githubLogin: "OctoCat" });
+    expect(found[0]).toEqual({ id: A, name: "OctoCat", image: null, githubLogin: "OctoCat", username: null });
     expect(upstash.upstashPipeline).toHaveBeenCalledWith([["HSCAN", "ctf:auth:user", "0", "COUNT", 200]]);
+  });
+
+  it("matches the normalized username", async () => {
+    upstash.upstashPipeline.mockResolvedValueOnce([
+      { result: ["0", [...row(A, { username: "zed", displayUsername: "Quux" }), ...row(B, { login: "mona" })]] },
+    ]);
+    expect((await findPlayers("ze")).map((p) => p.id)).toEqual([A]);
   });
 
   it("caps at limit and stops scanning once it has enough", async () => {

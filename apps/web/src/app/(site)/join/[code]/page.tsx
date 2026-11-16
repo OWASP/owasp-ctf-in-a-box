@@ -10,6 +10,7 @@
 // nothing to lose.
 
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { getPlayer } from "@/lib/player";
 import JoinTeamInvite from "@/components/join-team-invite";
 import PageHeader from "@/components/page-header";
@@ -19,6 +20,8 @@ import { getAdminSettings, effectiveRegistrationOpen } from "@/lib/admin-store";
 export default async function JoinPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = await params;
   const player = await getPlayer(await headers());
+  // A first OAuth sign-in has no username yet; pick one, then come back here.
+  if (player && !player.username) redirect(`/welcome?next=${encodeURIComponent(`/join/${code}`)}`);
   const playerId = player?.id;
 
   const [team, settings] = await Promise.all([

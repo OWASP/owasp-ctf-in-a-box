@@ -52,6 +52,7 @@ vi.mock("@/lib/admin-store", () => ({
   effectiveRegistrationOpen: () => true,
 }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
+vi.mock("@/lib/username-store", () => ({ hasPassword: async () => true }));
 vi.mock("@/lib/leaderboard/source", () => ({ getLeaderboardSource: async () => ({ getUser }) }));
 vi.mock("@/lib/team-store", () => ({
   getViewerTeam,
@@ -80,7 +81,7 @@ const ADA_ID = "2d1a6b5e-3f4c-4e7d-a081-9cadbe1f2041";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
   getUser.mockResolvedValue({
     login: "ada",
     team: null,

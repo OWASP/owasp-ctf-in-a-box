@@ -8,6 +8,28 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Added: username and password accounts (#737).** Players sign up on the
+  box at `/sign-in` with a username (3 to 30 of letters, digits, `_` and
+  `.`, unique ignoring case) and a password (12 to 128, no composition
+  rules), no GitHub account needed. Account creation is always open; the
+  registration window still gates teams. A player who signs in with GitHub
+  and has no username picks one at `/welcome` first, and team create, join
+  and solo answer 409 `username_required` until they do. OAuth-only players
+  can add a password from `/profile`. Password sign-ins and sign-ups are in
+  the admin activity log. There is no password change or recovery yet.
+  **Existing GitHub-only accounts are asked to pick a username on their next
+  sign-in.**
+- **Security: sign-up and sign-in are rate-limited per address in Redis
+  (#737).** better-auth's in-memory limiter is off. The kit's limiter keys on
+  the address the box's proxy vouches for (the rightmost `X-Forwarded-For`
+  entry behind Caddy or the ALB, `Fly-Client-IP` on Fly through the new
+  `TRUSTED_CLIENT_IP_HEADER`, which the Fly render sets) and fails closed with a 429 and
+  `Retry-After`: 300 sign-ups and 600 sign-ins (password and GitHub start or
+  link) per address per 10 minutes, and 10 password attempts per address and
+  username per 15 minutes. Behind Cloudflare the address is the edge's. A
+  sign-up body is limited to `username` and `password`; the server sets the
+  name and a placeholder email, and `/sign-in/email`, `/update-user`,
+  `/change-password` and `/is-username-available` stay closed.
 - **Security: client-chosen OAuth scopes are refused (#768).** better-auth
   forwards a `scopes` or `additionalParams` key on `/sign-in/social` and
   `/link-social` into the GitHub authorization URL. The kit uses GitHub for

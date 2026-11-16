@@ -20,7 +20,12 @@ vi.mock("server-only", () => ({}));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 // The invite button is a Client Component using useRouter(); a static render
 // has no app-router context to mount.
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => {}, refresh: () => {} }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: () => {}, refresh: () => {} }),
+  redirect: (to: string) => {
+    throw Object.assign(new Error("NEXT_REDIRECT"), { to });
+  },
+}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/team-store", () => ({
   lookupJoinCode,
@@ -48,8 +53,21 @@ async function render(code: string) {
 const PLAYER_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
 
 function signedIn(login: string | null) {
-  getSession.mockResolvedValue(login ? { user: { id: PLAYER_ID, login } } : null);
+  getSession.mockResolvedValue(login ? { user: { id: PLAYER_ID, login, username: "player_one" } } : null);
 }
+
+describe("/join/<code> for a signed-in player with no username", () => {
+  it("redirects to /welcome carrying the invite path, before anything renders", async () => {
+    getSession.mockResolvedValue({ user: { id: PLAYER_ID, login: "octocat", username: null } });
+    lookupJoinCode.mockResolvedValue({ slug: "red-team", name: "Red Team", memberCount: 2 });
+    getViewerTeam.mockResolvedValue(null);
+    getAdminSettings.mockResolvedValue(OPEN_SETTINGS);
+    await expect(render("AB12CD")).rejects.toMatchObject({
+      to: `/welcome?next=${encodeURIComponent("/join/AB12CD")}`,
+    });
+    expect(lookupJoinCode).not.toHaveBeenCalled();
+  });
+});
 
 describe("/join/<code>", () => {
   it("NEVER joins on a GET", async () => {
@@ -98,7 +116,7 @@ describe("/join/<code>", () => {
     lookupJoinCode.mockResolvedValue({ slug: "red-team", name: "Red Team", memberCount: 1 });
     getAdminSettings.mockResolvedValue(OPEN_SETTINGS);
     const html = await render("ABC123");
-    expect(html).toContain("sign-in --github");
+    expect(html).toContain("/sign-in?next=%2Fjoin%2FABC123");
     // Still names the team: someone deciding whether to sign in should know
     // what for.
     expect(html).toContain("Red Team");

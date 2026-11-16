@@ -49,6 +49,7 @@ vi.mock("next/navigation", async (importOriginal) => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
+vi.mock("@/lib/username-store", () => ({ hasPassword: async () => true }));
 vi.mock("@/lib/leaderboard/source", () => ({ getLeaderboardSource: async () => ({ getUser, getLeaderboard }) }));
 vi.mock("@/lib/team-store", () => ({
   getViewerTeam,
@@ -109,7 +110,7 @@ const baseProfile = {
 describe("profile page points vs. the leaderboard row", () => {
   it("agrees with withHintPenalties + withModuleContributions for the same login (quiz enabled)", async () => {
     moduleLive.mockImplementation((id: string) => id === "quiz" || id === "secure-development");
-    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue(baseProfile);
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 10, count: 1 });
     getQuizTotals.mockResolvedValue(new Map([[ADA_ID, { points: 15, answered: 2, lastAt: null }]]));
@@ -162,7 +163,7 @@ describe("profile page points vs. the leaderboard row", () => {
   // formula, so a bug in either implementation shows up here.
   it("floors the TOTAL after folding in quiz points, not before (the #210 boundary)", async () => {
     moduleLive.mockImplementation((id: string) => id === "quiz" || id === "secure-development");
-    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue({ ...baseProfile, points: 5 });
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 10, count: 1 });
     getQuizTotals.mockResolvedValue(new Map([[ADA_ID, { points: 15, answered: 2, lastAt: null }]]));
@@ -203,7 +204,7 @@ describe("profile page points vs. the leaderboard row", () => {
 
   it("shows the raw (hint-only-adjusted) total when the quiz module is disabled — never reads quiz data", async () => {
     moduleLive.mockReturnValue(false);
-    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue(baseProfile);
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 10, count: 1 });
 
@@ -219,7 +220,7 @@ describe("profile team panel member rows", () => {
     // The roster and the board row both carry the player id; the name comes
     // from the profile, read once for the roster.
     moduleLive.mockReturnValue(false);
-    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue(baseProfile);
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
     getHintPenalties.mockResolvedValue(new Map());
@@ -263,12 +264,20 @@ describe("profile team panel member rows", () => {
   });
 });
 
+describe("profile with no username yet", () => {
+  it("redirects to /welcome, returning to /profile, before reading anything", async () => {
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+    await expect(ProfilePage()).rejects.toMatchObject({ digest: expect.stringContaining("/welcome?next=/profile") });
+    expect(getUser).not.toHaveBeenCalled();
+  });
+});
+
 describe("profile identity", () => {
   // Every per-player read is keyed by the kit player id; the header shows the
   // player's display name, never the id.
   it("reads the viewer's records by player id and titles the page with their name", async () => {
     moduleLive.mockReturnValue(false);
-    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue(baseProfile);
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
     getHintPenalties.mockResolvedValue(new Map());
@@ -285,7 +294,7 @@ describe("profile identity", () => {
 describe("profile header progress fill", () => {
   it("gives a tiny nonzero score a visible minimum fill — 2 of 3,943 pts is under 0.2%, a fraction of a device pixel unfloored", async () => {
     moduleLive.mockImplementation((id: string) => id === "secure-development");
-    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue({ ...baseProfile, points: 2, maxPoints: 3943 });
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
     getHintPenalties.mockResolvedValue(new Map());
@@ -298,7 +307,7 @@ describe("profile header progress fill", () => {
 
   it("gives an all-zero score no minimum fill", async () => {
     moduleLive.mockReturnValue(false);
-    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue({ ...baseProfile, points: 0, patched: 0, total: 0, maxPoints: 0 });
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
 
@@ -325,7 +334,7 @@ describe("profile per-module block content", () => {
         blurb: "",
       },
     ]);
-    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue({
       ...baseProfile,
       apps: [{ app: "dvwa", points: 30, maxPoints: 60, patched: 3, total: 4 }],
@@ -352,7 +361,7 @@ describe("profile per-module block content", () => {
       },
       { id: "quiz", nav: { href: "/quiz", label: "Quiz" }, targets: [], title: "Quiz", blurb: "" },
     ]);
-    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue({
       ...baseProfile,
       apps: [{ app: "dvwa", points: 40, maxPoints: 100, patched: 4, total: 6 }],
@@ -380,7 +389,7 @@ describe("profile per-module block content", () => {
 describe("profile header stats", () => {
   it("shows one done/available stat per enabled module and drops the non-patched wall", async () => {
     moduleLive.mockImplementation((id: string) => id === "quiz" || id === "secure-development");
-    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue(baseProfile);
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
     getQuizTotals.mockResolvedValue(new Map([[ADA_ID, { points: 15, answered: 2, lastAt: null }]]));

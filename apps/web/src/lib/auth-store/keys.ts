@@ -11,7 +11,7 @@ export const AUTH_PREFIX = "ctf:auth";
 // to enforce uniqueness, never to answer a where clause. The value is
 // unambiguous because no provider id contains ":".
 export const INDEXED_FIELDS: Readonly<Record<string, readonly string[]>> = {
-  user: ["email"],
+  user: ["email", "username"],
   session: ["token", "userId"],
   account: ["userId", "accountId", "providerId+accountId"],
   verification: ["identifier"],
@@ -23,7 +23,7 @@ export const INDEXED_FIELDS: Readonly<Record<string, readonly string[]>> = {
 // better-auth's findAccountOwnerByKey refuses every later sign-in once two
 // accounts share an accountId.
 export const UNIQUE_FIELDS: Readonly<Record<string, readonly string[]>> = {
-  user: ["email"],
+  user: ["email", "username"],
   account: ["providerId+accountId"],
 };
 

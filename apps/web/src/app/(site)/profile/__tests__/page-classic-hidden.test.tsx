@@ -42,6 +42,7 @@ vi.mock("next/navigation", async (importOriginal) => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
+vi.mock("@/lib/username-store", () => ({ hasPassword: async () => true }));
 vi.mock("@/lib/leaderboard/source", () => ({ getLeaderboardSource: async () => ({ getUser, getLeaderboard }) }));
 vi.mock("@/lib/team-store", () => ({
   getViewerTeam,
@@ -93,7 +94,7 @@ beforeEach(() => {
   getViewerTeam.mockResolvedValue(null);
   listQuestions.mockResolvedValue([]);
   getResolvedModules.mockResolvedValue([{ id: "classic", nav: { href: "/flags", label: "Jeopardy" }, targets: [], title: "Jeopardy", blurb: "" }]);
-  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
   getUser.mockResolvedValue(null);
   getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
   classic.challenges = [

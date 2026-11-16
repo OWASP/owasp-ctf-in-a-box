@@ -5,11 +5,17 @@ import { upstashEval } from "@/lib/upstash";
 /**
  * Per-login fixed-window rate limiter for authenticated routes.
  *
- * KEYED ON THE LOGIN, not the IP, and that is the point. An IP key is
- * spoofable here, because Caddy appends to `x-forwarded-for` rather than
- * replacing it. These routes run *after*
- * `auth.api.getSession()`, so there is a session-backed login to key on that a
- * caller cannot forge without forging the session itself.
+ * The per-player buckets are KEYED ON THE LOGIN, not the IP, and that is the
+ * point. A leftmost `x-forwarded-for` entry is spoofable here, because the
+ * proxy appends to the header rather than replacing it. These routes run
+ * *after* `auth.api.getSession()`, so there is a session-backed login to key
+ * on that a caller cannot forge without forging the session itself.
+ *
+ * The auth buckets (`signUpIp`, `signInIp`, `signInUser`) run before any
+ * session exists and key on the client address instead, the one the single
+ * trusted proxy vouches for (`client-ip.ts` says which header, per deploy
+ * path). Those counters are not a player's state, so `rateLimitKeysFor` does
+ * not list them; they hold that address until their window expires.
  *
  * Fixed window, not a sliding one: the thing being bounded is a burst (scripted
  * join-code guessing, a hammering client), and a fixed window costs one Lua
@@ -109,10 +115,37 @@ export const RATE_LIMITS = {
    *  global bucket: anyone could spend it and lock the organizer out of the
    *  recovery claim. */
   adminClaim: { bucket: "admin-claim", limit: 5, windowSeconds: 900 },
+  /** Sign-up attempts per client address (`/sign-up/email`), charged fail
+   *  closed. Sized so a venue sharing one NAT, or a CDN edge address, still
+   *  fits a whole room signing up. */
+  signUpIp: { bucket: "signup-ip", limit: 300, windowSeconds: 10 * 60 },
+  /** Sign-in attempts per client address (`/sign-in/username`), fail closed.
+   *  Coarse on purpose: it bounds a script spraying many usernames from one
+   *  source without hurting a shared NAT. */
+  signInIp: { bucket: "signin-ip", limit: 600, windowSeconds: 10 * 60 },
+  /** Password guesses per source AND username, keyed `<ip>|<username>`, fail
+   *  closed. Guessing is bounded per source, and a stranger elsewhere cannot
+   *  spend a player's budget and lock them out. */
+  signInUser: { bucket: "signin-user", limit: 10, windowSeconds: 15 * 60 },
+  /** Username picks, keyed on the user id, charged FAIL OPEN like teamJoin:
+   *  it bounds request volume, and the write refuses on its own (a username
+   *  is set once, and the unique index refuses one already held). */
+  usernamePick: { bucket: "username-pick", limit: 20, windowSeconds: 10 * 60 },
+  /** Password adds, keyed on the user id, charged FAIL OPEN: it bounds
+   *  request volume, and better-auth's setPassword refuses on its own when a
+   *  password already exists and enforces the length bounds. */
+  setPassword: { bucket: "set-password", limit: 10, windowSeconds: 10 * 60 },
 } as const;
 
-/** Every rate-limit counter `player` can hold, one per budget above. The
- *  admin delete clears them with the rest of the player's state. */
+/** Every rate-limit counter `player` can hold, keyed on the player's login.
+ *  The admin delete clears them with the rest of the player's state. The
+ *  address-keyed auth buckets are not a player's and are not listed. */
 export function rateLimitKeysFor(player: string): string[] {
-  return Object.values(RATE_LIMITS).map((r) => rateKey(r.bucket, player));
+  return [
+    RATE_LIMITS.teamJoin,
+    RATE_LIMITS.hintReveal,
+    RATE_LIMITS.adminClaim,
+    RATE_LIMITS.usernamePick,
+    RATE_LIMITS.setPassword,
+  ].map((r) => rateKey(r.bucket, player));
 }

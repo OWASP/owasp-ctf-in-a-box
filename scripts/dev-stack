@@ -81,8 +81,37 @@ resolve_github_org() {
   printf '%s' "$v"
 }
 
+# Compose lets the shell environment win over --env-file, an exported EMPTY
+# value included (`${VAR+x}`), so an exported ADMIN_CLAIM_CODE_HASH is the
+# hash the app gets — and a code announced for the file's hash could not
+# claim. Refuse a mismatch before any code is generated or the stack starts.
+# With no env file yet, any exported value is a mismatch: the file is about
+# to get a fresh hash nothing exported can equal. The value is never printed.
+refuse_claim_hash_override() {
+  [ "${ADMIN_CLAIM_CODE_HASH+x}" = x ] || return 0
+  local file_hash=""
+  if [ -n "$ENV_FILE" ]; then
+    file_hash="$(file_value ADMIN_CLAIM_CODE_HASH "$ENV_FILE")" || exit 1
+    [ "$ADMIN_CLAIM_CODE_HASH" != "$file_hash" ] || return 0
+  fi
+  echo "FAIL: ADMIN_CLAIM_CODE_HASH is exported in this shell and differs from ${ENV_FILE:-the env file this run would write}." >&2
+  echo "      docker compose would hand the app the exported value, so the admin claim" >&2
+  echo "      code for the file would not work. Run: unset ADMIN_CLAIM_CODE_HASH" >&2
+  exit 1
+}
+
+# The claim hash the containers get: exported (even empty) wins, then the file.
+effective_claim_hash() {
+  if [ "${ADMIN_CLAIM_CODE_HASH+x}" = x ]; then
+    printf '%s' "$ADMIN_CLAIM_CODE_HASH"
+  else
+    env_value ADMIN_CLAIM_CODE_HASH
+  fi
+}
+
 ensure_env() {
   resolve_env_file
+  refuse_claim_hash_override
   if [ -n "$ENV_FILE" ]; then
     echo "== using existing $ENV_FILE"
     # An env file written before Redis grew a password is the common case on
@@ -441,8 +470,9 @@ cmd_up() {
   # What the CONTAINERS got, in their precedence order — an exported value
   # (even an empty one) beats the env file for compose. The claim hash is
   # only ever reported as set or not, never printed.
-  local claim_note org org_note profiles
-  if claim_code_is_hash "$(env_value ADMIN_CLAIM_CODE_HASH)"; then
+  local claim_note claim_hash org org_note profiles
+  claim_hash="$(effective_claim_hash)" || exit 1
+  if claim_code_is_hash "$claim_hash"; then
     claim_note="set — claim the admin seat at $event_url/admin/claim"
   else
     claim_note="NOT SET — run ./setup/ctf-setup.sh admin-code --out $ENV_FILE, then ./scripts/dev-stack down && ./scripts/dev-stack up"

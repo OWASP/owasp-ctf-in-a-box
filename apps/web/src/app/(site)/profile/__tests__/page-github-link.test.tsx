@@ -64,7 +64,7 @@ const NOT_FINISHED = "Linking GitHub didn&#x27;t finish. Press Link GitHub accou
 beforeEach(() => {
   vi.clearAllMocks();
   moduleLive.mockImplementation((id: string) => id === "secure-development");
-  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
   getUser.mockResolvedValue(profile);
   getGithubLink.mockResolvedValue(null);
 });

@@ -6,6 +6,7 @@ import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
 export async function POST(request: Request) {
   const player = await getPlayer(request.headers);
   if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!player.username) return NextResponse.json({ error: "username_required" }, { status: 409 });
   const playerId = player.id;
 
   const body = await request.json().catch(() => ({}));

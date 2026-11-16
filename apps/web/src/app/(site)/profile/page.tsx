@@ -106,6 +106,7 @@ export default async function ProfilePage({
 } = {}) {
   const player = await getPlayer(await headers());
   if (!player) redirect("/");
+  if (!player.username) redirect("/welcome?next=/profile");
   const playerId = player.id;
   const avatar = player.image ?? (player.githubLogin ? `https://avatars.githubusercontent.com/${player.githubLogin}` : null);
 

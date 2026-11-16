@@ -18,6 +18,9 @@ export const TEAM_SETUP_PATH = "/profile#team";
 
 export const POST_SIGNIN_PATH = "/api/post-signin";
 
+/** Where a player with no username is sent to pick one. */
+export const WELCOME_PATH = "/welcome";
+
 /** Wraps a sign-in destination so the OAuth round-trip lands on the
  *  post-signin decision first, carrying the original intent as `next`. */
 export function postSigninCallbackURL(next: string): string {
@@ -68,13 +71,26 @@ export function signInHref(next: string): string {
  * - admins pass through — an organizer signing in to check their content is
  *   not playing;
  * - everyone with a team passes through.
+ *
+ * A player who still needs a username goes to /welcome before any of that,
+ * carrying the destination they would otherwise have reached.
  */
 export function resolvePostSigninTarget(opts: {
   /** Already sanitized via sanitizeNext. */
   next: string;
   isAdmin: boolean;
   teamless: boolean;
+  /** A first OAuth sign-in has no username yet. */
+  needsUsername: boolean;
 }): string {
+  const target = teamStepTarget(opts);
+  // Checked first, ahead of the invite and admin exemptions: a name is what
+  // the board and the roster show, and nobody gets past without one.
+  if (opts.needsUsername) return `${WELCOME_PATH}?next=${encodeURIComponent(target)}`;
+  return target;
+}
+
+function teamStepTarget(opts: { next: string; isAdmin: boolean; teamless: boolean }): string {
   if (opts.next.startsWith("/join/")) return opts.next;
   if (opts.isAdmin) return opts.next;
   if (opts.teamless) return TEAM_SETUP_PATH;

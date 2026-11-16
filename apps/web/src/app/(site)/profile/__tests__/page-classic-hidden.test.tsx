@@ -93,7 +93,7 @@ beforeEach(() => {
   getViewerTeam.mockResolvedValue(null);
   listQuestions.mockResolvedValue([]);
   getResolvedModules.mockResolvedValue([{ id: "classic", nav: { href: "/flags", label: "Jeopardy" }, targets: [], title: "Jeopardy", blurb: "" }]);
-  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
   getUser.mockResolvedValue(null);
   getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
   classic.challenges = [

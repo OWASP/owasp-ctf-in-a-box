@@ -80,7 +80,7 @@ const ADA_ID = "2d1a6b5e-3f4c-4e7d-a081-9cadbe1f2041";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", image: null } });
+  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
   getUser.mockResolvedValue({
     login: "ada",
     team: null,

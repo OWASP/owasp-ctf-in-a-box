@@ -7,12 +7,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
-  getSession, joinTeam, createSoloTeam, removeMember, renameTeam, transferCaptain, disbandTeam, regenerateCode,
+  getSession, joinTeam, createTeam, createSoloTeam, removeMember, renameTeam, transferCaptain, disbandTeam, regenerateCode,
   consumeRateLimit, leaveTeam,
 } = vi.hoisted(
   () => ({
     getSession: vi.fn(),
     joinTeam: vi.fn(),
+    createTeam: vi.fn(),
     createSoloTeam: vi.fn(),
     removeMember: vi.fn(),
     renameTeam: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/team-store", () => ({
   leaveTeam,
   joinTeam,
+  createTeam,
   createSoloTeam,
   removeMember,
   renameTeam,
@@ -44,6 +46,7 @@ vi.mock("@/lib/rate-limit-store", () => ({
   RATE_LIMITS: { teamJoin: { bucket: "team-join", limit: 10, windowSeconds: 600 } },
 }));
 
+import { POST as createPOST } from "@/app/api/team/route";
 import { POST as joinPOST } from "@/app/api/team/join/route";
 import { POST as removePOST } from "@/app/api/team/remove/route";
 import { POST as renamePOST } from "@/app/api/team/rename/route";
@@ -56,11 +59,12 @@ import { POST as leavePOST } from "@/app/api/team/leave/route";
 const req = (body?: unknown) => new Request("http://x/api/team/x", { method: "POST", body: JSON.stringify(body ?? {}) });
 
 const ALICE = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
-const SESSION = { user: { id: ALICE, login: "alice" } };
+const SESSION = { user: { id: ALICE, login: "alice", username: "alice" } };
 
 beforeEach(() => {
   getSession.mockReset();
   joinTeam.mockReset();
+  createTeam.mockReset();
   createSoloTeam.mockReset();
   removeMember.mockReset();
   renameTeam.mockReset();
@@ -334,5 +338,34 @@ describe("POST /api/team/solo", () => {
     const res = await soloPOST(req());
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "Registration is closed" });
+  });
+});
+
+// A player who has not picked a username (a first OAuth sign-in) has no name
+// to show on the board or the roster, so every route that puts them on a team
+// refuses before any write.
+describe("team routes refuse a player with no username", () => {
+  beforeEach(() => {
+    getSession.mockResolvedValue({ user: { id: ALICE, login: "alice" } });
+  });
+
+  it.each([
+    ["create", () => createPOST(req({ name: "Red" })), () => createTeam],
+    ["join", () => joinPOST(req({ code: "abc123" })), () => joinTeam],
+    ["solo", () => soloPOST(req()), () => createSoloTeam],
+  ])("%s answers 409 username_required and writes nothing", async (_name, call, store) => {
+    const res = await call();
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "username_required" });
+    expect(store()).not.toHaveBeenCalled();
+    expect(consumeRateLimit).not.toHaveBeenCalled();
+  });
+
+  it("still lets a player with a username through", async () => {
+    getSession.mockResolvedValue(SESSION);
+    createTeam.mockResolvedValue({ ok: true, team: { slug: "red" } });
+    const res = await createPOST(req({ name: "Red" }));
+    expect(res.status).toBe(200);
+    expect(createTeam).toHaveBeenCalledWith(ALICE, "Red");
   });
 });

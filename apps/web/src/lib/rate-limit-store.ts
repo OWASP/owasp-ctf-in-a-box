@@ -137,7 +137,11 @@ export const RATE_LIMITS = {
  *  The admin delete clears them with the rest of the player's state. The
  *  address-keyed auth buckets are not a player's and are not listed. */
 export function rateLimitKeysFor(player: string): string[] {
-  return [RATE_LIMITS.teamJoin, RATE_LIMITS.hintReveal, RATE_LIMITS.adminClaim].map((r) =>
-    rateKey(r.bucket, player),
-  );
+  return [
+    RATE_LIMITS.teamJoin,
+    RATE_LIMITS.hintReveal,
+    RATE_LIMITS.adminClaim,
+    RATE_LIMITS.usernamePick,
+    RATE_LIMITS.setPassword,
+  ].map((r) => rateKey(r.bucket, player));
 }

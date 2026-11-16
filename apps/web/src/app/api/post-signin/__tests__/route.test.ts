@@ -39,7 +39,7 @@ beforeEach(() => {
   getSession.mockReset();
   hasTeam.mockReset();
   isAdminPlayer.mockReset();
-  getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
+  getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice", username: "alice" } });
   isAdminPlayer.mockResolvedValue(false);
   hasTeam.mockResolvedValue(true);
 });
@@ -62,6 +62,23 @@ describe("GET /api/post-signin", () => {
     await GET(req("/quiz"));
     expect(hasTeam).toHaveBeenCalledWith(ALICE_ID);
     expect(isAdminPlayer).toHaveBeenCalledWith(ALICE_ID);
+  });
+
+  it("sends a player with no username to /welcome first, carrying where they were headed", async () => {
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
+    hasTeam.mockResolvedValue(false);
+    const url = location(await GET(req("/join/ab12cd")));
+    expect(url.pathname).toBe("/welcome");
+    // The destination it would have returned: the invite passes through.
+    expect(url.searchParams.get("next")).toBe("/join/ab12cd");
+  });
+
+  it("carries the team-card target through /welcome for a teamless player with no username", async () => {
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
+    hasTeam.mockResolvedValue(false);
+    const url = location(await GET(req("/quiz")));
+    expect(url.pathname).toBe("/welcome");
+    expect(url.searchParams.get("next")).toBe("/profile#team");
   });
 
   it("lands a session whose user id is not a player id at home", async () => {

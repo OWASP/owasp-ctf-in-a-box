@@ -178,10 +178,15 @@ invariants this repo has been burned by; a warning from one is a prompt to
 look, not a formality.
 
 Two more workflows run on every PR (#483). `changelog.yml` fails a PR that
-changes `apps/`, `sync/`, `scorer/`, `setup/` or `deploy/` without touching
-`CHANGELOG.md` (test-only and `.md` paths are exempt; the rules are in
+changes `apps/`, `sync/`, `scorer/`, `setup/` or `deploy/` without adding a
+changelog fragment, a new `changelog.d/<issue>-<slug>.md` holding the entry
+(test-only and `.md` paths are exempt; the rules are in
 `scripts/check-changelog.sh`, run locally as
-`scripts/check-changelog.sh origin/main HEAD`). The `no-changelog` label
+`scripts/check-changelog.sh origin/main HEAD`). Never put a new entry in
+`CHANGELOG.md` itself: one shared `## Unreleased` block makes every open PR
+conflict with every merge, and an edit there does not satisfy the check.
+`changelog.d/README.md` has the format; `scripts/changelog-assemble.mjs` folds
+the fragments into `CHANGELOG.md` at release. The `no-changelog` label
 skips it, and Dependabot PRs are skipped. `labeler.yml` applies labels by
 path from `.github/labeler.yml`. It runs on `pull_request_target` so it can
 label fork PRs, which is safe only because it never checks out or runs PR

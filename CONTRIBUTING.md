@@ -158,9 +158,12 @@ Nothing here is only asked for; each item is checked on every PR.
   it has none (`No test: <reason>`). Pure refactors, copy, comments and docs
   are exempt. The check only warns during its trial and is meant to block
   later.
-- **A CHANGELOG entry.** The `changelog` workflow fails a PR that changes
-  `apps/`, `sync/`, `scorer/`, `setup/` or `deploy/` without a line under
-  `## Unreleased` in `CHANGELOG.md`. Test-only paths (`__tests__/`, `test/`,
+- **A changelog fragment.** The `changelog` workflow fails a PR that changes
+  `apps/`, `sync/`, `scorer/`, `setup/` or `deploy/` without a new file
+  `changelog.d/<issue>-<slug>.md` holding the entry (format in
+  [`changelog.d/README.md`](changelog.d/README.md)). Do not edit
+  `CHANGELOG.md` in a PR: it does not satisfy the check, and a shared
+  `## Unreleased` block conflicts across open PRs. Test-only paths (`__tests__/`, `test/`,
   `*.test.*`, `*.bats`, `*.tftest.hcl`) and `.md` files do not count as code,
   with one exception: everything under `scorer/rubric*/` except its `.md`
   files counts as code, because a rubric's tests are what the judge runs
@@ -334,7 +337,9 @@ Versions follow [Semantic Versioning](https://semver.org/), cut as
 `BREAKING CHANGE:` footer (or `!` after the type) implies major. The version
 is repo-level: `apps/web/package.json` tracks the current tag; `scorer` and
 `sync` deliberately carry no version field. [`CHANGELOG.md`](CHANGELOG.md)
-summarizes each release.
+summarizes each release. Before renaming `## Unreleased` to the version
+heading, the release runs `node scripts/changelog-assemble.mjs`, which appends
+every fragment in `changelog.d/` to that block and deletes the fragment files.
 
 ## AI-assisted contributions
 

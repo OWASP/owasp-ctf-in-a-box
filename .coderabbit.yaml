@@ -311,7 +311,7 @@ reviews:
         (`failClosed: true`) and a claim error answers 503, never a grant. An
         empty or malformed `ADMIN_CLAIM_CODE_HASH` disables the bootstrap
         claim; it must never fall open. The revoke script must keep refusing
-        the last grant.
+        the last grant whose account still exists.
 
         Claim-code secrecy — a claim code or its full SHA-256 must never be
         logged, audited, rendered or returned, except the one response that

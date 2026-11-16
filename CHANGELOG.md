@@ -28,7 +28,7 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   a one-time code at `/admin/claim`. The first code's SHA-256 is
   `ADMIN_CLAIM_CODE_HASH` in `.env`; the Admins tab issues further codes
   (single use, 15 minutes), lists admins by name and removes them, refusing
-  the last one. Claims are limited to five attempts per player per 15
+  the last one whose account still exists. Claims are limited to five attempts per player per 15
   minutes, and every claim, issue and removal is audited without the code.
   Master reset keeps the admins. ADR 72.
   **Breaking:** `ADMIN_LOGINS` is ignored; a GitHub login no longer makes

@@ -140,11 +140,12 @@ describe("exportEventBundle", () => {
     expect(s).not.toContain('"admins"');
   });
 
-  it("never carries the admin roster or issued claim codes", async () => {
+  it("never carries the admin roster, grant generations or issued claim codes", async () => {
     const { bundle } = await exportEventBundle(new Date("2026-06-01T00:00:00Z"));
     const s = JSON.stringify(bundle);
     expect(s).not.toContain("ctf:admin:grants");
     expect(s).not.toContain("ctf:admin:code:");
+    expect(s).not.toContain("ctf:admin:grant-gen");
     expect(s).not.toContain(grantee);
     expect(grants.listAdminGrants).not.toHaveBeenCalled();
   });

@@ -14,6 +14,7 @@ vi.mock("@/lib/upstash", () => ({ upstashEval, upstashPipeline }));
 import {
   ADMIN_CLAIM_SPENT_KEY,
   ADMIN_CODE_PREFIX,
+  ADMIN_GRANT_GEN_KEY,
   claimAdmin,
   codeId,
   formatClaimCode,
@@ -83,7 +84,7 @@ describe("claimAdmin", () => {
     upstashEval.mockResolvedValue(["ok", "bootstrap"]);
     await expect(claimAdmin(VECTOR_CODE, ALICE, VECTOR_HASH)).resolves.toEqual({ ok: true, via: "bootstrap" });
     const [, keys, args] = upstashEval.mock.calls[0];
-    expect(keys).toEqual([ADMIN_GRANTS_KEY, ADMIN_CLAIM_SPENT_KEY, `${ADMIN_CODE_PREFIX}${VECTOR_HASH}`, ADMIN_AUDIT_KEY]);
+    expect(keys).toEqual([ADMIN_GRANTS_KEY, ADMIN_CLAIM_SPENT_KEY, `${ADMIN_CODE_PREFIX}${VECTOR_HASH}`, ADMIN_AUDIT_KEY, ADMIN_GRANT_GEN_KEY]);
     expect(args.slice(0, 4)).toEqual([ALICE.id, ALICE.name, VECTOR_HASH, VECTOR_HASH]);
     const sent = JSON.stringify(upstashEval.mock.calls);
     expect(sent).not.toContain("0123456789abcdef0123456789abcdef");
@@ -115,7 +116,7 @@ describe("issueAdminCode", () => {
     expect(code).toMatch(/^([0-9a-f]{4}-){7}[0-9a-f]{4}$/);
     const [, keys, args] = upstashEval.mock.calls[0];
     const hash = hashClaimCode(normalizeClaimCode(code)!);
-    expect(keys).toEqual([ADMIN_GRANTS_KEY, `${ADMIN_CODE_PREFIX}${hash}`, ADMIN_AUDIT_KEY]);
+    expect(keys).toEqual([ADMIN_GRANTS_KEY, `${ADMIN_CODE_PREFIX}${hash}`, ADMIN_AUDIT_KEY, ADMIN_GRANT_GEN_KEY]);
     expect(args[0]).toBe(ALICE.id);
     expect(args[2]).toBe("900");
     expect(JSON.parse(args[1] as string)).toEqual({ by: ALICE.id, name: ALICE.name });
@@ -151,7 +152,7 @@ describe("revokeAdmin", () => {
     upstashEval.mockResolvedValue(["ok", ALICE.id]);
     await expect(revokeAdmin(bob, ALICE)).resolves.toEqual({ ok: true, grants: [ALICE.id] });
     const [, keys, args] = upstashEval.mock.calls[0];
-    expect(keys).toEqual([ADMIN_GRANTS_KEY, ADMIN_AUDIT_KEY]);
+    expect(keys).toEqual([ADMIN_GRANTS_KEY, ADMIN_AUDIT_KEY, ADMIN_GRANT_GEN_KEY, "ctf:auth:user"]);
     expect(args[0]).toBe(bob.id);
     expect(args[1]).toBe(ALICE.id);
     expect(JSON.parse(args[2] as string)).toMatchObject({ by: ALICE.id, action: "admin:revoke", player: bob.id, playerName: "bob" });

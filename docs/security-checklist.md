@@ -142,13 +142,14 @@ entering an admin claim code at `/admin/claim`.
 
 Three failure modes worth checking for explicitly:
 
-- **The setup code is a secret until you use it.** Whoever enters it first
+- **The bootstrap code is a secret until you use it.** Whoever enters it first
   becomes an admin, so claim it yourself before the URL goes anywhere, and
   never paste it into chat or a ticket. Only its SHA-256 is in `.env`.
 - **A leftover admin from a previous event still has full control.** Grants
   survive restarts and master resets; check the Admins tab and remove anyone
   who should not be there (the last admin cannot be removed). Removing an
-  admin also voids every code they issued that nobody has claimed yet.
+  admin also voids every code they issued that nobody has claimed yet, even
+  if they are made an admin again.
 - **Codes you issue from the Admins tab work once and expire after 15
   minutes.** Issue one only when the new organizer is ready to enter it.
 

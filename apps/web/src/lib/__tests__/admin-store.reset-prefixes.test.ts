@@ -38,8 +38,8 @@ describe("RESET_PREFIXES", () => {
     }
   });
 
-  it("never matches the admin roster, issued codes or spent bootstrap hashes", () => {
-    for (const key of ["ctf:admin:grants", "ctf:admin:claim:spent", `ctf:admin:code:${"a".repeat(64)}`]) {
+  it("never matches the admin roster, grant generations, issued codes or spent bootstrap hashes", () => {
+    for (const key of ["ctf:admin:grants", "ctf:admin:grant-gen", "ctf:admin:claim:spent", `ctf:admin:code:${"a".repeat(64)}`]) {
       expect(RESET_PREFIXES.some(([, pattern]) => globToRegExp(pattern).test(key))).toBe(false);
     }
   });

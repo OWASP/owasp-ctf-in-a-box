@@ -2,6 +2,7 @@ import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP, type AuditActor } from "@/lib/admin-audit-keys";
 import { ADMIN_GRANTS_KEY } from "@/lib/admin-grants";
+import { AUTH_PREFIX, rowsKey } from "@/lib/auth-store/keys";
 import { upstashEval } from "@/lib/upstash";
 
 /**
@@ -24,6 +25,13 @@ export const ADMIN_CODE_PREFIX = "ctf:admin:code:";
  *  the env hash is what makes a new bootstrap code. */
 export const ADMIN_CLAIM_SPENT_KEY = "ctf:admin:claim:spent";
 export const ADMIN_CODE_TTL_SECONDS = 900;
+/** HASH player id -> grant generation. REVOKE_SCRIPT advances the target's
+ *  generation, ISSUE_SCRIPT stamps the issuer's current one into the code, and
+ *  CLAIM_SCRIPT honours a code only while the two still match, so a code
+ *  issued before a revoke stays dead after a re-grant. Under `ctf:admin:`
+ *  like the grants, so a master reset keeps it and the event archive does
+ *  not carry it: a reset that zeroed it would revive pre-reset codes. */
+export const ADMIN_GRANT_GEN_KEY = "ctf:admin:grant-gen";
 
 const CODE_RE = /^[0-9a-f]{32}$/;
 const HASH_RE = /^[0-9a-f]{64}$/;
@@ -53,7 +61,7 @@ export function codeId(hash: string): string {
 }
 
 /**
- * KEYS [grants, spent, codeKey, audit]
+ * KEYS [grants, spent, codeKey, audit, grantGen]
  * ARGV [playerId, playerName, hash, bootstrapHash, at, cap-1]
  *
  * An existing admin consumes nothing. The bootstrap path matches only the
@@ -61,12 +69,14 @@ export function codeId(hash: string): string {
  * admins exist, because recovery includes an admin who still holds a grant
  * but cannot sign in. The issued path is GET then DEL in the same script, so
  * two racing claims grant exactly once, and it honours a code only while its
- * issuer still holds a grant: revoking an admin voids every code they issued,
- * or a removed admin could claim one back. An entry with no readable issuer
- * is refused the same way (fail closed).
+ * issuer still holds a grant AND the grant generation stamped into the code
+ * is still the issuer's current one: revoking an admin advances that
+ * generation, so every code they issued stays void even after they are
+ * granted again, or a removed admin's code could be claimed back. An entry
+ * with no readable issuer or generation is refused the same way (fail closed).
  */
 export const CLAIM_SCRIPT = `
-local grants, spent, codeKey, audit = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
+local grants, spent, codeKey, audit, gens = KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5]
 local id, name, hash, boot, at, cap = ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5], tonumber(ARGV[6])
 if redis.call('SISMEMBER', grants, id) == 1 then return {'already-admin'} end
 local entry = {at = at, by = id, name = name, action = 'admin:grant', player = id, playerName = name, codeId = string.sub(hash, 1, 8)}
@@ -79,7 +89,9 @@ else
   redis.call('DEL', codeKey)
   local ok, issued = pcall(cjson.decode, raw)
   local issuer = (ok and type(issued) == 'table' and type(issued.by) == 'string' and issued.by) or ''
-  if issuer == '' or redis.call('SISMEMBER', grants, issuer) == 0 then return {'invalid'} end
+  local gen = ok and type(issued) == 'table' and type(issued.gen) == 'number' and issued.gen
+  if issuer == '' or not gen or redis.call('SISMEMBER', grants, issuer) == 0 then return {'invalid'} end
+  if gen ~= tonumber(redis.call('HGET', gens, issuer) or '0') then return {'invalid'} end
   entry.via = 'code'
   entry.issuedBy = issuer
 end
@@ -88,13 +100,17 @@ redis.call('LPUSH', audit, cjson.encode(entry))
 redis.call('LTRIM', audit, 0, cap)
 return {'ok', entry.via}`;
 
-/** KEYS [grants, codeKey, audit]; ARGV [actorId, valueJson, ttl, auditLine, cap-1].
- *  1 when stored, 0 on an NX collision, -1 when the actor no longer holds a
- *  grant (a revoke that lands before the issue mints nothing). Neither
- *  refusal writes an audit line. */
+/** KEYS [grants, codeKey, audit, grantGen]; ARGV [actorId, valueJson, ttl,
+ *  auditLine, cap-1]. 1 when stored, 0 on an NX collision, -1 when the actor
+ *  no longer holds a grant (a revoke that lands before the issue mints
+ *  nothing). Neither refusal writes an audit line. The stored value is
+ *  `valueJson` plus `gen`, the actor's grant generation read here, in the
+ *  same step as the grant check, so no revoke can fall between them. */
 export const ISSUE_SCRIPT = `
 if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 0 then return -1 end
-local ok = redis.call('SET', KEYS[2], ARGV[2], 'EX', tonumber(ARGV[3]), 'NX')
+local value = cjson.decode(ARGV[2])
+value.gen = tonumber(redis.call('HGET', KEYS[4], ARGV[1]) or '0')
+local ok = redis.call('SET', KEYS[2], cjson.encode(value), 'EX', tonumber(ARGV[3]), 'NX')
 if not ok then return 0 end
 redis.call('LPUSH', KEYS[3], ARGV[4])
 redis.call('LTRIM', KEYS[3], 0, tonumber(ARGV[5]))
@@ -109,15 +125,25 @@ export class NotAdminError extends Error {
   }
 }
 
-/** KEYS [grants, audit]; ARGV [targetId, actorId, auditLine, cap-1]. The actor
- *  must still hold a grant when the script runs, so an admin revoked after the
- *  route's gate cannot remove anyone. Refuses the last grant: with none left,
- *  nobody can open /admin to issue a code. */
+/** KEYS [grants, audit, grantGen, userRows]; ARGV [targetId, actorId,
+ *  auditLine, cap-1]. The actor must still hold a grant when the script runs,
+ *  so an admin revoked after the route's gate cannot remove anyone. Refuses
+ *  unless another grant belongs to an account that still exists (a field in
+ *  the auth store's user rows hash): a grant whose account is deleted opens
+ *  nothing, and with no usable grant left nobody can open /admin to issue a
+ *  code. Counting here, not in the route, keeps the check atomic with the
+ *  removal. Advances the target's grant generation, voiding the codes they
+ *  issued (see CLAIM_SCRIPT). */
 export const REVOKE_SCRIPT = `
 if redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 0 then return {'not-admin-actor'} end
 if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 0 then return {'not-admin'} end
-if redis.call('SCARD', KEYS[1]) <= 1 then return {'last-admin'} end
+local live = 0
+for _, m in ipairs(redis.call('SMEMBERS', KEYS[1])) do
+  if m ~= ARGV[1] and redis.call('HEXISTS', KEYS[4], m) == 1 then live = live + 1 end
+end
+if live == 0 then return {'last-admin'} end
 redis.call('SREM', KEYS[1], ARGV[1])
+redis.call('HINCRBY', KEYS[3], ARGV[1], 1)
 redis.call('LPUSH', KEYS[2], ARGV[3])
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[4]))
 local members = redis.call('SMEMBERS', KEYS[1])
@@ -136,7 +162,7 @@ export async function claimAdmin(code: string, player: AuditActor, bootstrapHash
   const boot = HASH_RE.test(bootstrapHash) ? bootstrapHash : "";
   const res = await upstashEval(
     CLAIM_SCRIPT,
-    [ADMIN_GRANTS_KEY, ADMIN_CLAIM_SPENT_KEY, `${ADMIN_CODE_PREFIX}${hash}`, ADMIN_AUDIT_KEY],
+    [ADMIN_GRANTS_KEY, ADMIN_CLAIM_SPENT_KEY, `${ADMIN_CODE_PREFIX}${hash}`, ADMIN_AUDIT_KEY, ADMIN_GRANT_GEN_KEY],
     [player.id, player.name, hash, boot, new Date().toISOString(), String(AUDIT_CAP - 1)],
   );
   const [head, via] = Array.isArray(res) ? (res as unknown[]) : [];
@@ -159,7 +185,7 @@ export async function issueAdminCode(actor: AuditActor): Promise<{ code: string;
     const line = JSON.stringify({ at, by: actor.id, name: actor.name, action: "admin:code-issue", codeId: codeId(hash), expiresAt });
     const res = await upstashEval(
       ISSUE_SCRIPT,
-      [ADMIN_GRANTS_KEY, `${ADMIN_CODE_PREFIX}${hash}`, ADMIN_AUDIT_KEY],
+      [ADMIN_GRANTS_KEY, `${ADMIN_CODE_PREFIX}${hash}`, ADMIN_AUDIT_KEY, ADMIN_GRANT_GEN_KEY],
       [actor.id, value, String(ADMIN_CODE_TTL_SECONDS), line, String(AUDIT_CAP - 1)],
     );
     if (Number(res) === 1) return { code: formatClaimCode(normalized), expiresAt };
@@ -170,7 +196,8 @@ export async function issueAdminCode(actor: AuditActor): Promise<{ code: string;
 
 export type RevokeResult = { ok: true; grants: string[] } | { ok: false; reason: "not-admin" | "last-admin" };
 
-/** Remove `target`'s grant. Self-removal is allowed; the last grant is not.
+/** Remove `target`'s grant. Self-removal is allowed; removing the last grant
+ *  whose account still exists is not.
  *  Throws `NotAdminError` when `actor` no longer holds a grant. */
 export async function revokeAdmin(target: { id: string; name: string }, actor: AuditActor): Promise<RevokeResult> {
   const line = JSON.stringify({
@@ -183,7 +210,7 @@ export async function revokeAdmin(target: { id: string; name: string }, actor: A
   });
   const res = await upstashEval(
     REVOKE_SCRIPT,
-    [ADMIN_GRANTS_KEY, ADMIN_AUDIT_KEY],
+    [ADMIN_GRANTS_KEY, ADMIN_AUDIT_KEY, ADMIN_GRANT_GEN_KEY, rowsKey(AUTH_PREFIX, "user")],
     [target.id, actor.id, line, String(AUDIT_CAP - 1)],
   );
   const arr = Array.isArray(res) ? (res as unknown[]) : [];

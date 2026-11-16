@@ -12,9 +12,11 @@ import { getPlayerProfiles, PLAYER_ID_RE } from "@/lib/player";
  * method is behind `requireAdmin`. There is no grant here: the only way in is
  * a claim code (POST /api/admin/codes issues one, /admin/claim spends it).
  *
- * The revoke script refuses the LAST grant, so no sequence of clicks leaves
- * the box with nobody who can open /admin. Removing yourself is allowed while
- * another admin remains; the tab confirms first.
+ * The revoke script refuses to remove a grant unless another grant belongs to
+ * an account that still exists, so no sequence of clicks leaves the box with
+ * nobody who can open /admin; a "(deleted account)" grant does not count.
+ * Removing yourself is allowed while another usable admin remains; the tab
+ * confirms first.
  */
 
 const DELETED = "(deleted account)";

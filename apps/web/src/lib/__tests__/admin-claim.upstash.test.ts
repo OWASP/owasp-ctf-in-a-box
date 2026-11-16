@@ -23,7 +23,14 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
       used.push(key);
       return key;
     };
-    return { grants: k("grants"), spent: k("spent"), audit: k("audit"), code: (hash: string) => k(`code:${hash}`) };
+    return {
+      grants: k("grants"),
+      spent: k("spent"),
+      audit: k("audit"),
+      gen: k("grant-gen"),
+      users: k("users"),
+      code: (hash: string) => k(`code:${hash}`),
+    };
   }
 
   async function load() {
@@ -41,7 +48,7 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     const { claim, upstashEval } = await load();
     return upstashEval(
       claim.CLAIM_SCRIPT,
-      [k.grants, k.spent, k.code(hash), k.audit],
+      [k.grants, k.spent, k.code(hash), k.audit, k.gen],
       [player, `name-${player.slice(-2)}`, hash, boot, "2026-11-15T00:00:00.000Z", "499"],
     );
   }
@@ -51,8 +58,23 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     const line = JSON.stringify({ at: "x", by, name: "issuer", action: "admin:code-issue", codeId: hash.slice(0, 8) });
     return upstashEval(
       claim.ISSUE_SCRIPT,
-      [k.grants, k.code(hash), k.audit],
+      [k.grants, k.code(hash), k.audit, k.gen],
       [by, JSON.stringify({ by, name: "issuer" }), "900", line, "499"],
+    );
+  }
+
+  /** Accounts that exist: a field per player in the auth store's user rows hash. */
+  async function accounts(k: ReturnType<typeof keys>, ...ids: string[]) {
+    const { pipeline } = await load();
+    await pipeline([["HSET", k.users, ...ids.flatMap((p) => [p, JSON.stringify({ id: p, name: `name-${p.slice(-2)}` })])]]);
+  }
+
+  async function runRevoke(k: ReturnType<typeof keys>, target: string, actor: string) {
+    const { claim, upstashEval } = await load();
+    return upstashEval(
+      claim.REVOKE_SCRIPT,
+      [k.grants, k.audit, k.gen, k.users],
+      [target, actor, JSON.stringify({ action: "admin:revoke", player: target, playerName: "t" }), "499"],
     );
   }
 
@@ -154,9 +176,10 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     const k = keys();
     const h = sha("issued-revoked");
     await pipeline([["SADD", k.grants, id(1), id(2)]]);
+    await accounts(k, id(1), id(2));
     expect(await runIssue(k, h, id(1))).toBe(1);
     const revokeLine = JSON.stringify({ action: "admin:revoke", player: id(1) });
-    expect(await upstashEval(claim.REVOKE_SCRIPT, [k.grants, k.audit], [id(1), id(2), revokeLine, "499"])).toEqual(["ok", id(2)]);
+    expect(await upstashEval(claim.REVOKE_SCRIPT, [k.grants, k.audit, k.gen, k.users], [id(1), id(2), revokeLine, "499"])).toEqual(["ok", id(2)]);
     const [before] = await pipeline([["LLEN", k.audit]]);
     expect(await runClaim(k, id(1), h, "")).toEqual(["invalid"]);
     const [exists, member, after] = await pipeline([["EXISTS", k.code(h)], ["SISMEMBER", k.grants, id(1)], ["LLEN", k.audit]]);
@@ -178,6 +201,51 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     expect([a.result, b.result, member.result]).toEqual([0, 0, 0]);
   });
 
+  it("refuses an entry from a current admin that carries no grant generation", async () => {
+    const { pipeline } = await load();
+    const k = keys();
+    const h = sha("issued-nogen");
+    await pipeline([["SADD", k.grants, id(1)], ["SET", k.code(h), JSON.stringify({ by: id(1), name: "x" }), "EX", 900]]);
+    expect(await runClaim(k, id(2), h, "")).toEqual(["invalid"]);
+    const [member] = await pipeline([["SISMEMBER", k.grants, id(2)]]);
+    expect(member.result).toBe(0);
+  });
+
+  it("a code issued before a revoke stays void after the issuer is granted again", async () => {
+    const { pipeline } = await load();
+    const k = keys();
+    const [early, fresh] = [sha("issued-early"), sha("issued-regrant")];
+    await pipeline([["SADD", k.grants, id(1), id(2)]]);
+    await accounts(k, id(1), id(2));
+    expect(await runIssue(k, early, id(1))).toBe(1);
+    expect(await runRevoke(k, id(1), id(2))).toEqual(["ok", id(2)]);
+    expect(await runIssue(k, fresh, id(2))).toBe(1);
+    expect(await runClaim(k, id(1), fresh, "")).toEqual(["ok", "code"]);
+    expect(await runClaim(k, id(3), early, "")).toEqual(["invalid"]);
+    const [member, exists] = await pipeline([["SISMEMBER", k.grants, id(3)], ["EXISTS", k.code(early)]]);
+    expect([member.result, exists.result]).toEqual([0, 0]);
+  });
+
+  it("a code issued after the re-grant works", async () => {
+    const k = keys();
+    const h = sha("issued-after-regrant");
+    const { pipeline } = await load();
+    await pipeline([["SADD", k.grants, id(1), id(2)], ["HSET", k.gen, id(1), 3]]);
+    expect(await runIssue(k, h, id(1))).toBe(1);
+    expect(await runClaim(k, id(3), h, "")).toEqual(["ok", "code"]);
+  });
+
+  it("revoke counts only grants whose account still exists, and keeps the grant it refuses", async () => {
+    const { pipeline } = await load();
+    const k = keys();
+    await pipeline([["SADD", k.grants, id(1), id(8)]]);
+    await accounts(k, id(1));
+    expect(await runRevoke(k, id(1), id(1))).toEqual(["last-admin"]);
+    const [member, lines] = await pipeline([["SISMEMBER", k.grants, id(1)], ["LLEN", k.audit]]);
+    expect([member.result, lines.result]).toEqual([1, 0]);
+    expect(await runRevoke(k, id(8), id(1))).toEqual(["ok", id(1)]);
+  });
+
   it("issue is refused for a non-member: no code, no audit line", async () => {
     const { pipeline } = await load();
     const k = keys();
@@ -194,10 +262,11 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     const revoke = (target: string) =>
       upstashEval(
         claim.REVOKE_SCRIPT,
-        [k.grants, k.audit],
+        [k.grants, k.audit, k.gen, k.users],
         [target, id(1), JSON.stringify({ action: "admin:revoke", player: target, playerName: "t" }), "499"],
       );
     await pipeline([["SADD", k.grants, id(1)]]);
+    await accounts(k, id(1), id(2));
     expect(await revoke(id(1))).toEqual(["last-admin"]);
     const [still] = await pipeline([["SMEMBERS", k.grants]]);
     expect(still.result).toEqual([id(1)]);
@@ -211,7 +280,7 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     const { claim, upstashEval, pipeline } = await load();
     const k = keys();
     await pipeline([["SADD", k.grants, id(1), id(2)]]);
-    expect(await upstashEval(claim.REVOKE_SCRIPT, [k.grants, k.audit], [id(3), id(1), "{}", "499"])).toEqual(["not-admin"]);
+    expect(await upstashEval(claim.REVOKE_SCRIPT, [k.grants, k.audit, k.gen, k.users], [id(3), id(1), "{}", "499"])).toEqual(["not-admin"]);
     const [lines] = await pipeline([["LLEN", k.audit]]);
     expect(lines.result).toBe(0);
   });
@@ -220,8 +289,9 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     const { claim, upstashEval, pipeline } = await load();
     const k = keys();
     const revoke = (target: string, actor: string) =>
-      upstashEval(claim.REVOKE_SCRIPT, [k.grants, k.audit], [target, actor, JSON.stringify({ action: "admin:revoke" }), "499"]);
+      upstashEval(claim.REVOKE_SCRIPT, [k.grants, k.audit, k.gen, k.users], [target, actor, JSON.stringify({ action: "admin:revoke" }), "499"]);
     await pipeline([["SADD", k.grants, id(1), id(2), id(3)]]);
+    await accounts(k, id(1), id(2), id(3));
     expect(await revoke(id(1), id(2))).toEqual(expect.arrayContaining(["ok"]));
     const [before] = await pipeline([["LLEN", k.audit]]);
     expect(await revoke(id(2), id(1))).toEqual(["not-admin-actor"]);

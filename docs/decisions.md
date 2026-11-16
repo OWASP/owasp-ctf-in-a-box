@@ -4398,7 +4398,10 @@ event exists.
   `ADMIN_CLAIM_CODE_HASH`. A signed-in player enters the code at
   `/admin/claim`. Input is normalized (lowercase, hyphens and whitespace
   dropped) and must be exactly 32 hex. The hash is unsalted: the code has 128
-  bits of entropy, which a slow KDF would not add to.
+  bits of entropy, which a slow KDF would not add to. Until setup, Fly and
+  AWS generate the code, the organizer does it by hand
+  ([troubleshooting](troubleshooting.md#admin-says-forbidden-for-everyone-including-you)):
+  `openssl rand -hex 16`, its SHA-256 into `.env`, a recreated app container.
 - **Admins issue more codes.** An issued code is stored as
   `ctf:admin:code:<sha256>` for 15 minutes and works once.
 - **Claim, issue and revoke are atomic Lua scripts**, each writing one audit
@@ -4407,15 +4410,23 @@ event exists.
   `ctf:admin:claim:spent`; the issued path reads and deletes the code key in
   the same script, so two racing claims grant once. An issued code counts
   only while its issuer still holds a grant, and issuing needs a grant at
-  the moment the script runs: revoking an admin voids every code they
-  issued, so a removal sticks.
+  the moment the script runs. Each code also carries its issuer's grant
+  generation (`ctf:admin:grant-gen`, a hash of player id to counter), read
+  by the issue script and advanced by the revoke script; the claim refuses a
+  code whose generation is not the issuer's current one. Revoking an admin
+  therefore voids every code they issued for good, even if they are granted
+  again before the codes expire, so a removal sticks.
 - **Brute force is bounded per player.** `/api/me/admin/claim` needs a
   signed-in kit player and charges five attempts per 15 minutes per player,
   failing closed. There is no global bucket, because anyone could spend it
   and lock the organizer out of the recovery claim. Every refusal returns the
   same body.
-- **Revoke stays, by player id, and refuses the last grant.** There is no
-  grant-by-name path: a code is the only way in.
+- **Revoke stays, by player id, and refuses the last usable grant.** The
+  revoke script removes a grant only if another grant belongs to an account
+  that still exists (a field in the auth store's user rows hash), counted in
+  the same script as the removal: a grant whose account is gone opens
+  nothing, so it does not count. There is no grant-by-name path: a code is
+  the only way in.
 - **Audit lines carry a code id, never a code.** `admin:grant` names the
   grantee, the path (`bootstrap` or `code`), the first eight hex of the hash
   and, for an issued code, its issuer; `admin:code-issue` and `admin:revoke`
@@ -4426,8 +4437,8 @@ event exists.
   "nobody has claimed this box" notice reads the grant count best-effort and
   shows nothing when the read fails.
 
-**Recovery.** Rotating the hash (re-running setup, or a deploy with a
-new-code flag) makes a new bootstrap code, and the old one stops working at
+**Recovery.** Rotating the hash (by hand in `.env` until setup, Fly and AWS
+generate the code) makes a new bootstrap code, and the old one stops working at
 once because only the current env hash is compared. The bootstrap code works
 whether or not admins exist: the lock-out case includes an admin who still
 holds a grant but cannot sign in, and v2.0 has no email recovery. Rotating
@@ -4436,7 +4447,8 @@ needs `.env` or deploy access, which already means full control of the box.
 **Consequences.** `/admin` now needs Redis to decide who is an admin; every
 admin path already needed it for its data. No admin is beyond revocation,
 so the last-admin guard is what keeps the panel reachable. Master reset keeps
-`ctf:admin:*`, so a reset never locks the organizers out, and the event
+`ctf:admin:*`, so a reset never locks the organizers out (and never zeroes a
+grant generation, which would revive a revoked admin's codes), and the event
 archive carries none of it. Grants written by v1 under `ctf:admin:admins` are
 not read. Deleting an account must also remove its grant (#740).
 

@@ -821,18 +821,24 @@ readable and writable while the stack is running, without a restart:
   admin grant: the only roster. A set rather than a settings field because
   membership *is* the whole value. Grants are made only by claiming a code at
   `/admin/claim` and removed from the Admins tab; the revoke script refuses
-  the last one, so no sequence of clicks leaves `/admin` unreachable.
+  to remove the last grant whose account still exists, so no sequence of
+  clicks leaves `/admin` unreachable.
   `requireAdmin` **fails closed** — an unreachable store denies rather than
   resolving to "no grant".
 - **`ctf:admin:code:<sha256>`** (STRING, 15-minute TTL) — an admin-issued
-  claim code, stored only as its hash with the issuer's id and name. The claim
-  script reads and deletes it in one step, so it works once.
+  claim code, stored only as its hash with the issuer's id, name and grant
+  generation. The claim script reads and deletes it in one step, so it works
+  once.
+- **`ctf:admin:grant-gen`** (Redis HASH) — player id to grant generation. The
+  revoke script advances the target's; a code whose generation is not its
+  issuer's current one is refused, so a revoked admin's codes stay void after
+  a re-grant.
 - **`ctf:admin:claim:spent`** (Redis SET) — bootstrap hashes
   (`ADMIN_CLAIM_CODE_HASH`) already claimed. Rotating the env hash makes a new
   bootstrap code; the old one stops matching at once.
 
   No `RESET_PREFIXES` pattern matches `ctf:admin:`, so a master reset keeps
-  all three, and the event archive carries none of them.
+  all four, and the event archive carries none of them.
 
 - **`ctf:admin:audit`** — a capped list (`AUDIT_CAP` = 500, `LPUSH`+`LTRIM`)
   of every settings change, written atomically with the change itself (one

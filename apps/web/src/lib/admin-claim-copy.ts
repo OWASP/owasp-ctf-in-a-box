@@ -7,6 +7,6 @@
 export const CLAIM_INVALID =
   "That code is not valid. Each code works once, and codes issued from /admin expire after 15 minutes.";
 
-/** The revoke refusal for the last grant. */
+/** The revoke refusal for the last grant whose account still exists. */
 export const LAST_ADMIN =
-  "That is the last admin. Issue a code and have someone claim it first, or nobody can open /admin.";
+  "That is the last admin with an account. Issue a code and have someone claim it first, or nobody can open /admin.";

@@ -253,13 +253,17 @@ section has the card's full behavior.
    check that the webhook is still valid and the channel still accepts it.
 
 4. **Redis is unavailable.** The announcer keeps its config, claims, outbox
-   and cooldown in Redis, and every path fails closed rather than posting
-   from a guess: a failed config read skips the tick
-   (`[announce] config read failed, skipping tick`); a failed claim or
-   enqueue records nothing; and a failed webhook-target read leaves queued
-   entries untouched for a later pass. There is no post until Redis is
-   readable again — check `/health/deep` and the app log for `NOAUTH` or
-   `fetch failed`, then fix the path to Redis
+   and cooldown in Redis. The fail-closed paths are the config read (a
+   failure skips the tick —
+   `[announce] config read failed, skipping tick`), a claim or enqueue (a
+   failure records nothing), and the webhook-target read (a failure leaves
+   queued entries untouched for a later pass). The cooldown read is the
+   exception: it fails open to "no cooldown", because a Redis blip must not
+   pause delivery; a cooldown-read failure alone does not stop a pass, but
+   the config and target reads still have to succeed. With Redis actually
+   unavailable those fail, so nothing is posted until it is readable again —
+   check `/health/deep` and the app log for `NOAUTH` or `fetch failed`, then
+   fix the path to Redis
    ([`NOAUTH`](#services-log-noauth-authentication-required),
    [`fetch failed`](#a-service-cant-reach-another-nothing-but-fetch-failed)).
    Entries already in the outbox are retried after recovery, but events that

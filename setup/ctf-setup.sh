@@ -2238,7 +2238,9 @@ wiz_prereqs() {
 #
 # `url_asked` (the caller's local) stops step 3 asking for EVENT_URL a second
 # time on a first run: this step already has the answer, and two prompts for
-# one value read as a bug in the wizard.
+# one value read as a bug in the wizard. `env_fresh` (also the caller's) tells
+# step 3 the file was written by THIS run, so its `SCORE_IMAGE=` is the
+# `secrets` placeholder and not an organizer's answer.
 wiz_secret_env() {
   local out="$1" ev_url
   wiz_step "2/9  Secrets ($out)"
@@ -2252,6 +2254,7 @@ wiz_secret_env() {
     set_env_var "$out" EVENT_URL "$ev_url"
     echo "  ✅ EVENT_URL=$ev_url"
     url_asked=1
+    env_fresh=1
   fi
 }
 
@@ -2283,14 +2286,16 @@ wiz_claim_code() {
 # Step 3 of the wizard: Event basics — the whole of what this wizard writes.
 #
 # Already answered when the Secure Development question has
-# been PUT at all (the SCORE_IMAGE line exists, empty or not — `secrets`
-# writes it empty, so only a hand-rolled file lacks it), and, if that
-# answer was yes, an org to fork into. An app-only event legitimately has
-# no GITHUB_ORG, so demanding one here would re-ask it every single run.
+# been PUT at all (the SCORE_IMAGE line exists, empty or not, in a file this
+# run did not just create), and, if that answer was yes, an org to fork into.
+# An app-only event legitimately has no GITHUB_ORG, so demanding one here
+# would re-ask it every single run. `fresh`=1 is a file step 2 just wrote:
+# its `SCORE_IMAGE=` is the `secrets` placeholder, not a "no", so the
+# questions are always asked.
 wiz_basics() {
-  local out="$1" url_asked="$2" basics_done=0
+  local out="$1" url_asked="$2" fresh="${3:-0}" basics_done=0
   wiz_step "3/9  Event basics ($out)"
-  if env_has SCORE_IMAGE; then
+  if [ "$fresh" -ne 1 ] && env_has SCORE_IMAGE; then
     if ! runs_secdev || [ -n "$(env_val GITHUB_ORG)" ]; then basics_done=1; fi
   fi
   if [ "$basics_done" -eq 1 ]; then
@@ -2310,7 +2315,7 @@ wiz_basics() {
     echo "  Fix that and re-run the wizard — it resumes." >&2
     exit 1
   fi
-  if ! wiz_claim_code "$out" "$url_asked"; then
+  if ! wiz_claim_code "$out" "$fresh"; then
     echo "  Could not write the admin claim code — fix that and re-run the wizard." >&2
     exit 1
   fi
@@ -2553,7 +2558,7 @@ wiz_done() {
 # (edit a file, click Create in GitHub's UI); complete it and re-run.
 cmd_wizard() {
   local out="${OUT:-.env}"
-  local url_asked=0
+  local url_asked=0 env_fresh=0
   # The SCORE_IMAGE step 3 settled on, for the later steps to key off when
   # there is nothing written to read it back from (--dry-run).
   WIZ_SCORE_IMAGE=""
@@ -2563,7 +2568,7 @@ cmd_wizard() {
 
   wiz_prereqs
   wiz_secret_env "$out"
-  wiz_basics "$out" "$url_asked"
+  wiz_basics "$out" "$url_asked" "$env_fresh"
 
   # Everything from here on that touches forks, the scorer image or the poll
   # App belongs to Secure Development, and SCORE_IMAGE is the one fact that

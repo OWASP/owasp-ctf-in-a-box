@@ -1084,6 +1084,21 @@ _stub_prereqs() {
   echo "$output" | grep -qF "Secure Development: off — set SCORE_IMAGE in .env"
 }
 
+# A real first run, NOT --dry-run: --dry-run writes no .env, so it never sees
+# the `SCORE_IMAGE=` placeholder `secrets` writes. That placeholder must not
+# read as an organizer's "no Secure Development" and skip step 3 — which
+# would skip the scorer image and org provisioning with it. openssl is real
+# here: `secrets` needs it for the secrets and the claim code.
+@test "wizard: a first run asks the event basics even though secrets just wrote SCORE_IMAGE=" {
+  _stub_prereqs
+  rm -f "$BATS_TEST_TMPDIR/stubbin/openssl" .env
+  run bash -c 'printf "https://ctf.example.org\nmy-event-org\ny\n" | env CTF_NO_BROWSER=1 TMPDIR="$3" PATH="$1:$PATH" bash "$2" wizard' _ "$BATS_TEST_TMPDIR/stubbin" "$SCRIPT" "$BATS_TEST_TMPDIR"
+  echo "$output" | grep -qF 'Answer a few questions to write'
+  echo "$output" | grep -qF 'Run Secure Development'
+  grep -qx 'GITHUB_ORG=my-event-org' .env
+  grep -qx 'SCORE_IMAGE=ghcr.io/my-event-org/score:latest' .env
+}
+
 # `SCORE_IMAGE=` (present, empty) is an answered question — "no Secure
 # Development". NO SUCH LINE is a file that was never asked, and resuming
 # past it would leave an organizer with no way to turn Secure Development on

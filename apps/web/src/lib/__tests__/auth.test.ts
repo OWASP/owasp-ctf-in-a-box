@@ -199,7 +199,7 @@ describe("user.additionalFields.login", () => {
 
 describe("sign-in activity hook (issue #212)", () => {
   it("registers an after hook, the login capture point", () => {
-    // The hook body is a thin wrapper around recordCallbackLogin, whose path
+    // The hook body is a thin wrapper around recordSignIn, whose path
     // filter and login extraction are pinned in activity-log.test.ts. This
     // pins only that the wiring exists — remove the hook and sign-ins
     // silently stop being recorded.
@@ -368,6 +368,13 @@ describe("username and password configuration", () => {
     expect(authOptions.rateLimit.enabled).toBe(false);
   });
 
+  it.each(["/sign-in/social", "/link-social"])("charges the kit limiter on %s through the before hook", async (path) => {
+    consumeRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 9 });
+    const res = await post(path, { provider: "github", callbackURL: "/profile" });
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("9");
+  });
+
   it("runs the username plugin, with nextCookies last", () => {
     expect(authOptions.plugins.map((p) => p.id)).toEqual(["username", "next-cookies"]);
   });
@@ -395,6 +402,12 @@ describe("refuseSignUpFields (/sign-up/email before hook)", () => {
     const c = ctx("/sign-up/email", { username: "alice", displayUsername: "ALICE", password: "x".repeat(12) });
     await refuseSignUpFields(c);
     expect((c.body as Record<string, string>).name).toBe("ALICE");
+  });
+
+  it("refuses a displayUsername that only lowercases to the username", async () => {
+    // U+212A KELVIN SIGN lowercases to "k".
+    const err = await refused(refuseSignUpFields(ctx("/sign-up/email", { username: "kate", displayUsername: "\u212Aate", password: "x".repeat(12) })));
+    expect(err.body?.code).toBe("SIGN_UP_FIELD_REFUSED");
   });
 
   it("refuses a displayUsername that names someone else", async () => {

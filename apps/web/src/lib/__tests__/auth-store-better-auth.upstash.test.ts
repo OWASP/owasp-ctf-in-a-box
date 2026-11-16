@@ -16,6 +16,7 @@ import { LINK_AT_KEY, LINK_USER_PREFIX, linkKey } from "@/lib/github-link";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
 import { upstashPipeline as pipeline } from "@/lib/upstash";
 import { ADMIN_SETTINGS_KEY } from "@/lib/admin-store";
+import { ACTIVITY_LOG_KEY } from "@/lib/activity-keys";
 import { isPlaceholderEmail } from "@/lib/placeholder-email";
 import { freshId, liveConfigured, liveKey, RUN } from "./live-redis";
 
@@ -537,9 +538,27 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
       expect(nobody.body?.message).toBe("Invalid username or password");
     });
 
+    it("logs a sign-up and a password sign-in to the activity log, and not a refused sign-in", async () => {
+      const { ctx, post } = await buildPasswordAuth();
+      const name = `Logged${freshId("u").replace(/[^a-z0-9]/g, "")}`;
+      const entriesFor = async (id: string) =>
+        ((await redis(["LRANGE", ACTIVITY_LOG_KEY, 0, -1])) as string[])
+          .map((row) => JSON.parse(row) as { type: string; userId?: string; name?: string })
+          .filter((e) => e.userId === id);
+      expect((await post("/sign-up/email", { username: name, password: pw(12) })).res.status).toBe(200);
+      const [user] = await ctx.adapter.findMany<Row>({ model: "user" });
+      expect(await entriesFor(user.id)).toEqual([expect.objectContaining({ type: "login", name })]);
+      expect((await post("/sign-in/username", { username: name, password: pw(13) })).res.status).toBe(401);
+      expect(await entriesFor(user.id)).toHaveLength(1);
+      expect((await post("/sign-in/username", { username: name, password: pw(12) })).res.status).toBe(200);
+      expect(await entriesFor(user.id)).toHaveLength(2);
+    });
+
     it("signs up and in while team registration is closed", async () => {
       // Account creation is not team registration: closing the registration
       // window must not lock players out of the box.
+      // It writes the shared ctf:admin:settings hash, which is safe only
+      // because the upstash suites run serially (--no-file-parallelism, AGENTS.md).
       const fields = ["teamRegistrationOpen", "registrationStartsAt", "registrationEndsAt"];
       const saved = (await redis(["HMGET", ADMIN_SETTINGS_KEY, ...fields])) as (string | null)[];
       const past = new Date(Date.now() - 3_600_000).toISOString();

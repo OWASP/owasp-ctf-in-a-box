@@ -6,7 +6,7 @@ import type { BetterAuthOptions } from "better-auth";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
 import { errorLabel } from "@/lib/error-label";
 import { getGithubLink, linkOnUserWrite } from "@/lib/github-link";
-import { recordCallbackLogin } from "@/lib/activity-log";
+import { recordSignIn } from "@/lib/activity-log";
 import { limitAuthAttempt } from "@/lib/auth-rate-limit";
 import { placeholderEmail } from "@/lib/placeholder-email";
 import { USERNAME_MAX, USERNAME_MIN, normalizeUsername, usernameProblem } from "@/lib/username-rules";
@@ -27,8 +27,9 @@ function refuseSignUp(message: string): never {
  * keys on, among them. So the body is an allowlist, and an account's email
  * and name are set here, never by the client: the email is a placeholder
  * (a username account has no address) and the name is the username as typed.
- * A `displayUsername` must be the same username in another case, so nobody
- * displays as somebody else.
+ * A `displayUsername` must itself be a valid username (so no lookalike
+ * character lowercases into the ASCII set) and the same username in another
+ * case, so nobody displays as somebody else.
  *
  * It runs before the endpoint validates the body, and better-auth hands the
  * endpoint the object this mutates (the username plugin's own hooks rely on
@@ -45,7 +46,11 @@ export async function refuseSignUpFields(ctx: AuthCtx): Promise<void> {
   const typed = fields.username.trim();
   let shown = typed;
   if (fields.displayUsername !== undefined) {
-    if (typeof fields.displayUsername !== "string" || normalizeUsername(fields.displayUsername) !== normalizeUsername(typed)) {
+    if (
+      typeof fields.displayUsername !== "string" ||
+      usernameProblem(fields.displayUsername) !== null ||
+      normalizeUsername(fields.displayUsername) !== normalizeUsername(typed)
+    ) {
       refuseSignUp("The display name must be your username.");
     }
     shown = fields.displayUsername.trim();
@@ -180,9 +185,15 @@ export const authOptions = {
     autoSignIn: true,
     requireEmailVerification: false,
   },
-  // better-auth's own limiter keeps per-instance memory and allows 3 sign-ins
-  // per 10 s per address. limitAuthAttempt (auth-rate-limit.ts) replaces it
-  // with budgets kept in Redis, shared by every app instance.
+  // better-auth's own limiter is off on every path. It keeps per-instance
+  // memory, keys on the leftmost x-forwarded-for entry (which the client
+  // chooses), and allows 3 sign-ins per 10 s on every /sign-in* path, which
+  // would lock a NAT'd room out of GitHub sign-in. limitAuthAttempt
+  // (auth-rate-limit.ts) charges Redis budgets, shared by every instance and
+  // keyed on the rightmost address, on /sign-up/email, /sign-in/username,
+  // /sign-in/social and /link-social. It leaves /callback/:id (it consumes a
+  // state row a charged request wrote), /get-session and /sign-out (every
+  // page load) and the closed paths alone.
   rateLimit: { enabled: false },
   // better-auth mounts its full default endpoint set, and each plugin's,
   // behind the catch-all at app/api/auth/[...all]. This app calls seven of
@@ -287,13 +298,14 @@ export const authOptions = {
       await refuseClientOAuthParams(ctx);
       await refuseSecondGithubLink(ctx);
     }),
-    // Sign-in timestamps for the admin activity log (issue #212). The after
-    // hook runs on EVERY auth endpoint; recordCallbackLogin filters to the
-    // OAuth callback (the one path where a fresh session means "signed in")
-    // and extracts the player. It is fail-open all the way down — a Redis
-    // blip can lose the log line but can never fail the sign-in.
+    // Sign-in timestamps for the admin activity log. The after hook runs on
+    // EVERY auth endpoint; recordSignIn filters to the paths where a fresh
+    // session means "signed in" (the OAuth callback, username sign-in and
+    // sign-up) and extracts the player. A refused sign-in makes no session,
+    // so it logs nothing. It is fail-open all the way down: a Redis blip can
+    // lose the log line but can never fail the sign-in.
     after: createAuthMiddleware(async (ctx) => {
-      await recordCallbackLogin(ctx.path, ctx.context.newSession);
+      await recordSignIn(ctx.path, ctx.context.newSession);
     }),
   },
   socialProviders: {

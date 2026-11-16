@@ -49,8 +49,21 @@ describe("limitAuthAttempt", () => {
     expect(mocks.consume).toHaveBeenCalledTimes(1);
   });
 
-  it("charges nothing on other paths", async () => {
-    await limitAuthAttempt(ctx("/sign-in/social", "10.0.0.1"));
+  // Each of these writes an OAuth state row, so a flood would fill the store.
+  it.each(["/sign-in/social", "/link-social"])("charges the sign-in address bucket on %s", async (path) => {
+    await limitAuthAttempt(ctx(path, "9.9.9.9, 10.0.0.1", { provider: "github" }));
+    expect(mocks.consume.mock.calls.map((c) => c.slice(0, 5))).toEqual([["signin-ip", "10.0.0.1", 600, 600, { failClosed: true }]]);
+  });
+
+  it("refuses /sign-in/social with 429 when the address bucket is spent", async () => {
+    mocks.consume.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 7 });
+    const err = await limitAuthAttempt(ctx("/sign-in/social", "10.0.0.1", { provider: "github" })).catch((e) => e);
+    expect(err.statusCode).toBe(429);
+    expect(err.body).toMatchObject({ code: "RATE_LIMITED", retryAfterSeconds: 7 });
+  });
+
+  it.each(["/callback/:id", "/get-session", "/sign-out", "/ok"])("charges nothing on %s", async (path) => {
+    await limitAuthAttempt(ctx(path, "10.0.0.1"));
     expect(mocks.consume).not.toHaveBeenCalled();
   });
 });

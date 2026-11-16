@@ -24,14 +24,22 @@ async function charge(r: { bucket: string; limit: number; windowSeconds: number 
 }
 
 /**
- * The before hook that rate-limits sign-up and username sign-in per client
- * address. Sign-in is also bounded per address AND username, so guessing one
- * account's password is limited per source while a stranger elsewhere cannot
- * lock the player out. Other paths are not charged here.
+ * The before hook that rate-limits the auth paths a client can make write
+ * per client address. Username sign-in is also bounded per address AND
+ * username, so guessing one account's password is limited per source while a
+ * stranger elsewhere cannot lock the player out. `/sign-in/social` and
+ * `/link-social` each write an OAuth state row, so they share the sign-in
+ * address budget. `/callback/:id` consumes a state row a charged request
+ * wrote, and `/get-session` and `/sign-out` run on every page, so those and
+ * every other path are not charged here.
  */
 export async function limitAuthAttempt(ctx: AuthCtx): Promise<void> {
   if (ctx.path === "/sign-up/email") {
     await charge(RATE_LIMITS.signUpIp, clientIp(ctx.headers ?? new Headers()));
+    return;
+  }
+  if (ctx.path === "/sign-in/social" || ctx.path === "/link-social") {
+    await charge(RATE_LIMITS.signInIp, clientIp(ctx.headers ?? new Headers()));
     return;
   }
   if (ctx.path === "/sign-in/username") {

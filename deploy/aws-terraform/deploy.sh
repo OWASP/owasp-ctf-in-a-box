@@ -637,6 +637,10 @@ else
       echo "FAIL: could not write $CLAIM_PARAM. Nothing changed; the current code still works." >&2
       exit 1
     fi
+    # Printed the moment the hash is stored, before either ECS call: from here
+    # on the code is the one that will claim, so an ECS failure below must
+    # leave the organizer holding it, with activation as the only thing left.
+    claim_code_announce "$claim_code" "${CLAIM_URL:-https://<domain>}" "$CLAIM_NEXT_STEP"
     # ECS resolves a task's secrets only when the task starts, so the new hash
     # reaches a RUNNING app only through a new deployment. A service that does
     # not exist yet needs none: its first deployment reads the value. A failed
@@ -649,25 +653,23 @@ else
     fi
     case "$app_active" in
     0)
-      claim_code_announce "$claim_code" "${CLAIM_URL:-https://<domain>}" "$CLAIM_NEXT_STEP"
       echo "   The app service does not exist yet; its first deployment reads this code."
       ;;
     *[!0-9]* | "")
-      echo "FAIL: the new code is in $CLAIM_PARAM but not live yet: could not check" >&2
-      echo "      the app service. Finish it with:" >&2
+      echo "FAIL: the code above is stored in $CLAIM_PARAM, but its activation is still" >&2
+      echo "      pending: could not check the app service. Keep the code and activate it with:" >&2
       echo "        $roll_cmd" >&2
-      echo "      or re-run $CLAIM_NEXT_STEP for a fresh code." >&2
+      echo "      (or re-run $CLAIM_NEXT_STEP for a fresh code instead)." >&2
       exit 1
       ;;
     *)
       if ! aws ecs update-service --region "$REGION" --cluster "$CLUSTER" --service app --force-new-deployment >/dev/null; then
-        echo "FAIL: the new code is in $CLAIM_PARAM but not live yet: the app could" >&2
-        echo "      not be redeployed. Finish it with:" >&2
+        echo "FAIL: the code above is stored in $CLAIM_PARAM, but its activation is still" >&2
+        echo "      pending: the app could not be redeployed. Keep the code and activate it with:" >&2
         echo "        $roll_cmd" >&2
-        echo "      or re-run $CLAIM_NEXT_STEP for a fresh code." >&2
+        echo "      (or re-run $CLAIM_NEXT_STEP for a fresh code instead)." >&2
         exit 1
       fi
-      claim_code_announce "$claim_code" "${CLAIM_URL:-https://<domain>}" "$CLAIM_NEXT_STEP"
       echo "   It is live once the new app deployment finishes (a minute or two)."
       ;;
     esac

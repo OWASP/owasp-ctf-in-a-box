@@ -318,6 +318,8 @@ case "\$*" in
 *describe-services*)
   if [ -n "\${DESCRIBE_SERVICES_FAIL:-}" ]; then echo "An error occurred (AccessDeniedException)" >&2; exit 254; fi
   printf '%s\n' "\${APP_SERVICE_ACTIVE:-1}" ;;
+*update-service*)
+  if [ -n "\${UPDATE_SERVICE_FAIL:-}" ]; then echo "An error occurred (AccessDeniedException)" >&2; exit 254; fi ;;
 esac
 exit 0
 EOF
@@ -754,14 +756,34 @@ claim_code_of() { printf '%s\n' "$1" | grep -oE '([0-9a-f]{4}-){7}[0-9a-f]{4}' |
   [ "$put_at" -lt "$roll_at" ]
 }
 
-@test "a failed service check stops the deploy and says the code is set but not live" {
+@test "a failed service check stops the deploy, keeps the printed code, and says activation is pending" {
   repo="$(fake_repo)"
   applied_stack_stubs 0
   CLAIM_PARAM_VERSION=3 DESCRIBE_SERVICES_FAIL=1 run "$repo/deploy/aws-terraform/deploy.sh" --new-admin-code
   [ "$status" -ne 0 ]
-  echo "$output" | grep -qF 'not live yet'
+  code="$(claim_code_of "$output")"
+  [ -n "$code" ]
+  [ "$(printf '%s\n' "$output" | grep -cF "$code")" -eq 1 ]
+  echo "$output" | grep -qF 'activation is still'
   [ -z "$(grep '^aws ecs update-service' "$CALLS")" ]
   echo "$output" | grep -qF -- '--force-new-deployment'
+}
+
+# The hash is already stored when the roll fails, so that hash is the one the
+# next app task reads: losing the code here would leave a box nobody can
+# claim with a bootstrap code until the next --new-admin-code.
+@test "a failed roll after the SSM write still prints the code once and says activation is pending" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_VERSION=3 UPDATE_SERVICE_FAIL=1 run "$repo/deploy/aws-terraform/deploy.sh" --new-admin-code
+  [ "$status" -ne 0 ]
+  grep -q '^aws ssm put-parameter' "$CALLS"
+  grep -q '^aws ecs update-service' "$CALLS"
+  echo "$output" | grep -qF 'activation is still'
+  echo "$output" | grep -qF -- 'aws ecs update-service --region us-east-1 --cluster owasp-ctf --service app --force-new-deployment'
+  code="$(claim_code_of "$output")"
+  [ -n "$code" ]
+  [ "$(printf '%s\n' "$output" | grep -cF "$code")" -eq 1 ]
 }
 
 @test "--dry-run --new-admin-code calls nothing and prints no code" {

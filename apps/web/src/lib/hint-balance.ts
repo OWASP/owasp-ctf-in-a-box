@@ -19,7 +19,7 @@ import { upstashPipeline } from "@/lib/upstash";
  * the store imports this; `hint-config.ts` is the other half of that split.
  *
  * GROSS comes from the folded row. The board is the ONE place every module's
- * points are already summed per login (scorer, quiz, classic, ai — issue
+ * points are already summed per login (scorer, quiz, classic — issue
  * #520's fold order), so this cannot disagree with what the contestant sees.
  * The row's `points` is NET and floored at 0, with the penalty beside it as
  * `hintPenalty`, so `points + hintPenalty` recovers gross exactly whenever

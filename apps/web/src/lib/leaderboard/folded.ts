@@ -51,7 +51,7 @@ type Clock = () => number;
 // the fold itself). withModuleContributions attributes (and, for the app-side
 // modules, adds) each contestant row's gross per-module points, and
 // withTeamStandings folds rows into teams — it is the ONE stage that adds
-// quiz, classic and ai points to a team; the first stage only stamps a source
+// quiz and classic points to a team; the first stage only stamps a source
 // team's secure-development block (running both on the source's teams counted
 // those modules twice, issue #520). withHintPenalties then nets the final
 // all-module total exactly once, and withScoreAdjustments applies the

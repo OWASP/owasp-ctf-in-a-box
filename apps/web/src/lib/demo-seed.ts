@@ -37,9 +37,6 @@ import {
   DEMO_CLASSIC_CATEGORIES,
   DEMO_CLASSIC_SOLVES,
   DEMO_CLASSIC_ATTACHMENTS,
-  DEMO_AI_CHALLENGES,
-  DEMO_AI_CATEGORIES,
-  DEMO_AI_SOLVES,
   DEMO_SPONSORS,
 } from "@/lib/demo-fixture";
 import {
@@ -66,22 +63,6 @@ import {
   classicAttemptsKey,
   normalizeFlag,
 } from "@/lib/classic-keys";
-import {
-  AI_CHALLENGES_KEY,
-  AI_FLAG_KEY,
-  AI_FLAGNORM_KEY,
-  AI_CATEGORIES_KEY,
-  AI_CATEGORIES_MAX,
-  AI_SIGNKEY_KEY,
-  AI_HINTS_KEY,
-  AI_POINTS_KEY,
-  AI_SOLVED_KEY,
-  AI_SOLVECOUNT_KEY,
-  AI_LAST_AT_KEY,
-  aiSolvesKey,
-  aiAttemptsKey,
-  flagComparisonForm,
-} from "@/lib/ai-keys";
 import { SPONSORS_KEY, SPONSORS_LOGO_KEY } from "@/lib/sponsors-keys";
 
 // --- demo seed / clear (admin-gated dangerous settings) ---------------------
@@ -198,7 +179,7 @@ return 1
 // organizer had authored: their challenges survive (they are written
 // per-field, keyed by id) and the admin panel keeps listing them, but the
 // contestant board renders only categories present in the list, so three
-// authored AI challenges and 850 points of content silently leave the board
+// authored challenges and 850 points of content silently leave the board
 // while "1 category · 5 challenges" reads like a healthy setup. Master reset
 // is no way back: it deliberately preserves authored categories, so the list
 // it preserves is the seeded one.
@@ -214,7 +195,7 @@ return 1
 // written under whichever spelling that union kept.
 //
 // Membership is case-INSENSITIVE, mirroring `setCategories` and classic's
-// `importBundle`: "AI" and "ai" as two headings is never what anyone meant,
+// `importBundle`: "Web" and "web" as two headings is never what anyone meant,
 // and the board's filter is exact equality, so two casings would also split
 // challenges across them. The stored order is kept verbatim — it is the order
 // the board renders headings in — and unseen fixture names are appended.
@@ -231,8 +212,8 @@ if raw then
 end
 
 -- The union, and the fold -> surviving-spelling map the rows below are
--- rewritten through. Existing spellings win: renaming the organizer's "ai" to
--- the fixture's "AI" would hide THEIR challenges instead of ours.
+-- rewritten through. Existing spellings win: renaming the organizer's "web" to
+-- the fixture's "Web" would hide THEIR challenges instead of ours.
 local canon = {}
 local union = {}
 for _, name in ipairs(stored) do
@@ -357,12 +338,12 @@ export async function runDemoSeed(
   // must abort the seed, not fall back to seeding every module's data
   // regardless of what the organizer actually enabled — let that read throw
   // and propagate.
-  // The live module set, same read: which of quiz/classic/ai to seed demo
+  // The live module set, same read: which of quiz/classic to seed demo
   // data for must follow what this event is actually serving,
   // not what happened to be baked at build time.
   const live = new Set(settings.enabledModuleIds ?? defaultEnabledModules(process.env));
   // Secure Development demo data — only when the module is live, same gate
-  // reasoning as quiz/classic/ai below: a deployment with no scorer image
+  // reasoning as quiz/classic below: a deployment with no scorer image
   // (or one that switched the board off) must get a seed byte-for-byte
   // identical to having no secure-development data at all, not solve rows
   // for a board that isn't running.
@@ -598,108 +579,7 @@ export async function runDemoSeed(
     raiseSolveCounts(cmds, CLASSIC_SOLVECOUNT_KEY, solveCounts);
   }
 
-  // ai demo data — only when the module is enabled, same gate reasoning as
-  // quiz and classic above: a disabled ai module leaves the seed byte-for-byte
-  // identical to pre-ai behavior.
-  //
-  // Deliberately does NOT touch `AI_LAUNCHKEY_KEY`: that keypair is
-  // module-wide identity material, minted lazily on first real use
-  // (`getAiLaunchKeys` in ai-store.ts), never fixture data. Writing one here
-  // would hand every seeded demo event the SAME hardcoded private key.
-  const aiEnabled = live.has("ai");
-  let aiSolvesSeeded = 0;
-  if (aiEnabled) {
-    // Public challenge record ONLY, built field by field from `AiChallenge`'s
-    // own shape (mirrors the classic block above) — the flag and signing key
-    // live in DEMO_AI_CHALLENGES only so this function can derive their
-    // dedicated hashes, never by spreading the fixture object into
-    // ctf:ai:challenges. An event-only challenge (`mode: "event"`) writes
-    // NEITHER flag hash, matching how `upsertAiChallenge` treats a non-graded
-    // mode: signed events assert that solve, so there is no flag to grade.
-    const aiRecords = DEMO_AI_CHALLENGES.map((dc) => ({
-      id: dc.id,
-      title: dc.title,
-      // The fixture's spelling — the script rewrites it, same as classic's.
-      category: dc.category,
-      description: dc.description,
-      points: dc.points,
-      order: dc.order,
-      mode: dc.mode,
-      urlTemplate: dc.urlTemplate,
-    }));
-    seedCategoriesAndChallenges(
-      cmds,
-      AI_CATEGORIES_KEY,
-      AI_CHALLENGES_KEY,
-      DEMO_AI_CATEGORIES,
-      AI_CATEGORIES_MAX,
-      aiRecords,
-    );
-    for (const dc of DEMO_AI_CHALLENGES) {
-      if (dc.mode !== "event") {
-        cmds.push(["HSET", AI_FLAG_KEY, dc.id, dc.flag]);
-        cmds.push(["HSET", AI_FLAGNORM_KEY, dc.id, flagComparisonForm(dc.flag, dc.caseSensitive)]);
-      }
-      // A fixed, obviously-fake demo key rather than a fresh `generateSigningKey()`
-      // mint — same choice the classic block above makes for its flag: a
-      // reproducible fixture, not fresh CSPRNG output on every seed run.
-      cmds.push(["HSET", AI_SIGNKEY_KEY, dc.id, dc.signingKey]);
-      if (dc.hint) cmds.push(["HSET", AI_HINTS_KEY, dc.id, dc.hint]);
-    }
-
-    const aiChallengesById = new Map(DEMO_AI_CHALLENGES.map((c) => [c.id, c]));
-    const aiAggregates = new Map<string, { points: number; solved: number; lastAt: string }>();
-    const aiSolveCounts = new Map<string, number>();
-    const nAiSolves = DEMO_AI_SOLVES.length;
-    DEMO_AI_SOLVES.forEach(({ login: demoLogin, challengeId }, i) => {
-      const player = demoPlayerId(demoLogin);
-      const challenge = aiChallengesById.get(challengeId);
-      if (!challenge) return; // fixture-consistency guard; should never trigger
-      const frac = nAiSolves > 0 ? (i + 0.5) / nAiSolves : 0.5;
-      const at = new Date(base + Math.min(0.999, frac) * spanMs).toISOString();
-      cmds.push(["HSET", aiSolvesKey(player), challengeId, JSON.stringify({ points: challenge.points, at })]);
-      // Same reasoning as the quiz/classic attempt rows above: index-derived,
-      // not random, so the seed is reproducible.
-      cmds.push(["HSET", aiAttemptsKey(player), challengeId, demoAttemptRow(1 + ((i + 2) % 3), at, 3 + (i % 6), base)]);
-
-      const agg = aiAggregates.get(player) ?? { points: 0, solved: 0, lastAt: at };
-      agg.points += challenge.points;
-      agg.solved += 1;
-      if (Date.parse(at) > Date.parse(agg.lastAt)) agg.lastAt = at;
-      aiAggregates.set(player, agg);
-
-      aiSolveCounts.set(challengeId, (aiSolveCounts.get(challengeId) ?? 0) + 1);
-      aiSolvesSeeded++;
-    });
-    // Unsolved attempts, same reasoning as the quiz/classic blocks above.
-    const aiSolvedBy = new Map<string, Set<string>>();
-    for (const { login: demoLogin, challengeId } of DEMO_AI_SOLVES) {
-      const player = demoPlayerId(demoLogin);
-      const set = aiSolvedBy.get(player) ?? new Set<string>();
-      set.add(challengeId);
-      aiSolvedBy.set(player, set);
-    }
-    DEMO_CONTESTANTS.forEach((c, ci) => {
-      const solved = aiSolvedBy.get(demoPlayerId(c.login)) ?? new Set<string>();
-      const missed = DEMO_AI_CHALLENGES.find((ch) => !solved.has(ch.id));
-      if (!missed) return;
-      const at = new Date(base + Math.min(0.999, (ci + 0.5) / n) * spanMs).toISOString();
-      cmds.push(["HSET", aiAttemptsKey(demoPlayerId(c.login)), missed.id, demoAttemptRow(2 + (ci % 2), at, 5 + (ci % 3), base)]);
-    });
-
-    // Aggregates written as the final absolute total (not HINCRBY'd), mirroring
-    // the quiz/classic aggregates above — idempotent on a second seed run, and
-    // CONSISTENT with the per-player solve rows and solvecount by construction
-    // (both folded from the same DEMO_AI_SOLVES list in this same pass).
-    for (const [player, agg] of aiAggregates) {
-      cmds.push(["HSET", AI_POINTS_KEY, player, agg.points]);
-      cmds.push(["HSET", AI_SOLVED_KEY, player, agg.solved]);
-      cmds.push(["HSET", AI_LAST_AT_KEY, player, agg.lastAt]);
-    }
-    raiseSolveCounts(cmds, AI_SOLVECOUNT_KEY, aiSolveCounts);
-  }
-
-  // Sponsors — a platform feature, not a module, so unlike quiz/classic/ai
+  // Sponsors — a platform feature, not a module, so unlike quiz/classic
   // above this is never gated on `live`: an organizer previewing the demo
   // with every module off still sees what the sponsors feature looks like.
   // The logo's `bytes`/`etag` are derived from the fixture's own base64 data
@@ -736,7 +616,6 @@ export async function runDemoSeed(
     ...(classicEnabled
       ? { classicChallenges: DEMO_CHALLENGES.length, classicSolves: classicSolvesSeeded }
       : {}),
-    ...(aiEnabled ? { aiChallenges: DEMO_AI_CHALLENGES.length, aiSolves: aiSolvesSeeded } : {}),
     sponsors: DEMO_SPONSORS.length,
   });
   // Tracked BEFORE the two audit commands below, so their own failure is
@@ -782,7 +661,7 @@ export async function runDemoSeed(
  * RUN-STATE rows seeding fabricates (fake solves/attempts, the aggregate
  * points/solved/answered hashes, the demo teams and the membership fields
  * stamped onto their members, the demo sponsors) but leaves the demo
- * quiz/classic/ai QUESTIONS, CHALLENGES, FLAGS and CATEGORIES alone. That
+ * quiz/classic QUESTIONS, CHALLENGES, FLAGS and CATEGORIES alone. That
  * mirrors `resetEvent`'s own philosophy one section up: once written, a
  * challenge record is authored content, not run state, and this function
  * has no more business deleting it unprompted than a master reset does —
@@ -820,7 +699,7 @@ export async function clearDemoData(actor: AuditActor): Promise<{ contestants: n
     for (const m of t.members) cmds.push(["HDEL", `ctf:user:${demoPlayerId(m)}`, "team", "joinedAt", "firstTeamAt"]);
   }
 
-  // Per-login solve/attempt/aggregate rows for all three content modules,
+  // Per-login solve/attempt/aggregate rows for both content modules,
   // same "attempt regardless of what's live now" reasoning as the
   // secure-development block above.
   for (const c of DEMO_CONTESTANTS) {
@@ -835,12 +714,6 @@ export async function clearDemoData(actor: AuditActor): Promise<{ contestants: n
     cmds.push(["HDEL", CLASSIC_POINTS_KEY, demoPlayerId(c.login)]);
     cmds.push(["HDEL", CLASSIC_SOLVED_KEY, demoPlayerId(c.login)]);
     cmds.push(["HDEL", CLASSIC_LAST_AT_KEY, demoPlayerId(c.login)]);
-
-    cmds.push(["DEL", aiSolvesKey(demoPlayerId(c.login))]);
-    cmds.push(["DEL", aiAttemptsKey(demoPlayerId(c.login))]);
-    cmds.push(["HDEL", AI_POINTS_KEY, demoPlayerId(c.login)]);
-    cmds.push(["HDEL", AI_SOLVED_KEY, demoPlayerId(c.login)]);
-    cmds.push(["HDEL", AI_LAST_AT_KEY, demoPlayerId(c.login)]);
   }
 
   // The demo accounts, after the rows that are keyed by their ids.

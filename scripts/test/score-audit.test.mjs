@@ -35,7 +35,7 @@ const P = {
   frank: "f6666666-6666-4666-8666-666666666666",
 };
 
-// The store. Worked totals (ai is switched OFF; hints are on by default):
+// The store. Worked totals (hints are on by default):
 //   alice  SD c1=10 (+ an id the rubric lacks, ignored) + quiz 40      = 50 − 3 (spent as "Alice") = 47, 3 items
 //   bob    SD c1+c2=30 + quiz 10                                        = 40 − 7                    = 33, 3 items
 //   carol  SD c2+w1=25 + classic 100                                    = 125,                         3 items
@@ -43,7 +43,7 @@ const P = {
 // Ranks are points first (#522): erin and frank (50, 1 item) sit above alice
 // (47, 3 items) and bob (33, 3 items), where the old items-first rule put
 // them last.
-//   dave   ai 500 only — ai is off, so no row at all
+//   dave   nothing in any module, so no row at all
 // Teams: red [alice, bob]: SD union {c1,c2}=30, quiz union {q1 (bob's, earlier), q2}=40 → 70 − (3+7) = 60
 //        blue [carol] — carol MOVED here from red: all her solves, including
 //        those made before the move, count for blue and none for red → 125
@@ -64,12 +64,10 @@ export function snapshot() {
     agg: {
       quiz: { points: { [P.alice]: "40", [P.bob]: "10" }, count: { [P.alice]: "2", [P.bob]: "1" } },
       classic: { points: { [P.carol]: "100", [P.erin]: "50", [P.frank]: "50" }, count: { [P.carol]: "1", [P.erin]: "1", [P.frank]: "1" } },
-      ai: { points: { [P.dave]: "500" }, count: { [P.dave]: "1" } },
     },
     rows: {
       quiz: { [P.alice]: { q1: row(10, T(20)), q2: row(30, T(21)) }, [P.bob]: { q1: row(10, T(10)) }, [P.carol]: {}, [P.erin]: {}, [P.frank]: {}, [P.dave]: {} },
       classic: { [P.alice]: {}, [P.bob]: {}, [P.carol]: { k2: row(100, T(30)) }, [P.erin]: { k1: row(50, T(31)) }, [P.frank]: { k1: row(50, T(32)) }, [P.dave]: {} },
-      ai: { [P.alice]: {}, [P.bob]: {}, [P.carol]: {}, [P.erin]: {}, [P.frank]: {}, [P.dave]: { a1: row(500, T(40)) } },
     },
     hintsSpent: { [P.bob]: "7", [P.alice.toUpperCase()]: "3" },
     teams: [
@@ -164,7 +162,7 @@ test("the recompute matches the hand-worked totals", () => {
   assert.equal(exp.stats.sdSolvesIgnored, 1);
 });
 
-// #522: the app's quiz/classic/ai totals carry each login's latest award time
+// #522: the app's quiz/classic totals carry each login's latest award time
 // (ctf:<m>:lastAt), and rank.ts breaks a points+items tie on the newest time
 // across a row's modules. erin and frank are a full tie without it.
 test("an app-side award time breaks a points-and-items tie, earlier first", () => {
@@ -175,10 +173,10 @@ test("an app-side award time breaks a points-and-items tie, earlier first", () =
   const [f, e] = [exp.entries.get(P.frank).rankRange, exp.entries.get(P.erin).rankRange];
   assert.equal(f[0], f[1], "frank's rank is no longer a range");
   assert.equal(e[0], f[0] + 1, "erin ranks directly after frank");
-  // A time for a module that is not live, or on a row with nothing completed
-  // in it, does not count — the app never builds that module block.
+  // A time on a row with nothing completed in it does not count — the app
+  // never builds that module block.
   const off = snapshot();
-  off.agg.ai.lastAt = { [P.erin]: T(1) };
+  off.agg.quiz.lastAt = { [P.erin]: T(1) };
   off.agg.classic.lastAt = { [P.frank]: T(31) };
   const r = recompute(off);
   const [f2, e2] = [r.entries.get(P.frank).rankRange, r.entries.get(P.erin).rankRange];
@@ -228,7 +226,7 @@ test("a hint penalty the board forgot, a wrong module block, a rank out of place
   b.entries[0].modules.classic = mod(90, 1);
   b.entries[3].rank = 1;
   b.entries[0].rank = 4;
-  b.entries.push({ rank: 6, playerId: P.dave, name: "dave", team: null, points: 500, patched: 0, apps: {}, modules: { ai: mod(500, 1) } });
+  b.entries.push({ rank: 6, playerId: P.dave, name: "dave", team: null, points: 500, patched: 0, apps: {}, modules: { quiz: mod(500, 1) } });
   b.teams.pop();
   const fields = audit(snapshot(), toFlight(b)).mismatches.map((m) => `${m.who}/${m.module ?? ""}/${m.field}`);
   const c = (k) => `contestant ${P[k]} (${k})`;

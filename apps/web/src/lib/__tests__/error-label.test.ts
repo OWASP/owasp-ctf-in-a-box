@@ -38,9 +38,9 @@ describe("errorLabel", () => {
   });
 });
 
-// #500 (M12): "cannot drift" only holds if there is ONE implementation. Two
-// byte-identical copies (`ai-http.ts`'s local `errorLabel`, `admin-store.ts`'s
-// `adminErrorLabel`) had grown back next to this one; a fix to the shared
+// #500 (M12): "cannot drift" only holds if there is ONE implementation. A
+// byte-identical copy (`admin-store.ts`'s `adminErrorLabel`) had grown back
+// next to this one; a fix to the shared
 // label — a tighter cap, a new redaction — would silently skip them. Walk the
 // app's source and refuse any other body that builds the label by hand.
 describe("errorLabel has exactly one implementation", () => {

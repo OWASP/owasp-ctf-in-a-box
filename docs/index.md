@@ -25,23 +25,19 @@ module contributed, and its per-target breakdown.</sup>
 OWASP CTF in a Box is a control plane, not a single game. It gives an event its
 shared spine — a GitHub org, team registration, a live leaderboard, an
 organizer admin panel, and the scoring pipeline that feeds it — and **modules**
-plug challenge content into that spine. Four modules ship in v1.x — **OWASP
-Secure Development**, **Quiz**, **Jeopardy** and **AI**, the last deprecated
-and removed in v2.0.0 (run AI security challenges as Jeopardy challenges with
-flags instead) — and any subset can run alone or together; the box is built to host further modules on the same
+plug challenge content into that spine. Three modules ship — **OWASP
+Secure Development**, **Quiz** and **Jeopardy** — and any subset can run alone or together; the box is built to host further modules on the same
 spine. The [module contract](modules.md) is the boundary between platform and
 module.
 
 The **Secure Development** module teaches defence rather than attack: a
 contestant forks a deliberately vulnerable app, finds the flaw, **patches** it,
 and opens a pull request. The pipeline scores the patch and the score lands
-on a **team** leaderboard. **Quiz**, **Jeopardy** and **AI** need none of that
+on a **team** leaderboard. **Quiz** and **Jeopardy** need none of that
 machinery — no forks, no GitHub org, no scoring pipeline. They are graded
 inside the app, so an event running only those boots with a single compose
 profile. Their organizer guides are
-[Quiz](operations.md#quiz), [Jeopardy](operations.md#jeopardy) and
-[AI](operations.md#ai) (deprecated) — AI additionally has its own external
-integrator contract, [ai-module.md](ai-module.md).
+[Quiz](operations.md#quiz) and [Jeopardy](operations.md#jeopardy).
 
 Until now, running one meant standing up Vercel, Upstash, Lambda and DynamoDB,
 holding the cloud bill, and having access to a private scoring image. This kit
@@ -61,7 +57,7 @@ scoring code to write.
 | **Organizer admin panel** | `/admin`, allowlisted: freeze the leaderboard, schedule scoring and registration windows, toggle hints, set the team cap and score cooldown, grant admin to others, author each module's content, reset between rehearsals. |
 | **Live-event support** | Act on one contestant or one team without wiping the event: reset progress, delete a contestant, take over a captainless team. Every action audited with actor and target. |
 | **Engagement metrics** | Participation funnel, solves over time, per-challenge difficulty and hint usage — folded out of data the box already stores, with no telemetry from contestants' forks. |
-| **Scoring pipeline** | GitHub-Actions-fed poll transport, one audited score writer — for modules graded outside the app. Quiz, Jeopardy and AI bank points directly and never touch it. |
+| **Scoring pipeline** | GitHub-Actions-fed poll transport, one audited score writer — for modules graded outside the app. Quiz and Jeopardy bank points directly and never touch it. |
 | **Zero inbound surface** | Scores arrive by outbound polling, so nothing has to reach your box from the internet. |
 | **One box, no cloud** | Docker Compose plus one free GitHub org. Nothing billed, nothing phones home. |
 
@@ -227,8 +223,8 @@ Pick the doc for what you're doing right now:
 
 - [Operations](operations.md) — teams, the admin panel, live-event support,
   verifying the kit, the local dev-stack, and teardown. It also carries the
-  three app-side modules' organizer guides: [Quiz](operations.md#quiz),
-  [Jeopardy](operations.md#jeopardy) and [AI](operations.md#ai).
+  two app-side modules' organizer guides: [Quiz](operations.md#quiz) and
+  [Jeopardy](operations.md#jeopardy).
 - [Troubleshooting](troubleshooting.md) — the mid-event runbook: symptom,
   diagnosis, fix.
 
@@ -237,9 +233,6 @@ Pick the doc for what you're doing right now:
 - [Architecture](architecture.md) — what runs where, how a score gets from a
   contestant's PR to the leaderboard.
 - [Module contract](modules.md) — what a CTF vertical must satisfy to plug in.
-- [AI module](ai-module.md) — deprecated, removed in v2.0.0. The external
-  integrator's contract for the `ai` module: launch tokens, verifying them,
-  and reporting a solve back.
 - [Scorer](scorer.md) — both rubric grammars, building your own scorer image,
   and wiring the self-contained scoring workflow.
 - [Decisions](decisions.md) — numbered ADRs for why the kit is built the way

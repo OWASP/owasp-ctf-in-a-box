@@ -91,18 +91,6 @@ export const RATE_LIMITS = {
    *  human pace: a contestant clicking through every hint on a page must
    *  never hit it. */
   hintReveal: { bucket: "hint-reveal", limit: 30, windowSeconds: 60 },
-  /** The ai module's cross-origin routes, keyed on `token.sub` — the only
-   *  identity these cookie-blind endpoints have. Generous, because a legitimate
-   *  external challenge may poll `/state` and retry a submission; the job is
-   *  bounding a runaway or a leaked token, not rationing play. */
-  aiSubmit: { bucket: "ai-submit", limit: 60, windowSeconds: 60 },
-  aiEvent: { bucket: "ai-event", limit: 60, windowSeconds: 60 },
-  aiState: { bucket: "ai-state", limit: 120, windowSeconds: 60 },
-  /** The admin "Send test" button (`admin/ai/test/route.ts`), keyed on the
-   *  admin's own login. Bounds accidental repeated clicks, not a real
-   *  workload — an organizer testing one challenge's wiring has no reason to
-   *  approach this in a normal session. */
-  aiAdminTest: { bucket: "ai-admin-test", limit: 10, windowSeconds: 60 },
 } as const;
 
 /** Every rate-limit counter `player` can hold, one per budget above. The

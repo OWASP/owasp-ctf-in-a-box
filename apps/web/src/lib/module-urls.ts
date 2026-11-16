@@ -7,8 +7,8 @@
 // untidy.
 //
 // Dependency-free by contract, the one activity-keys.ts keeps. `modules.ts`
-// re-exports all three, so their callers keep one import: `site.ts`, the home
-// page and the AI setup component all still read them from `@/lib/modules`.
+// re-exports all three, so their callers keep one import: `site.ts` and the
+// home page read them from `@/lib/modules`.
 
 /** OWASP's own playbook for pointing an AI agent at a codebase. Needed by
  *  `secure-development`'s def (its recommendation, and its copy links to it)

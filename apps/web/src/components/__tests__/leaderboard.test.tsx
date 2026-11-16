@@ -598,7 +598,7 @@ describe("leaderboard edge cases (#481)", () => {
 
 // #552: Secure Development points — and a newly-joined member's existing
 // points — fold into a team total only on the next sync poll (~1 min), while
-// classic/quiz (and ai) fold app-side and show live. A player who just solved
+// classic/quiz fold app-side and show live. A player who just solved
 // can briefly see a stale total and read it as broken. A one-line cadence note
 // sets the expectation. It is scoped to events that actually run Secure
 // Development, since that is the only module whose totals lag, and it names the

@@ -240,7 +240,7 @@ export default function Leaderboard({
   const boardIsEmpty = data.entries.length === 0 && data.teams.length === 0;
 
   // Secure Development totals fold in on the next sync poll (~1 min), unlike
-  // classic/quiz (and ai), which fold app-side and show live — so a just-earned
+  // classic/quiz, which fold app-side and show live — so a just-earned
   // SD point or a teammate who just joined can briefly leave a team total
   // looking stale. A cadence note sets that expectation, but only on an event
   // that actually runs Secure Development, since that is the only module whose

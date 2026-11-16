@@ -37,14 +37,6 @@ import { getGithubLink } from "@/lib/github-link";
 import { errorLabel } from "@/lib/error-label";
 import LinkGithubButton from "@/components/link-github-button";
 import { firstParam, linkNotice } from "@/app/(site)/profile/link-notice";
-import {
-  getAiTotals,
-  getViewerAi,
-  listAiChallenges,
-  type AiChallenge,
-  type AiTotal,
-  type ViewerAi,
-} from "@/lib/ai-store";
 import { listStories,
   getClassicTotals,
   getTeamClassicTotalsBatch,
@@ -120,7 +112,6 @@ export default async function ProfilePage({
   const liveModules = await getEnabledModuleIds();
   const quizEnabled = liveModules.has("quiz");
   const classicEnabled = liveModules.has("classic");
-  const aiEnabled = liveModules.has("ai");
   const secureDevEnabled = liveModules.has("secure-development");
 
   // A failed read omits the GitHub block rather than 500ing the whole page.
@@ -136,11 +127,11 @@ export default async function ProfilePage({
   const linkMessage =
     githubLink === undefined ? null : linkNotice(firstParam(params?.error), firstParam(params?.linked), githubLink !== null);
 
-  // Quiz/classic/ai totals and item lists are per-login and cheap to fetch
+  // Quiz/classic totals and item lists are per-login and cheap to fetch
   // here regardless of board size (two HGETALLs each — see getQuizTotals /
-  // getClassicTotals / getAiTotals), but only when the module is enabled:
+  // getClassicTotals), but only when the module is enabled:
   // this must never read `ctf:quiz:*` when quiz is off, nor `ctf:classic:*`
-  // when classic is, nor `ctf:ai:*` when ai is. `resolvedModules`
+  // when classic is. `resolvedModules`
   // (organizer-renamed titles) is what drives the per-module breakdown below
   // off the enabled-module LIST rather than a per-module branch — see the
   // module block loop.
@@ -152,11 +143,8 @@ export default async function ProfilePage({
     quizQuestions,
     classicTotals,
     classicChallenges,
-    aiTotals,
-    aiChallenges,
     viewerQuiz,
     viewerClassic,
-    viewerAi,
     resolvedModules,
     maxMembers,
     adminSettings,
@@ -175,13 +163,10 @@ export default async function ProfilePage({
       // is out of the list, every denominator and the points ceiling. Points
       // banked on it stay, named by the "no longer on the board" line below.
       classicEnabled ? listChallenges().then(visibleNow) : Promise.resolve([] as Challenge[]),
-      aiEnabled ? getAiTotals() : Promise.resolve(new Map<string, AiTotal>()),
-      aiEnabled ? listAiChallenges() : Promise.resolve([] as AiChallenge[]),
       // The viewer's OWN per-item progress, for the blocks' Show-N lists —
       // the same reads the boards themselves make, module-gated identically.
       quizEnabled ? getViewerQuiz(playerId) : Promise.resolve<ViewerQuiz>({ answered: {}, attempts: {} }),
       classicEnabled ? getViewerClassic(playerId) : Promise.resolve<ViewerClassic>({ solved: {}, attempts: {} }),
-      aiEnabled ? getViewerAi(playerId) : Promise.resolve<ViewerAi>({ solved: {}, attempts: {} }),
       getResolvedModules(),
       // The SAME resolver joinTeam uses. Reading TEAM_MAX_MEMBERS here instead
       // would advertise a limit the join path does not enforce — the split
@@ -230,15 +215,13 @@ export default async function ProfilePage({
   const quizPoints = quizTotal?.points ?? 0;
   const classicTotal = classicTotals.get(playerId);
   const classicPoints = classicTotal?.points ?? 0;
-  const aiTotal = aiTotals.get(playerId);
-  const aiPoints = aiTotal?.points ?? 0;
   // Net-of-hints TOTAL: the penalty subtracts from the all-module sum,
   // floored at 0 — the same math (and the same single application) as the
   // board's withHintPenalties, which now runs as the pipeline's LAST stage.
   // Netting scorer points alone (the old form) made hints free whenever the
-  // spend exceeded scorer points — every classic-, quiz-, or ai-heavy
+  // spend exceeded scorer points — every classic- or quiz-heavy
   // contestant.
-  const netPoints = Math.max(0, (profile?.points ?? 0) + quizPoints + classicPoints + aiPoints - viewerHints.spent);
+  const netPoints = Math.max(0, (profile?.points ?? 0) + quizPoints + classicPoints - viewerHints.spent);
   // The bar's denominator covers every enabled module, because its numerator
   // does: netPoints already includes quiz and classic. Dividing an all-module
   // numerator by secure-development's maxPoints alone (the old behaviour) let
@@ -247,7 +230,6 @@ export default async function ProfilePage({
   // deleted question/challenge deliberately leaves banked points in place, so
   // the numerator can legitimately exceed a shrunken denominator.
   const quizMaxPoints = quizQuestions.reduce((sum, q) => sum + (Number(q.points) || 0), 0);
-  const aiMaxPoints = aiChallenges.reduce((sum, c) => sum + (Number(c.points) || 0), 0);
   // Only the apps the event actually enabled — same filter the per-app grid
   // used before this task, kept so a target an organizer turned off never
   // shows up in the breakdown just because a stale scored row mentions it.
@@ -340,7 +322,6 @@ export default async function ProfilePage({
     classic: classicEnabled
       ? { total: classicTotal, challenges: classicChallenges, maxPoints: classicReachableMaxPoints, viewer: viewerClassic, locked: classicLocked, reachableTotal: classicReachableTotal, lockedCount: classicLockedCount }
       : undefined,
-    ai: aiEnabled ? { total: aiTotal, challenges: aiChallenges, maxPoints: aiMaxPoints, viewer: viewerAi } : undefined,
   };
 
   // The same union the module rows use, so the header cannot disagree with the
@@ -402,11 +383,6 @@ export default async function ProfilePage({
       unit: moduleUnit("classic"),
       done: classicTotal?.solved ?? 0,
       total: Math.max(classicReachableTotal, classicTotal?.solved ?? 0),
-    },
-    aiEnabled && aiChallenges.length > 0 && {
-      unit: moduleUnit("ai"),
-      done: aiTotal?.solved ?? 0,
-      total: Math.max(aiChallenges.length, aiTotal?.solved ?? 0),
     },
   ].filter((t): t is StatTile => Boolean(t));
   const remainingModules = remainingFor(resolvedModules, moduleInput);

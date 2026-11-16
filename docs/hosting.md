@@ -424,7 +424,7 @@ docker compose --profile secdev --profile app up -d   # SCORE_IMAGE set
 
 Pick the line that matches your `.env` — the same two-way choice as the
 bring-up table above. `secdev` is added **iff `SCORE_IMAGE` is non-empty** (a
-quiz-, Jeopardy- or AI-only event has no scorer image to pull, and passing the
+quiz- or Jeopardy-only event has no scorer image to pull, and passing the
 profile anyway fails at `up` on the private upstream fallback).
 
 Nothing else changes: no data migration, and the `redis-data` volume is
@@ -537,13 +537,13 @@ image it has no reason to own.
 
 **Profiles and `SCORE_IMAGE` are two separate choices that have to agree, not
 one setting picking both.** You choose the profile at `up`: `--profile app`
-alone for a quiz/classic/ai-only event, `--profile secdev --profile app` with
+alone for a quiz- or classic-only event, `--profile secdev --profile app` with
 Secure Development. That second line needs an *accessible* `SCORE_IMAGE` — the
 compose fallback image is private, so bringing `secdev` up without your own
 `SCORE_IMAGE` set fails the pull. Separately, the app's
 DEFAULT module set (what an organizer sees on first opening `/admin`, and
 the outage fallback) follows `SCORE_IMAGE` on its own: Secure Development
-alone when it is set, nothing when it is not — Quiz, Jeopardy and AI are
+alone when it is set, nothing when it is not — Quiz and Jeopardy are
 switched on from the panel (#386). Nothing enforces that the two agree, so
 keep them in sync yourself: never bring the `secdev` profile up without a
 `SCORE_IMAGE`, or the scorer container has nothing to score against.
@@ -556,9 +556,9 @@ start. Pick the command by what that file says:
 | Your event | Command |
 |---|---|
 | Secure Development (`SCORE_IMAGE` set) | `docker compose --profile secdev --profile app up -d --build` |
-| No Secure Development (`SCORE_IMAGE` empty) — quiz and/or classic and/or ai | `docker compose --profile app up -d --build` |
+| No Secure Development (`SCORE_IMAGE` empty) — quiz and/or classic | `docker compose --profile app up -d --build` |
 
-Quiz, Jeopardy and AI need no profile of their own: they are app-side modules,
+Quiz and Jeopardy need no profile of their own: they are app-side modules,
 they run inside the `app` container, and an organizer switches them on from
 `/admin` at any time without touching compose. `ctf-setup.sh wizard` prints
 (and offers to run) the right line for the `.env` you answered into, so you do
@@ -860,7 +860,7 @@ Everything below is a runtime setting in `ctf:admin:settings`, changed from the
 panel while the event is running, and covered in
 [docs/operations.md](operations.md#organizer-admin-panel):
 
-- **Which modules run** — Event → Modules. Quiz, Jeopardy and AI are switched on
+- **Which modules run** — Event → Modules. Quiz and Jeopardy are switched on
   and off live; so is Secure Development, whenever `SCORE_IMAGE` is set.
 - **Which Secure Development targets run** — Secure Development → Targets. The
   setup script forks and provisions all six; the panel picks the live subset,
@@ -872,23 +872,23 @@ panel while the event is running, and covered in
   scoring closes, and the manual pause.
 - **Hints, teams and caps** — the hint switch and prices, the registration
   window, and players per team.
-- **Module content** — quiz questions, Jeopardy challenges and flags, AI
-  challenges: all authored in the panel, all exportable through the event
+- **Module content** — quiz questions, Jeopardy challenges and flags:
+  all authored in the panel, all exportable through the event
   archive.
 
 None of it needs a restart, a rebuild, or an edit on the box.
 
 ### Modules: registration is code, enablement is runtime
 
-Four module ids are registered today — `secure-development`, `quiz`, `classic`
-and `ai`. **Registration is deliberately static** (ADR 35): a module id exists
+Three module ids are registered today — `secure-development`, `quiz` and
+`classic`. **Registration is deliberately static** (ADR 35): a module id exists
 because the kit ships code for it — `apps/web/src/lib/modules.ts`'s `ModuleId`
 union and its registry are the whole list. There is no config-file namespace to
 add one to and no dynamic discovery; see
 [docs/modules.md](modules.md) for what a new module has to provide.
 
 **Enablement is entirely runtime.** Every `app` image ships the routes, nav
-entries and admin tabs for all four, so switching one on in `/admin` → Event →
+entries and admin tabs for all three, so switching one on in `/admin` → Event →
 Modules takes effect on the next request, and switching it off hides it the
 same way. Nothing about which modules run is decided at build time any more,
 and nothing about it is decided in `.env` — except that `SCORE_IMAGE` decides

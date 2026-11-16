@@ -8,6 +8,22 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Removed: the AI module (#729).** The module ADR 69 deprecated in v1.1.0
+  is deleted: the `/ai` and `/ai/[id]` pages, every `/api/ai/*` route
+  (`submit`, `event`, `state`, `launch-key`), `/api/admin/ai` and the AI admin
+  panel, its libraries, award Lua script and upstash suite,
+  `scripts/acceptance-ai-only.sh` with its `ai-only` CI job and
+  `make acceptance-ai-only` target, and `docs/ai-module.md`. The module
+  registry holds Secure Development, Quiz and Jeopardy; the master reset, the
+  per-contestant reset, the demo seed, the event archive, hints, metrics, the
+  leaderboard and the profile carry no AI branch, and the proxy's
+  `/api/ai/*` CSRF exemption is gone. Run AI security challenges as Jeopardy
+  challenges with flags (ADR 69, ADR 71).
+  **Breaking:** the AI module, its routes, its `aiCooldownSec` setting and
+  its acceptance script are gone, and an external challenge site has no
+  launch key or event endpoint to call. Nothing migrates: v2 refuses a Redis
+  holding v1 data and does not read v1 archives, so an event that wants its
+  AI results records them from its v1.x box before upgrading.
 - **Added: GitHub linking, and held Secure Development scores (#741).** With
   Secure Development on, a player links a GitHub account from their profile
   or by signing in with GitHub; one GitHub account links to one kit account,

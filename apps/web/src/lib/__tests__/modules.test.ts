@@ -41,15 +41,15 @@ describe("module registry — negative enablement", () => {
 });
 
 // Issue #249: secure-development's contestant copy said that revealing a hint
-// costs points; classic's and ai's did not, though all three sell hints
-// through the same gate. On a classic- or ai-only event a contestant learned
+// costs points; classic's did not, though both sell hints
+// through the same gate. On a classic-only event a contestant learned
 // the price only from the reveal button itself.
 describe("hint cost is stated wherever hints are sold", () => {
   // Driven by `HintTarget` (hint-store.ts) rather than a list written out
   // here: the modules that sell hints are secure-development (via its
-  // targets), classic and ai. A fourth one added to that union without this
+  // targets) and classic. A third one added to that union without this
   // copy should fail here rather than ship silently.
-  const SELL_HINTS = ["secure-development", "classic", "ai"] as const;
+  const SELL_HINTS = ["secure-development", "classic"] as const;
 
   // Real contexts, not a cast. `rules` takes a `RulesContext` and `terms` an
   // `OrgContext` (the same plus `githubOrg`) — an `as never` fixture with the

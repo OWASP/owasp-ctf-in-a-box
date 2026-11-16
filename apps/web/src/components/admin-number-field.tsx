@@ -2,7 +2,7 @@
 
 // The one numeric settings knob, used by every tab that has one (Event's
 // players-per-team and hint knobs, Secure Development's re-run cooldown, the
-// quiz retry gate, classic's and ai's cooldowns). Before this each tab wrote
+// quiz retry gate, classic's cooldown). Before this each tab wrote
 // the same <label>/<input> pair by hand and none of them said whether the
 // value saved: a blur-commit went out, a junk value snapped back with no
 // message, and a server rejection landed as a developer-keyed string under

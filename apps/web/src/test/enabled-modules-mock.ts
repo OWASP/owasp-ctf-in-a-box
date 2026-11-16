@@ -23,7 +23,7 @@
  */
 import type { ModuleId } from "@/lib/modules";
 
-const KNOWN: readonly ModuleId[] = ["secure-development", "quiz", "classic", "ai"];
+const KNOWN: readonly ModuleId[] = ["secure-development", "quiz", "classic"];
 
 // `getResolvedModules` (in `@/lib/resolved-modules`) reads its settings
 // snapshot through `getAdminSettingsSnapshot`, so a suite that renders module

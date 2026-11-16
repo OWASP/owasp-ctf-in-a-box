@@ -17,7 +17,7 @@ node_modules/
 event.yaml
 event.yaml.*
 # Anchored to the repo root on purpose: an unanchored `state/` also swallows
-# source directories (apps/web/src/app/api/ai/state/ was force-added past it).
+# any source directory named `state/`.
 /state/
 
 # internal planning docs — keep local, never commit

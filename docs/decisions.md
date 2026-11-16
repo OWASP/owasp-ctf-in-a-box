@@ -86,6 +86,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 68 — A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock](#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock)
 - [ADR 69 — The AI module is retired; AI security challenges run as Jeopardy challenges with flags](#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags)
 - [ADR 70 — Unattributed Secure Development scores are held, not dropped](#adr-70-unattributed-secure-development-scores-are-held-not-dropped)
+- [ADR 71 — The AI module is retired in v2.0.0](#adr-71-the-ai-module-is-retired-in-v200)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -1931,7 +1932,7 @@ organizer hardening checklist ([#44](https://github.com/OWASP/owasp-ctf-in-a-box
 
 ## ADR 40. CSRF assertion in the proxy, rate limits keyed on the login
 
-**Status.** Accepted.
+**Status.** Accepted. The ADR 53 amendment's `/api/ai/*` exemption is superseded 2026-11-15 by [ADR 71](#adr-71-the-ai-module-is-retired-in-v200): v2.0.0 has no `/api/ai/*` routes, so the proxy carries no AI carve-out and those paths take the origin check like any other.
 
 **Context.** The custom API routes (`/api/admin/*`, `/api/team/*`,
 `/api/hints/reveal`, `/api/quiz/answer`, `/api/classic/submit`) authenticate
@@ -2976,7 +2977,7 @@ under-disclosure is the wrong direction to be wrong in.
 
 ## ADR 53. ai launch tokens are asymmetric; event signatures stay symmetric
 
-**Status.** Superseded 2026-11-09 by [ADR 69](#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags) — the `ai` module is deprecated and deleted in v2.0.0, taking both signatures with it. Until then this entry still describes every v1.x box. The body below is kept as the record of the decision as it stood.
+**Status.** Superseded 2026-11-09 by [ADR 69](#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags) — the `ai` module is deprecated and deleted in v2.0.0, taking both signatures with it. Until then this entry still describes every v1.x box. The deletion is recorded 2026-11-15 by [ADR 71](#adr-71-the-ai-module-is-retired-in-v200). The body below is kept as the record of the decision as it stood.
 
 **Context.** An `ai` challenge is hosted outside the box. Two signatures make
 that work: the box mints a per-user **launch token** the contestant carries to
@@ -4219,6 +4220,8 @@ list has to filter, and the source scan says so if it does not.
 
 ## ADR 69. The AI module is retired; AI security challenges run as Jeopardy challenges with flags
 
+**Status.** Accepted (#728, #730). Its v2.0.0 deletion is carried out 2026-11-15 by [ADR 71](#adr-71-the-ai-module-is-retired-in-v200), which supersedes the v2.0.0 half of the decision below. The link to the integrator's document points at its v1.1.0 copy, the last release that ships it.
+
 **Context.** Issues #728, #730. The `ai` module lists a challenge hosted on
 an external site and scores it inside the box. A flag-mode challenge only
 needs the site to show a flag, which the contestant types into the box. An
@@ -4226,7 +4229,7 @@ event-mode challenge, the one that reports its own solve, needs a site that
 verifies a per-contestant Ed25519 launch token, POSTs an HMAC-signed event
 with a replay nonce, and keeps one secret key per challenge in step with
 `/admin` ([ADR 53](#adr-53-ai-launch-tokens-are-asymmetric-event-signatures-stay-symmetric),
-[docs/ai-module.md](ai-module.md)). That event-mode contract is the hard
+[docs/ai-module.md](https://github.com/OWASP/owasp-ctf-in-a-box/blob/v1.1.0/docs/ai-module.md)). That event-mode contract is the hard
 part of an AI event, and flag mode alone is what Jeopardy already does. The
 module is also the largest the kit maintains: about 100 files
 in `apps/web`, its own award script and upstash suite, an acceptance script
@@ -4322,3 +4325,54 @@ scores. A master reset clears `ctf:sd:held:*` and keeps links. A score sync
 read before an organizer deletes the player can still reach the scorer after
 the delete and restore a cleared solve, through the comment pass (as before
 this ADR) or a held release; that race is #775.
+
+## ADR 71. The AI module is retired in v2.0.0
+
+**Status.** Accepted (#729). Supersedes [ADR 53](#adr-53-ai-launch-tokens-are-asymmetric-event-signatures-stay-symmetric) outright and the v2.0.0 half of [ADR 69](#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags); supersedes the `/api/ai/*` amendment to [ADR 40](#adr-40-csrf-assertion-in-the-proxy-rate-limits-keyed-on-the-login).
+
+**Context.** ADR 69 deprecated the `ai` module in v1.1.0 and scheduled its
+deletion for v2.0.0, alongside kit-owned accounts (#731). v2.0.0 is a clean
+break: it refuses a Redis that holds v1 data and does not read v1 archives.
+Both refusals ship with #743, before v2.0.0 is cut; until it lands the
+importer still parses archive versions 1–3. The archive half of this ADR
+holds either way: the importer refuses any archive that carries an `ai`
+section (`event-io.ts`), so no AI challenges, settings or keys arrive by
+import. With #743, no AI points arrive from an old Redis either, and nothing
+in v2.0.0 has to read, fold or migrate them.
+
+**Decision.** v2.0.0 deletes the module as a plain deletion:
+- **Code.** The `/ai` and `/ai/[id]` pages, every `/api/ai/*` route
+  (`submit`, `event`, `state`, `launch-key`), the `/api/admin/ai` routes and
+  the AI admin panel, the `ai-*` libraries (store, keys, I/O, launch tokens,
+  HTTP helpers), the award Lua script and its upstash suite all go. The
+  module registry holds three modules (`secure-development`, `quiz`,
+  `classic`), and `ai` is not a `ModuleId`.
+- **Everything that listed it.** The master reset, the per-contestant reset
+  and delete, the demo seed and clear, the event archive's export and import,
+  hints, metrics, the leaderboard's module overlays, the profile, the board's
+  item lists, the activity log's types, the admin settings (`aiCooldownSec`)
+  and the rate-limit budgets drop their AI branch. `src/proxy.ts` carries no
+  `/api/ai/*` exemption, so the CSRF origin check covers every `/api` path but
+  `/api/auth/*` and the two body-size carve-outs.
+- **Gates and docs.** `scripts/acceptance-ai-only.sh`, its `ai-only` CI job
+  and the `ai` area of `scripts/ci-changes.sh` go, as do
+  `docs/ai-module.md` and its two diagrams. The public `/api` surface in
+  [docs/reviewing.md](reviewing.md) invariant 11 is seven routes, without
+  `GET /api/ai/launch-key`.
+- **No compatibility layer.** No read-only fold of old AI totals, no
+  tombstone module id, no import of an archive's `ai` section (the
+  importer refuses one rather than dropping it), and no reset of
+  `ctf:ai:*` keys: a v2 box never holds them.
+
+This was chosen over keeping the module's keys in the master reset "just in
+case" (dead code for data v2 refuses to start on) and over keeping a
+tombstone `ai` id so an old archive's `enabledModuleIds` would parse (v2 does
+not read v1 archives).
+
+**Consequences.** An organizer running AI security challenges on v2 runs them
+as Jeopardy challenges with flags (ADR 69, the Jeopardy organizer guide in
+[docs/operations.md](operations.md)). A challenge site that verified launch
+tokens or posted signed solve events has nothing to call on a v2 box. An
+event that wants its AI results keeps or records its v1.x box before
+upgrading. The registry's `deprecated` field and its admin rendering stay as
+the mechanism for retiring a module; no module sets it today.

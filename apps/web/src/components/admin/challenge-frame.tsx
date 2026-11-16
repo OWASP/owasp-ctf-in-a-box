@@ -1,16 +1,13 @@
 "use client";
 
-// The frame the two challenge-authoring module admin panels (classic and ai)
-// share: the settings-card slot around the module's own knob, the category
-// editor wiring, the "Challenges" panel shell — heading, Add button,
-// list-error line, grouped SortableList — and the three dialogs below it: the
-// add/edit form, the draft-discard confirmation and the typed-title delete
-// confirmation. admin-classic-controls.tsx and admin-ai-controls.tsx each
-// carried every line of this, down to the sentences and class names; only the
-// module's own model, form and blocks around the list differed. Extracted the
-// way admin/fetch.ts, admin/sortable-list.tsx and admin/use-admin-resource.ts
-// were — one implementation, so a change to the shared frame lands once
-// (issue #504, finding M14).
+// The frame a challenge-authoring module admin panel renders: the
+// settings-card slot around the module's own knob, the category editor
+// wiring, the "Challenges" panel shell — heading, Add button, list-error
+// line, grouped SortableList — and the three dialogs below it: the add/edit
+// form, the draft-discard confirmation and the typed-title delete
+// confirmation. Kept apart from admin-classic-controls.tsx the way
+// admin/fetch.ts, admin/sortable-list.tsx and admin/use-admin-resource.ts
+// are, so the panel holds only the module's own model, form and blocks.
 //
 // What stays the module's, and why:
 //
@@ -18,29 +15,20 @@
 //     payload builders) — that IS the module's wire contract, so the panel
 //     still owns both hooks and passes their state in here.
 //   - `newEditor` / `editorFromRow` / `deleteConfirm` — the pure model
-//     builders (admin-classic-model.ts / admin-ai-model.ts) each module
-//     already exports.
+//     builders (admin-classic-model.ts) the module exports.
 //   - `meta` — what the collapsed row's second line says is the panel's
-//     choice (classic: points; ai: points plus mode), the same rule as
-//     SortableList's own `meta`. The id/title/category accessors are NOT
+//     choice, the same rule as SortableList's own `meta`. The id/title/category accessors are NOT
 //     parameters: every row here is `{ challenge: {...} }`, so the frame
 //     reads those itself.
-//   - `onRetry` — ai's list-error line offers a Retry button, classic's has
-//     never had one; the button renders only when the module asks for it, so
-//     the two keep the markup they have today.
-//   - The four slots: `beforePanel` (classic's story editor), `panelIntro`
-//     (ai's board-level endpoints block and external-site setup),
-//     `panelNotice` (ai's rotate error), `afterPanel` (classic's bulk
-//     import/export). Their order around the panel is the order each panel
-//     already rendered them in.
-//   - `intro` / `reorderPending` / `onMove` / `rowExtra` — SortableList's
-//     module knobs: classic reorders, ai renders an integration disclosure
-//     under each row.
+//   - The two slots: `beforePanel` (classic's story editor) and `afterPanel`
+//     (classic's bulk import/export).
+//   - `intro` / `reorderPending` / `onMove` — SortableList's module knobs:
+//     classic reorders.
 //
 // The flag-reveal state lives HERE rather than in each panel because all
 // three things that touch it are in this frame: the Add button, every row's
 // Edit, and the open form. Opening an editor always starts masked — the same
-// projector-safety rule both panels apply to the list itself. Resetting
+// projector-safety rule the panel applies to the list itself. Resetting
 // tracks active editor identity so an aborted/cancelled switch leaves an open
 // draft's reveal state intact.
 
@@ -59,13 +47,13 @@ import type { AdminResource } from "@/components/admin/use-admin-resource";
 type ChallengeRowShape = { challenge: { id: string; title: string; category: string } };
 
 /** What an editor looks like to the frame: a discriminated union, so the id
- *  is reachable only in the edit case — mirrors `ChallengeEditor` and
- *  `AiChallengeEditor`, which is what a panel passes. `draft` is `unknown`
+ *  is reachable only in the edit case — mirrors `ChallengeEditor`, which is
+ *  what a panel passes. `draft` is `unknown`
  *  here and pinned to the module's own draft type through the form slot. */
 type EditorSlot = { mode: "new"; draft: unknown } | { mode: "edit"; id: string; draft: unknown };
 
-/** The add/edit form slot — what `ChallengeForm` and `AiChallengeForm`
- *  already take, field for field. `onChange` carries the module's DRAFT (the
+/** The add/edit form slot — what `ChallengeForm` already takes, field for
+ *  field. `onChange` carries the module's DRAFT (the
  *  form cannot touch the id or position — see each form's own comment). */
 type ChallengeFormSlot<Editor extends EditorSlot> = {
   editor: Editor;
@@ -136,35 +124,25 @@ type ChallengeFrameProps<Row extends ChallengeRowShape, Editor extends EditorSlo
   /** The category editor's own state (components/admin/
    *  use-category-editor.ts); the list it edits rides on `resource`. */
   categoryEditor: CategoryEditorState;
-  /** `newChallengeEditor` / `newAiChallengeEditor` — what Add opens. */
+  /** `newChallengeEditor` — what Add opens. */
   newEditor: (nextOrder: number, defaultCategory: string) => Editor;
-  /** `editorFromChallenge` / `editorFromAiChallenge` — what Edit opens. */
+  /** `editorFromChallenge` — what Edit opens. */
   editorFromRow: (row: Row) => Editor;
-  /** `challengeDeleteConfirm` / `aiChallengeDeleteConfirm` — the copy for the
+  /** `challengeDeleteConfirm` — the copy for the
    *  typed-title delete confirmation. */
   deleteConfirm: (item: Row["challenge"]) => DeleteConfirmCopy;
   /** The collapsed row's second line — the module's choice, see header. */
   meta: (row: Row) => ReactNode;
-  /** `ChallengeForm` / `AiChallengeForm` — mounted while an editor is open. */
+  /** `ChallengeForm` — mounted while an editor is open. */
   Form: ComponentType<ChallengeFormSlot<Editor>>;
-  /** Renders a Retry button beside the list error (ai); absent, the plain
-   *  one-line error classic has always had. */
-  onRetry?: () => void;
   /** Between the category editor and the panel (classic's story editor). */
   beforePanel?: ReactNode;
-  /** Inside the panel, above the list-error line (ai's endpoints block and
-   *  external-site setup). */
-  panelIntro?: ReactNode;
-  /** Inside the panel, below the list-error line (ai's rotate error). */
-  panelNotice?: ReactNode;
   /** Below the panel (classic's bulk import/export). */
   afterPanel?: ReactNode;
-  /** SortableList's own knobs: classic passes the reorder trio, ai the
-   *  per-row integration disclosure. */
+  /** SortableList's own knobs: classic passes the reorder trio. */
   intro?: string;
   reorderPending?: boolean;
   onMove?: (from: number, to: number) => void;
-  rowExtra?: (row: Row) => ReactNode;
 };
 
 export default function ChallengeFrame<Row extends ChallengeRowShape, Editor extends EditorSlot>({
@@ -177,15 +155,11 @@ export default function ChallengeFrame<Row extends ChallengeRowShape, Editor ext
   deleteConfirm,
   meta,
   Form,
-  onRetry,
   beforePanel,
-  panelIntro,
-  panelNotice,
   afterPanel,
   intro,
   reorderPending,
   onMove,
-  rowExtra,
 }: ChallengeFrameProps<Row, Editor>) {
   const { rows, categories, loaded, listError, editing, formPending, formError, deleteTarget, deletePending, deleteError, pendingEditor } =
     resource;
@@ -256,23 +230,11 @@ export default function ChallengeFrame<Row extends ChallengeRowShape, Editor ext
           </button>
         </div>
 
-        {panelIntro}
-
         {listError && (
           <p role="alert" className="text-sm text-[#e53e3e]">
             {listError}
-            {onRetry && (
-              <>
-                {" "}
-                <button type="button" onClick={onRetry} aria-label="Retry loading challenges" className="text-white hover:underline">
-                  Retry
-                </button>
-              </>
-            )}
           </p>
         )}
-
-        {panelNotice}
 
         {/* The collapsed list shows the public half only — the flag appears
             when the organizer opens the edit form, not on a panel that might
@@ -295,7 +257,6 @@ export default function ChallengeFrame<Row extends ChallengeRowShape, Editor ext
             resource.openEditor(editorFromRow(row));
           }}
           onDelete={(row) => resource.requestDelete(row.challenge)}
-          rowExtra={rowExtra}
         />
       </div>
 

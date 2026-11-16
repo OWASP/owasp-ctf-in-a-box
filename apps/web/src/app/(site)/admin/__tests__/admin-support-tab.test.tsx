@@ -35,7 +35,6 @@ const detail: UserDetail = {
   firstTeamAt: "2026-08-22T19:09:00.000Z",
   quiz: { answered: 3, points: 200, attempts: 5 },
   classic: { solved: 3, points: 70, attempts: 7 },
-  ai: { solved: 2, points: 550, attempts: 4 },
   secureDev: { solves: 6 },
   hints: { bought: 2, spent: 20 },
   known: true,
@@ -54,23 +53,19 @@ describe("AdminSupportTab", () => {
   });
 });
 
-// UX audit F4: the card and the reset confirm had quiz, classic and
-// secure-development figures and no AI at all, while the reset does clear AI
-// solves and attempts — so an organizer confirmed a smaller wipe than the one
-// that happened, and could not see a contestant's AI progress before deleting
-// it.
+// UX audit F4: the card and the reset confirm show every module the reset
+// clears, so an organizer confirms exactly the wipe that happens.
 describe("contestantStats", () => {
-  it("shows AI points and solves alongside the other modules", () => {
+  it("shows each module's points and solves", () => {
     const labels = contestantStats(detail).map((s) => s.label);
-    expect(labels).toContain("AI pts");
-    expect(labels).toContain("AI solved");
     expect(labels).toContain("Quiz pts");
     expect(labels).toContain("Jeopardy pts");
+    expect(labels).toContain("Jeopardy solved");
   });
 
-  it("counts AI attempts in the attempts total", () => {
+  it("sums every module's attempts in the attempts total", () => {
     const attempts = contestantStats(detail).find((s) => s.label === "Attempts");
-    expect(attempts?.value).toBe(5 + 7 + 4);
+    expect(attempts?.value).toBe(5 + 7);
   });
 
   it("spells Secure Development out rather than abbreviating it", () => {
@@ -85,8 +80,8 @@ describe("resetProgressConfirm", () => {
     const c = resetProgressConfirm(detail);
     expect(c.title).toBe("Reset octocat's progress?");
     expect(c.requireType).toBe("octocat");
-    expect(c.body).toMatch(/quiz answers, classic and AI solves, attempts and hints/);
-    expect(c.body).toContain(`${200 + 70 + 550} points in total`);
+    expect(c.body).toMatch(/quiz answers, classic solves, attempts and hints/);
+    expect(c.body).toContain(`${200 + 70} points in total`);
   });
 
   it("warns about Secure Development re-ingestion only when there are such solves", () => {

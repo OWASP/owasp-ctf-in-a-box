@@ -2,9 +2,9 @@
  * The ONE decoder for Upstash's flat Redis replies — and the ONE attempt-row
  * READ for the Lua grading scripts (#504 M13).
  *
- * quiz, classic and ai all decode the same three shapes — `parseJsonValue`,
+ * quiz and classic both decode the same three shapes — `parseJsonValue`,
  * `parseHashEntries` and `parseCounterHash` — and a parser kept per store is
- * three places for the next one to drift: the row-shape contract
+ * one more place for the next one to drift: the row-shape contract
  * (`attempt-row.ts`'s header tells the same story from the reader side) only
  * holds while every store decodes the same way.
  *
@@ -65,13 +65,13 @@ export function parseCounterHash(flat: unknown): Map<string, number> {
 
 /**
  * The attempt-row READ — `attempts`, `lastAtMs` and `firstAt` out of the JSON
- * row quiz's, classic's and ai's grading scripts share
+ * row quiz's and classic's grading scripts share
  * (`{"attempts":2,"firstAt":"…","lastAt":"…","lastAtMs":123} — see
  * `attempt-row.ts` for the shape and the TS-side reader).
  *
- * Quiz's `GRADE_SCRIPT`, classic's `SUBMIT_SCRIPT` and ai's `AWARD_SCRIPT`
- * all read exactly this, then rewrite the row with `attempts + 1`. Three
- * hand-copied blocks is three places for the cooldown or the attempt budget to
+ * Quiz's `GRADE_SCRIPT` and classic's `SUBMIT_SCRIPT` both read exactly
+ * this, then rewrite the row with `attempts + 1`. Two hand-copied blocks is
+ * two places for the cooldown or the attempt budget to
  * start reading a field the others still write: Redis runs the copy in the
  * calling script, so a divergence is silent (one module's cap checks a
  * different number than its neighbour's) and only shows up as a bug in one
@@ -84,10 +84,10 @@ export function parseCounterHash(flat: unknown): Map<string, number> {
  * Spelling and field names are the contract with the write in each script
  * (`'{"attempts":' … '"firstAt":"' … '"lastAtMs":' …`); change one, change
  * both. Indentation is intentionally none: the same block is pasted at
- * top level (quiz, classic) and one level in (ai), and Lua does not care.
+ * top level in each script, and Lua does not care.
  *
  * Interpolated into each script with `${ATTEMPT_ROW_LUA}`, so a change lands
- * in all three at once.
+ * in both at once.
  */
 export const ATTEMPT_ROW_LUA = `local attemptsRaw = redis.call('HGET', KEYS[1], ARGV[1])
 local attempts = 0

@@ -240,8 +240,8 @@ describe("an admin on a hidden challenge after launch", () => {
   it("never asks about another module's target", async () => {
     adminView.adminSeesHidden.mockClear();
     revealHint.mockResolvedValue({ ok: true, hint: "h", alreadyOwned: false, spent: 0, cost: 10 });
-    await POST(req({ app: "ai", id: "a-1" }));
+    await POST(req({ app: "juice-shop", id: "a-1" }));
     expect(adminView.adminSeesHidden).not.toHaveBeenCalled();
-    expect(revealHint).toHaveBeenCalledWith(ALICE_ID, "ai", "a-1", { dryRun: false });
+    expect(revealHint).toHaveBeenCalledWith(ALICE_ID, "juice-shop", "a-1", { dryRun: false });
   });
 });

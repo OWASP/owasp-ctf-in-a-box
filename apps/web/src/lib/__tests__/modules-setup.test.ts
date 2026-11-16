@@ -68,9 +68,9 @@ describe("module setup blocks", () => {
     // moved that entirely onto the Event tab, for every module including
     // secure-development) — only a module with a genuine dependency the
     // panel cannot see still has one: secure-development's forks/App/scorer
-    // image, and ai's external challenge site.
+    // image.
     expect(s.steps.some((x) => x.where === "panel"), id).toBe(true);
-    if (id === "secure-development" || id === "ai") {
+    if (id === "secure-development") {
       expect(s.steps.some((x) => x.where === "outside"), id).toBe(true);
     }
     expect(s.midEvent.safe.length).toBeGreaterThan(0);
@@ -95,21 +95,18 @@ describe("module setup blocks", () => {
   });
 
   it("only declares checks the panels can actually report", () => {
-    // quiz reports `items` only (quizInventory); classic and ai report
+    // quiz reports `items` only (quizInventory); classic reports
     // `items` and `categories`; secure-development's panel holds no list
     // and must declare no check at all.
     const checks = (id: ModuleId) => resolved(id).steps.flatMap((s) => (s.check ? [s.check.count] : []));
     expect(checks("quiz")).toEqual(["items"]);
     expect(checks("classic")).toEqual(["categories", "items"]);
-    expect(checks("ai")).toEqual(["categories", "items"]);
     expect(checks("secure-development")).toEqual([]);
   });
 
   it("puts the category step before the challenge step where a category is required first", () => {
-    for (const id of ["classic", "ai"] as const) {
-      const titles = resolved(id).steps.map((s) => s.check?.count ?? "");
-      expect(titles.indexOf("categories"), id).toBeLessThan(titles.indexOf("items"));
-    }
+    const titles = resolved("classic").steps.map((s) => s.check?.count ?? "");
+    expect(titles.indexOf("categories")).toBeLessThan(titles.indexOf("items"));
   });
 
   it("names the event's real targets and org in the secure-development checklist", () => {
@@ -121,7 +118,6 @@ describe("module setup blocks", () => {
   it("links each module to its own section of the operations guide", () => {
     expect(resolved("quiz").docs.href).toBe(`${DOCS_URL}operations#quiz`);
     expect(resolved("classic").docs.href).toBe(`${DOCS_URL}operations#jeopardy`);
-    expect(resolved("ai").docs.href).toBe(`${DOCS_URL}operations#ai`);
     expect(resolved("secure-development").docs.href).toBe(`${DOCS_URL}operations#organizer-admin-panel`);
   });
 });

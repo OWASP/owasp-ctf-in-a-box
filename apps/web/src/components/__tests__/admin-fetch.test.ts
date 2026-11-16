@@ -1,5 +1,5 @@
 // The one JSON transport the three module admin panels share
-// (admin-quiz-controls, admin-classic-controls, admin-ai-controls). Each used
+// (admin-quiz-controls, admin-classic-controls). Each used
 // to carry its own `parseJson`, its own `describeXError` and its own
 // try/fetch/catch around every POST and DELETE; these tests pin the exact
 // messages those copies produced so the extraction changes nothing an
@@ -60,7 +60,7 @@ describe("sendJson", () => {
 
   it("returns the described error for a non-2xx reply", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(400, { error: "bad flag" })));
-    await expect(sendJson("/api/admin/ai", { method: "POST", body: {} }, describe503)).resolves.toEqual({
+    await expect(sendJson("/api/admin/quiz", { method: "POST", body: {} }, describe503)).resolves.toEqual({
       ok: false,
       message: "bad flag",
     });

@@ -51,9 +51,8 @@ export async function POST(request: Request) {
   // Module switch (#495). Switching classic off in /admin 404s its board, and
   // this route refuses too, or an answer from a tab opened before the toggle
   // (or a plain curl) would still bank points that reappear on re-enable. It
-  // runs FIRST, before the session is read — the same order as the ai
-  // module's `submitAiFlagAction` (a switched-off module is not a way to
-  // probe a cookie) — and so before `submitFlag`: a refusal can never follow a
+  // runs FIRST, before the session is read (a switched-off module is not a
+  // way to probe a cookie) — and so before `submitFlag`: a refusal can never follow a
   // write. An admin preview is refused too: there is no board to preview.
   // `isModuleLive` never throws; on a settings-read failure it answers from
   // this deployment's default module set (fail-open to the default, like

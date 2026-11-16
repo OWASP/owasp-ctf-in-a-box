@@ -36,17 +36,14 @@ describe("moduleLabel", () => {
 
 describe("the activity log speaks the same vocabulary", () => {
   it("names each solve after its module's tab", () => {
-    // Before: "flag solve" under a tab called Jeopardy, and "ai solve" —
-    // the raw registry id — under one called AI.
     expect(TYPE_LABELS["classic-solve"]).toBe("Jeopardy solve");
-    expect(TYPE_LABELS["ai-solve"]).toBe("AI solve");
     expect(TYPE_LABELS["quiz-solve"]).toBe("Quiz solve");
   });
 
   it("leaves the stored type strings alone", () => {
     // Only the label changed. The keys are what the store writes and what the
     // filter chips match on; renaming one would silently hide rows.
-    for (const type of ["quiz-solve", "classic-solve", "ai-solve", "login"]) {
+    for (const type of ["quiz-solve", "classic-solve", "login"]) {
       expect(TYPE_LABELS).toHaveProperty(type);
     }
   });

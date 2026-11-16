@@ -21,8 +21,7 @@ import { demoPlayerId } from "@/lib/demo-seed";
 import { PLAYER_ID_RE } from "@/lib/player";
 import { PUT_ROW_SCRIPT } from "@/lib/auth-store/scripts";
 import { upsertQuestion } from "@/lib/quiz-store";
-import { normalizeFlag, flagComparisonForm, CLASSIC_CATEGORIES_MAX } from "@/lib/classic-keys";
-import { AI_CATEGORIES_MAX } from "@/lib/ai-keys";
+import { normalizeFlag, CLASSIC_CATEGORIES_MAX } from "@/lib/classic-keys";
 import {
   DEMO_CONTESTANTS,
   DEMO_TEAMS,
@@ -31,9 +30,6 @@ import {
   DEMO_CHALLENGES,
   DEMO_CLASSIC_CATEGORIES,
   DEMO_CLASSIC_SOLVES,
-  DEMO_AI_CHALLENGES,
-  DEMO_AI_CATEGORIES,
-  DEMO_AI_SOLVES,
   DEMO_SPONSORS,
   DEMO_CLASSIC_ATTACHMENTS,
 } from "@/lib/demo-fixture";
@@ -56,10 +52,7 @@ beforeEach(() => {
   // which the module gates below also read `enabledModules` off) and the
   // write batch (whose return is unused).
   //
-  // ai is deliberately left OFF by default (only secure-development + quiz +
-  // classic on), so the main block of assertions below exercises no ai
-  // behavior; ai gets its own describe block with its own mock.
-  // secure-development stays on by default too — most of this file's
+  // secure-development stays on by default — most of this file's
   // assertions read `ctf:solves:<target>` rows, which only exist when it is
   // live; the one no-secure-development case gets its own dedicated test
   // below.
@@ -164,7 +157,7 @@ describe("seedDemoData", () => {
   // `solves` count derived from them) must not run unconditionally off the
   // fixture alone — that would show solves for a module this event isn't
   // even serving. Gated on `live.has("secure-development")`, same as
-  // quiz/classic/ai below.
+  // quiz/classic below.
   it("skips secure-development's demo solves entirely when it is not live", async () => {
     mockEnabledModules(["quiz"]);
     const out = await seedDemoData(actor("alice"));
@@ -501,159 +494,6 @@ describe("seedDemoData", () => {
     expect(cmds.some((c) => String(c[1]).startsWith("ctf:classic:"))).toBe(false);
   });
 
-  it("seeds ai challenges + flag/flagnorm (flag mode only) + signing keys, with NO flag in the public record", async () => {
-    mockEnabledModules(["ai"]);
-    await seedDemoData(actor("alice"));
-    const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
-
-    expect(DEMO_AI_CHALLENGES.some((c) => c.mode === "flag")).toBe(true);
-
-    // NO demo challenge may be `event`-mode. Such a challenge can
-    // only be solved by an external arena POSTing a signed event, and the
-    // fixture's launch URLs are a documentation domain that does not resolve —
-    // so seeding one put a 400-point row on the board with no flag form and a
-    // dead Launch button, unclearable by anyone. This is the invariant, not a
-    // description of today's data: reintroducing an event-mode fixture entry
-    // has to fail here first.
-    expect(DEMO_AI_CHALLENGES.filter((c) => c.mode === "event")).toEqual([]);
-    for (const dc of DEMO_AI_CHALLENGES) {
-      expect(dc.flag, `${dc.id} must be flag-gradable so the demo board is clearable`).not.toBe("");
-    }
-
-    // one HSET per challenge into the public challenges hash, with NO flag or
-    // signing key field anywhere in the stored value
-    const challengeRecords = seededRecords(cmds, "ctf:ai:challenges");
-    expect(challengeRecords.length).toBe(DEMO_AI_CHALLENGES.length);
-    for (const stored of challengeRecords) {
-      expect(stored.flag).toBeUndefined();
-      expect(stored.signingKey).toBeUndefined();
-      expect(JSON.stringify(stored)).not.toMatch(/ctfbox/i);
-      expect(JSON.stringify(stored)).not.toMatch(/aik_/);
-    }
-
-    // the authored flag hash holds the flag verbatim, and ONLY for the
-    // graded (mode !== "event") challenges — an event-mode challenge has no
-    // flag entries at all, since signed events assert that solve instead
-    // Every fixture challenge is graded, so this set is all of
-    // them; the `mode === "event"` arms below are kept because the SEED still
-    // has that branch — the fixture does not exercise it, and a future entry
-    // could. `ai-store.authoring.test.ts` covers the same rule on the
-    // authoring path, where an event-mode challenge can still be created.
-    const gradedIds = new Set(DEMO_AI_CHALLENGES.filter((c) => c.mode !== "event").map((c) => c.id));
-    expect(gradedIds.size).toBe(DEMO_AI_CHALLENGES.length);
-
-    const flagCmds = cmds.filter((c) => c[0] === "HSET" && c[1] === "ctf:ai:flag");
-    expect(flagCmds.length).toBe(gradedIds.size);
-    for (const dc of DEMO_AI_CHALLENGES) {
-      if (dc.mode === "event") {
-        expect(flagCmds.some((c) => c[2] === dc.id)).toBe(false);
-        continue;
-      }
-      const cmd = flagCmds.find((c) => c[2] === dc.id)!;
-      expect(cmd[3]).toBe(dc.flag);
-    }
-
-    // the normalized flag hash is EXACTLY flagComparisonForm(authored) —
-    // proven against classic-keys.ts's own function (ai-keys.ts re-exports the
-    // identical one), never a re-derived formula — and also graded-only
-    const flagnormCmds = cmds.filter((c) => c[0] === "HSET" && c[1] === "ctf:ai:flagnorm");
-    expect(flagnormCmds.length).toBe(gradedIds.size);
-    for (const dc of DEMO_AI_CHALLENGES) {
-      if (dc.mode === "event") continue;
-      const cmd = flagnormCmds.find((c) => c[2] === dc.id)!;
-      expect(cmd[3]).toBe(flagComparisonForm(dc.flag, dc.caseSensitive));
-    }
-
-    // every challenge, graded or event-only, gets a signing key row — the
-    // event-signature path needs one regardless of whether a flag is graded
-    const signkeyCmds = cmds.filter((c) => c[0] === "HSET" && c[1] === "ctf:ai:signkey");
-    expect(signkeyCmds.length).toBe(DEMO_AI_CHALLENGES.length);
-    for (const dc of DEMO_AI_CHALLENGES) {
-      const cmd = signkeyCmds.find((c) => c[2] === dc.id)!;
-      expect(cmd[3]).toBe(dc.signingKey);
-    }
-
-    // handed to the script in display order; no bare SET of the key
-    expect(scriptArgs(cmds, "ctf:ai:challenges").fixtureCategories).toEqual(DEMO_AI_CATEGORIES);
-    expect(cmds.find((c) => c[0] === "SET" && c[1] === "ctf:ai:categories")).toBeUndefined();
-
-    // the launch keypair is never touched by the seed — it is minted lazily on
-    // first real use, not fixture data (see ai-store.ts's getAiLaunchKeys)
-    expect(cmds.some((c) => c[1] === "ctf:ai:launchkey")).toBe(false);
-  });
-
-  it("seeds ai solves so aggregates agree with the per-login rows and solvecount", async () => {
-    mockEnabledModules(["ai"]);
-    await seedDemoData(actor("alice"));
-    const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
-
-    expect(DEMO_AI_SOLVES.length).toBeGreaterThan(0);
-
-    // one HSET per solve into that login's own solves hash
-    const solveCmds = cmds.filter((c) => c[0] === "HSET" && String(c[1]).startsWith("ctf:ai:solves:"));
-    expect(solveCmds.length).toBe(DEMO_AI_SOLVES.length);
-    const logins = new Set(solveCmds.map((c) => String(c[1]).replace("ctf:ai:solves:", "")));
-    expect(logins.size).toBeGreaterThan(1);
-
-    // each stored solve row is well-formed and timestamped inside the same
-    // ~6h window as the other seeded activity
-    const windowMs = 6 * 60 * 60 * 1000;
-    for (const c of solveCmds) {
-      const row = JSON.parse(String(c[3]));
-      expect(typeof row.points).toBe("number");
-      const ageMs = Date.now() - Date.parse(row.at);
-      expect(ageMs).toBeGreaterThanOrEqual(0);
-      expect(ageMs).toBeLessThanOrEqual(windowMs + 1000);
-    }
-
-    // aggregate points/solved MUST equal what the per-login solve rows imply
-    // — the named failure mode this repo has hit before (seed/live-data
-    // aggregate collision): the aggregates have to agree with the rows.
-    const pointsCmds = cmds.filter((c) => c[0] === "HSET" && c[1] === "ctf:ai:points");
-    const solvedCmds = cmds.filter((c) => c[0] === "HSET" && c[1] === "ctf:ai:solved");
-    expect(pointsCmds.length).toBe(logins.size);
-    expect(solvedCmds.length).toBe(logins.size);
-    for (const login of logins) {
-      const rowsForLogin = DEMO_AI_SOLVES.filter((s) => demoPlayerId(s.login) === login);
-      const expectedPoints = rowsForLogin.reduce(
-        (sum, s) => sum + DEMO_AI_CHALLENGES.find((c) => c.id === s.challengeId)!.points,
-        0,
-      );
-      const pointsCmd = pointsCmds.find((c) => c[2] === login)!;
-      const solvedCmd = solvedCmds.find((c) => c[2] === login)!;
-      expect(Number(pointsCmd[3])).toBe(expectedPoints);
-      expect(Number(solvedCmd[3])).toBe(rowsForLogin.length);
-    }
-
-    // solvecount per challenge MUST equal the number of DISTINCT logins that
-    // solved it (the fixture has no duplicate (login, challengeId) pairs)
-    // Sent as ONE raise-only EVAL rather than per-challenge HSETs: the count is
-    // keyed by challenge and counts distinct solvers across EVERYONE, so the
-    // fixture's number is a floor. An absolute write rewrote a real
-    // contestant's solve out of the public count on every re-seed.
-    const raise = cmds.find((c) => c[0] === "EVAL" && c[3] === "ctf:ai:solvecount")!;
-    expect(raise).toBeDefined();
-    expect(String(raise[1])).toContain("if current < floor then");
-    const floors = new Map<string, number>();
-    for (let i = 4; i < raise.length; i += 2) floors.set(String(raise[i]), Number(raise[i + 1]));
-
-    const solvedChallengeIds = new Set(DEMO_AI_SOLVES.map((s) => s.challengeId));
-    expect(floors.size).toBe(solvedChallengeIds.size);
-    for (const challengeId of solvedChallengeIds) {
-      const expectedCount = DEMO_AI_SOLVES.filter((s) => s.challengeId === challengeId).length;
-      expect(floors.get(challengeId)).toBe(expectedCount);
-    }
-    // and never as a plain HSET, which is what discarded the real solves
-    expect(cmds.some((c) => c[0] === "HSET" && c[1] === "ctf:ai:solvecount")).toBe(false);
-  });
-
-  it("writes no ctf:ai:* keys when the ai module is disabled", async () => {
-    // default beforeEach mock: quiz + classic on, ai off
-    await seedDemoData(actor("alice"));
-    const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
-    expect(cmds.some((c) => String(c[1]).startsWith("ctf:ai:"))).toBe(false);
-  });
-
   // --- attempt rows -----------------------------------------------------
   //
   // The seed banks earned rows directly, which would produce an event in
@@ -786,17 +626,16 @@ describe("seedDemoData", () => {
 // arguments, and that nothing writes those keys behind its back.
 describe("seedDemoData hands its category work to one atomic script", () => {
   beforeEach(() => {
-    mockEnabledModules(["classic", "ai"]);
+    mockEnabledModules(["classic"]);
   });
 
-  it("writes both category keys ONLY through the script, never a bare SET", async () => {
+  it("writes the category key ONLY through the script, never a bare SET", async () => {
     await seedDemoData(actor("alice"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
-    // The regression guard: an absolute SET of either key is the bug.
-    for (const key of ["ctf:classic:categories", "ctf:ai:categories"]) {
-      expect(cmds.find((c) => c[0] === "SET" && c[1] === key), key).toBeUndefined();
-      expect(cmds.find((c) => c[0] === "EVAL" && c[3] === key), key).toBeTruthy();
-    }
+    // The regression guard: an absolute SET of the key is the bug.
+    const key = "ctf:classic:categories";
+    expect(cmds.find((c) => c[0] === "SET" && c[1] === key)).toBeUndefined();
+    expect(cmds.find((c) => c[0] === "EVAL" && c[3] === key)).toBeTruthy();
   });
 
   it("reads nothing first — the union happens inside the write", async () => {
@@ -807,7 +646,7 @@ describe("seedDemoData hands its category work to one atomic script", () => {
     expect(reads).toEqual([]);
   });
 
-  it("passes each module its own keys, fixture categories and cap", async () => {
+  it("passes the module its own keys, fixture categories and cap", async () => {
     await seedDemoData(actor("alice"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
 
@@ -817,14 +656,7 @@ describe("seedDemoData hands its category work to one atomic script", () => {
     expect(classic.max).toBe(CLASSIC_CATEGORIES_MAX);
     expect(classic.records.map((r) => r.id).sort()).toEqual(DEMO_CHALLENGES.map((c) => c.id).sort());
 
-    const ai = scriptArgs(cmds, "ctf:ai:challenges");
-    expect(ai.categoriesKey).toBe("ctf:ai:categories");
-    expect(ai.fixtureCategories).toEqual(DEMO_AI_CATEGORIES);
-    expect(ai.max).toBe(AI_CATEGORIES_MAX);
-    expect(ai.records.map((r) => r.id).sort()).toEqual(DEMO_AI_CHALLENGES.map((c) => c.id).sort());
-
-    // Both scripts are the same source — one implementation, two modules.
-    expect(cmds.filter((c) => c[0] === "EVAL" && c[1] === SEED_CATEGORIES_SCRIPT)).toHaveLength(2);
+    expect(cmds.filter((c) => c[0] === "EVAL" && c[1] === SEED_CATEGORIES_SCRIPT)).toHaveLength(1);
   });
 
   it("throws instead of reporting a seed that partly failed", async () => {
@@ -839,7 +671,7 @@ describe("seedDemoData hands its category work to one atomic script", () => {
 
   it("logs but does not throw when only the trailing audit LPUSH/LTRIM fail — the seed itself already succeeded", async () => {
     // The describe's own beforeEach already queued the settings-read
-    // response (call 1: "classic,ai"); this Once value lines up with the
+    // response (call 1: "classic"); this Once value lines up with the
     // SECOND pipeline call, the write batch.
     mocks.upstashPipeline.mockImplementationOnce(async (cmds) =>
       cmds.map((_, i) => (i >= cmds.length - 2 ? { error: "NOAUTH Authentication required." } : { result: "OK" })),
@@ -930,13 +762,12 @@ describe("demo attachments (#186)", () => {
   });
 
   // Each module's award-time hash is seeded with every demo login's
-  // LATEST row time, the same value GRADE_SCRIPT / SUBMIT_SCRIPT /
-  // AWARD_SCRIPT would have left behind, so the demo board's "whoever got
+  // LATEST row time, the same value GRADE_SCRIPT / SUBMIT_SCRIPT
+  // would have left behind, so the demo board's "whoever got
   // there first" tiebreak has something to order.
   it.each([
     ["quiz", "ctf:quiz:answers:", "ctf:quiz:lastAt"],
     ["classic", "ctf:classic:solves:", "ctf:classic:lastAt"],
-    ["ai", "ctf:ai:solves:", "ctf:ai:lastAt"],
   ])("seeds %s's award times from each login's latest row", async (module, rowPrefix, lastAtKey) => {
     mockEnabledModules([module]);
     await seedDemoData(actor("alice"));

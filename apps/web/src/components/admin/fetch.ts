@@ -1,5 +1,5 @@
 // The JSON transport the module admin panels (admin-quiz-controls,
-// admin-classic-controls, admin-ai-controls) share for every write to
+// admin-classic-controls) share for every write to
 // `/api/admin/<module>`. Each panel used to carry its own copy of the three
 // things here — a lenient body parser, the 400-vs-503 message mapping, and
 // the try/fetch/catch around a POST or DELETE — and the copies were identical

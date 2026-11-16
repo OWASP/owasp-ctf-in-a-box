@@ -72,7 +72,6 @@ const DETAIL = {
   team: null,
   quiz: { answered: 0, points: 0, attempts: 0 },
   classic: { solved: 0, points: 0, attempts: 0 },
-  ai: { solved: 0, points: 0, attempts: 0 },
   secureDev: { solves: 0 },
   hints: { bought: 0, spent: 0 },
   known: true,

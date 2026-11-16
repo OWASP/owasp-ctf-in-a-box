@@ -2,7 +2,7 @@
 // admin panel's own list shape. CLIENT-SAFE ON PURPOSE, mirroring
 // classic-io.ts: it must never import sponsors-store.ts (`server-only`) or
 // anything that pulls in Upstash, because event-io.ts (also client-safe)
-// composes this alongside classic-io.ts/quiz-io.ts/ai-io.ts to validate a
+// composes this alongside classic-io.ts/quiz-io.ts to validate a
 // pasted/uploaded archive in the browser before it ever reaches the server.
 //
 // Validation mirrors the store's field rules (name/url/blurb caps, tier,

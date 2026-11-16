@@ -167,6 +167,13 @@ describe("POST /api/admin/event", () => {
     expect(res.status).toBe(400);
     expect(h.importEventBundle).not.toHaveBeenCalled();
   });
+  it("400s an archive that carries an ai section and does not import", async () => {
+    const withAi = JSON.stringify({ ...JSON.parse(validRaw), ai: { categories: [], items: [] } });
+    const res = await POST(post({ import: withAi }));
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(await res.json())).toContain('"ai"');
+    expect(h.importEventBundle).not.toHaveBeenCalled();
+  });
   it("rejects a body with extra keys", async () => {
     const res = await POST(post({ import: validRaw, sneaky: 1 }));
     expect(res.status).toBe(400);

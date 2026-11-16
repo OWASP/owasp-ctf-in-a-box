@@ -27,7 +27,6 @@ describe("FREEZE_HELP", () => {
   it("names the submissions that are refused", () => {
     expect(FREEZE_HELP).toMatch(/quiz/i);
     expect(FREEZE_HELP).toMatch(/classic/i);
-    expect(FREEZE_HELP).toMatch(/ai/i);
   });
 
   it("says fork Actions keep going", () => {

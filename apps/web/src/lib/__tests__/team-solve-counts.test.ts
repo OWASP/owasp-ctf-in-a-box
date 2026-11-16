@@ -36,13 +36,6 @@ describe("teamSolveCounts", () => {
     ]);
   });
 
-  it("reads the AI module's solves for ai", async () => {
-    m.listTeams.mockResolvedValue([{ slug: "red", name: "Red", members: ["alice"] }]);
-    m.upstashPipeline.mockResolvedValue([{ result: ["jail-1"] }]);
-    expect(await teamSolveCounts("ai")).toEqual(new Map([["jail-1", 1]]));
-    expect(m.upstashPipeline.mock.calls[0][0]).toEqual([["HKEYS", "ctf:ai:solves:alice"]]);
-  });
-
   it("is empty with no teams, without reading any solves", async () => {
     m.listTeams.mockResolvedValue([]);
     expect(await teamSolveCounts("classic")).toEqual(new Map());

@@ -1,7 +1,7 @@
 // The registry split (#504 M10).
 //
 // `REGISTRY` was a single ~1230-line object literal — 71% of lib/modules.ts —
-// holding all four modules' copy. It is now one file per module under
+// holding every module's copy. It is now one file per module under
 // lib/module-defs/, assembled back into the same registry.
 //
 // What this pins:
@@ -45,14 +45,14 @@ describe("one file per module", () => {
     for (const id of ALL_MODULE_IDS) {
       expect(existsSync(join(DEFS, `${id}.ts`)), `module-defs/${id}.ts is missing`).toBe(true);
     }
-    // Non-vacuous: the walk has to reach the four, not an empty directory.
-    expect(ALL_MODULE_IDS).toHaveLength(4);
+    // Non-vacuous: the walk has to reach the three, not an empty directory.
+    expect(ALL_MODULE_IDS).toHaveLength(3);
     expect(existsSync(join(LIB, "module-urls.ts"))).toBe(true);
   });
 
   it("lib/modules.ts no longer holds the copy itself", () => {
     const src = read(join(LIB, "modules.ts"));
-    // Markers of the four entries' literal bodies.
+    // Markers of the entries' literal bodies.
     expect(src).not.toContain('displayName: "Secure Development"');
     expect(src).not.toContain('displayName: "Quiz"');
     expect(src).not.toContain('href: "/challenges", label: "Challenges"');
@@ -67,7 +67,6 @@ describe("one file per module", () => {
     ["secure-development", 'id: "secure-development"', "Find the vulnerability, patch it for real, ship the fix as a PR."],
     ["quiz", 'id: "quiz"', "Answer security questions for points."],
     ["classic", 'id: "classic"', "Find the flag, submit the string, take the points."],
-    ["ai", 'id: "ai"', "Prompt-injection and guardrail challenges hosted outside the box, scored inside it."],
   ])("%s keeps its own copy, byte for byte", (id, idLine, description) => {
     const src = read(join(DEFS, `${id}.ts`));
     expect(src).toContain(idLine);
@@ -78,8 +77,8 @@ describe("one file per module", () => {
 
 describe("the assembled registry", () => {
   it("keeps registry order — the nav and the id list derive from it", () => {
-    expect([...ALL_MODULE_IDS]).toEqual(["secure-development", "quiz", "classic", "ai"]);
-    expect(ALL_MODULE_ROUTES).toEqual(["/challenges", "/quiz", "/flags", "/ai"]);
+    expect([...ALL_MODULE_IDS]).toEqual(["secure-development", "quiz", "classic"]);
+    expect(ALL_MODULE_ROUTES).toEqual(["/challenges", "/quiz", "/flags"]);
   });
 
   it("resolves every id to a def with a nav entry", () => {

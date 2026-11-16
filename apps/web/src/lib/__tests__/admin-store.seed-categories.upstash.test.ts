@@ -104,16 +104,16 @@ describe.skipIf(!liveConfigured)("SEED_CATEGORIES_SCRIPT against a live SRH prox
   });
 
   it("rewrites each seeded challenge to the spelling the union kept", async () => {
-    await upstashPipeline([["SET", CATS, JSON.stringify(["ai"])]]);
-    await seed(["AI"], [record("a", "AI"), record("b", "AI")]);
+    await upstashPipeline([["SET", CATS, JSON.stringify(["pwn"])]]);
+    await seed(["Pwn"], [record("a", "Pwn"), record("b", "Pwn")]);
 
     const cats = (await storedCategories()) as string[];
     const rows = await storedRecords();
-    expect(cats).toEqual(["ai"]);
-    // The half a surviving list alone would not fix: stored under "AI" against
-    // a list holding only "ai", these rows would be invisible to the board's
+    expect(cats).toEqual(["pwn"]);
+    // The half a surviving list alone would not fix: stored under "Pwn" against
+    // a list holding only "pwn", these rows would be invisible to the board's
     // exact-match filter — the same outcome #344 is about.
-    for (const id of ["a", "b"]) expect(rows[id].category, id).toBe("ai");
+    for (const id of ["a", "b"]) expect(rows[id].category, id).toBe("pwn");
     for (const row of Object.values(rows)) expect(cats).toContain(row.category);
   });
 

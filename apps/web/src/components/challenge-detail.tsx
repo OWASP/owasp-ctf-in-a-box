@@ -2,14 +2,12 @@
 
 // One challenge's interactive surface — the flag input, grading feedback and
 // cooldown countdown — extracted from the old all-in-one board (issue #208)
-// so it can live on the challenge's own page (/flags/[id], /ai/[id]).
+// so it can live on the challenge's own page (/flags/[id]).
 //
-// Shared by BOTH flag-graded modules, which differ only in how a submission
-// leaves the browser (`dispatchSubmit` below is the whole of that difference):
-// classic POSTs to /api/classic/submit, and ai calls a Server Action defined
-// beside its page. Either way the server it reaches is the sole authority on
-// grading, the already-solved guard and the cooldown (see classic-store.ts /
-// ai-store.ts). This component never sees — and cannot render — a flag:
+// A submission POSTs to the page's `submitPath` (`dispatchSubmit` below); the
+// server it reaches is the sole authority on grading, the already-solved
+// guard and the cooldown (see classic-store.ts). This component never sees —
+// and cannot render — a flag:
 // `ChallengeView` has no field that could carry one.
 
 import { teamsLabel } from "@/lib/solve-labels";
@@ -60,48 +58,27 @@ export type ChallengeView = {
  *  see challenge-board.tsx's re-export note. */
 export type ClassicChallengeView = ChallengeView;
 
-/** The wire shape a submission comes back as, whichever transport carried it.
- *  Exported so the ai module's Server Action can be typed against exactly what
- *  this component knows how to render — the two cannot drift into disagreeing
- *  about a field. Nothing here can carry a flag, a token or a key. */
+/** The wire shape a submission comes back as. Nothing here can carry a flag,
+ *  a token or a key. */
 export type SubmitResponse =
   | { correct: true; points: number; already?: boolean; dryRun?: boolean }
   | { correct: false; dryRun?: boolean }
   | { error: string; retryAt?: string };
 
-/** The ai module's transport: a Server Action bound to the challenge id,
- *  taking the typed flag and returning the same shape the fetch path parses. */
-type SubmitAction = (flag: string) => Promise<SubmitResponse>;
+/** WHERE a submission goes. */
+type SubmitTarget = { submitPath: string };
 
-/** WHERE a submission goes, as a union so each module passes exactly one and
- *  neither can pass both. Classic's call sites are unchanged by construction:
- *  `submitPath` alone still type-checks. */
-type SubmitTarget =
-  | { submitPath: string; submitAction?: never }
-  | { submitPath?: never; submitAction: SubmitAction };
-
-/** The ONE place the two transports differ. Everything downstream — the
- *  feedback precedence, the refusal copy, the `router.refresh()` — is a single
- *  code path over this result, so a module cannot end up with its own quietly
- *  different rendering of the same outcome.
- *
- *  `ok` is what the fetch path reads off the response status. An action has no
- *  status, so its refusals are identified by the `error` key they carry —
- *  which is the same discriminator the caller falls back on anyway.
+/** Sends one submission. Everything downstream — the feedback precedence,
+ *  the refusal copy, the `router.refresh()` — is a single code path over this
+ *  result. `ok` is the response status.
  *
  *  Exported for direct testing: this repo has no testing-library, so a
- *  component's click handler cannot be driven, and the pin that matters here
- *  ("with an action in hand, nothing is ever fetched") is only observable on
- *  this function. */
+ *  component's click handler cannot be driven. */
 export async function dispatchSubmit(
   challengeId: string,
   flag: string,
   target: SubmitTarget,
 ): Promise<{ ok: boolean; data: SubmitResponse }> {
-  if (target.submitAction) {
-    const data = await target.submitAction(flag);
-    return { ok: !("error" in data), data };
-  }
   const res = await fetch(target.submitPath, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -152,10 +129,9 @@ export function resultLine(challenge: ChallengeView, feedback: Feedback | undefi
   return null;
 }
 
-/** One sentence per refusal slug either module's server half can return.
- *  Exported for direct testing — the slug vocabulary is shared across two
- *  modules and a reason that quietly starts hitting the generic fallback is
- *  invisible in a static render. */
+/** One sentence per refusal slug the server half can return.
+ *  Exported for direct testing — a reason that quietly starts hitting the
+ *  generic fallback is invisible in a static render. */
 export function describeRefusal(reason: string): string {
   switch (reason) {
     case "paused":
@@ -191,31 +167,7 @@ export function describeRefusal(reason: string): string {
       // time a submit comes back with this, the fix is to sign in again, not
       // to reload — the generic fallback used to say neither.
       return "Your session expired — sign in and try again.";
-    // The rest are never emitted by classic's own route. `wrong-mode`,
-    // `invalid` and `error` are `AiSubmitResult` reasons the ai module's
-    // Server Action passes straight through (ai/[id]/actions.ts, mapping them
-    // exactly as `aiAwardResponse` does).
-    case "wrong-mode":
-      return "This challenge doesn't take typed flags — solve it on the challenge site and it reports back.";
-    case "invalid":
-      return "That submission didn't look right — reload the page and try again.";
-    case "error":
-      return "Grading didn't complete. Try again in a moment.";
-    // `rate-limited`, `invalid-token` and `expired` come from /api/ai/submit,
-    // which is the EXTERNAL surface (spec §6.1's 2026-09-02 amendment) — this
-    // form never calls it, so nothing here reaches this caller today. Kept
-    // because the copy is right if a future in-box path ever does relay them,
-    // and because deleting a branch is how a slug quietly starts falling
-    // through to the generic line below.
-    case "rate-limited":
-      return "Too many tries too fast — give it a few seconds.";
-    case "invalid-token":
-    case "expired":
-      return "This page's session token expired — reload the page and try again.";
-    // Everything else, including the action's `gate` refusal (unreachable
-    // from a rendered form: the page redirects an ungated visitor before it
-    // can render one — unlike `unauthorized` above, nothing re-opens the gate
-    // for an already-loaded tab) and classic's prose-style route errors.
+    // Everything else, including classic's prose-style route errors.
     default:
       return "That submission wasn't accepted.";
   }

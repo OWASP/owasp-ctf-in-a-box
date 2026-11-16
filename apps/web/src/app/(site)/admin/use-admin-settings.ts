@@ -98,9 +98,6 @@ export function useAdminSettingsDrafts({
   const [classicCooldownSecInput, setClassicCooldownSecInput] = useState(
     initial.classicCooldownSec === null ? "" : String(initial.classicCooldownSec),
   );
-  const [aiCooldownSecInput, setAiCooldownSecInput] = useState(
-    initial.aiCooldownSec === null ? "" : String(initial.aiCooldownSec),
-  );
   const [cooldownInput, setCooldownInput] = useState(
     initial.scoreCooldownMin === null ? "" : String(initial.scoreCooldownMin),
   );
@@ -164,7 +161,6 @@ export function useAdminSettingsDrafts({
     setQuizMaxAttemptsInput(s.quizMaxAttempts === null ? "" : String(s.quizMaxAttempts));
     setQuizRetryAfterInput(s.quizRetryAfterMin === null ? "" : String(s.quizRetryAfterMin));
     setClassicCooldownSecInput(s.classicCooldownSec === null ? "" : String(s.classicCooldownSec));
-    setAiCooldownSecInput(s.aiCooldownSec === null ? "" : String(s.aiCooldownSec));
     setTeamMaxMembersInput(s.teamMaxMembers === null ? "" : String(s.teamMaxMembers));
     setCooldownInput(s.scoreCooldownMin === null ? "" : String(s.scoreCooldownMin));
   };
@@ -291,8 +287,6 @@ export function useAdminSettingsDrafts({
     setQuizRetryAfterInput,
     classicCooldownSecInput,
     setClassicCooldownSecInput,
-    aiCooldownSecInput,
-    setAiCooldownSecInput,
     cooldownInput,
     setCooldownInput,
     teamMaxMembersInput,

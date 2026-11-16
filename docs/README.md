@@ -12,7 +12,7 @@ The [repo README](../README.md) is the front door →
 **Running an event?**
 [hosting](hosting.md) (stand it up) →
 [security-checklist](security-checklist.md) (before doors open) →
-[operations](operations.md) (during — teams, admin panel, the quiz/classic/ai
+[operations](operations.md) (during — teams, admin panel, the quiz/classic
 organizer guides) →
 [troubleshooting](troubleshooting.md) (when it breaks).
 Cloud VM instead of your own box: [aws](aws.md) · [fly](fly.md).
@@ -21,8 +21,7 @@ Cloud VM instead of your own box: [aws](aws.md) · [fly](fly.md).
 [scorer](scorer.md) (rubrics — the common case) →
 [modules](modules.md) (the contract a new vertical must satisfy) →
 [architecture](architecture.md)'s quiz/classic data flows (a worked app-side
-example). Integrating an external site with the `ai` module instead (deprecated,
-removed in v2.0.0): [ai-module](ai-module.md).
+example).
 
 **Contributing or reviewing security?**
 [CONTRIBUTING](../CONTRIBUTING.md) →

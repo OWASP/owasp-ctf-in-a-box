@@ -18,7 +18,6 @@ import { panelFor } from "./panel-for";
 import { HINT_COST, HINT_MIN_SOLVES, HINT_UNLOCK_AFTER_MIN } from "@/lib/hint-defaults";
 import { QUIZ_MAX_ATTEMPTS, QUIZ_RETRY_AFTER_MIN } from "@/lib/quiz-defaults";
 import { CLASSIC_COOLDOWN_SEC } from "@/lib/classic-defaults";
-import { AI_COOLDOWN_SEC } from "@/lib/ai-defaults";
 import AdminEventTab, { type AdminEventTabProps } from "@/app/(site)/admin/admin-event-tab";
 
 // A plain, unrendered React element as the object shape both helpers below
@@ -104,9 +103,6 @@ vi.mock("@/lib/modules", () => ({
     })[id],
   MODULE_TITLE_MAX: 60,
   MODULE_BLURB_MAX: 200,
-  // The ai panel's "Wiring the external site" drawer links the integrator
-  // contract with this; a mock missing it fails the whole panel at import.
-  DOCS_URL: "https://docs.example/",
 }));
 
 import AdminControls, { nextEventNameAfterSave } from "@/app/(site)/admin/admin-controls";
@@ -140,7 +136,6 @@ const settings: AdminSettings = {
   quizMaxAttempts: null,
   quizRetryAfterMin: null,
   classicCooldownSec: null,
-  aiCooldownSec: null,
   teamMaxMembers: null,
   scoreCooldownMin: null,
   // A LAUNCHED event (no scoring start = not launched = registration
@@ -216,7 +211,7 @@ describe("AdminControls tab shell", () => {
 
   // UX audit F3: the blurb help must not say "Not shown on any page … which
   // today means the quiz". The blurb IS rendered — as the page-header lede on
-  // /quiz, /flags and /ai, and as those pages' meta description — so the one
+  // /quiz and /flags, and as those pages' meta description — so the one
   // sentence about the field would be the one false claim on the panel. The
   // help names the surfaces the docs name.
   it("tells the truth about where the blurb renders", () => {
@@ -279,8 +274,8 @@ describe("AdminControls tab shell", () => {
 
 describe("AdminControls panel contents", () => {
   // Hints are event policy shared by every module that sells them (Secure
-  // Development, Classic, AI — hint-store.ts reads the same four settings for
-  // all three), so the knobs live on the Event tab. Parking them on Secure
+  // Development, Classic — hint-store.ts reads the same four settings for
+  // both), so the knobs live on their own tab. Parking them on Secure
   // Development's tab made them unreachable on any event without that
   // module (UX audit F1). Secure Development keeps the one knob that IS its
   // own: the re-run cooldown.
@@ -302,11 +297,11 @@ describe("AdminControls panel contents", () => {
   it("says on the Hints panel which modules the hint policy reaches", () => {
     const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={twoModules} />);
     const hintsPanel = panelFor(html, "hints");
-    expect(hintsPanel).toMatch(/Jeopardy and AI sell their hints/);
+    expect(hintsPanel).toMatch(/Jeopardy sells its hints/);
     // Secure Development is named as having none, and the wording that sent
     // organizers to a tab with no hint field must not survive.
     expect(hintsPanel).toMatch(/Secure Development have no hints/);
-    expect(hintsPanel).not.toMatch(/Secure Development, Jeopardy and AI/);
+    expect(hintsPanel).not.toMatch(/Secure Development, Jeopardy/);
     expect(hintsPanel).not.toMatch(/Each module.s own tab holds the hint text/);
   });
 
@@ -430,8 +425,8 @@ describe("AdminControls panel contents", () => {
     // Insights + quiz. The control-plane destinations survive a module being
     // disabled, because none of them is a module tab.
     expect(html.match(/role="region"/g)?.length).toBe(9);
-    // The hint policy stays reachable: quiz has no hints, but classic and ai
-    // do, and this event can switch either on at runtime.
+    // The hint policy stays reachable: quiz has no hints, but classic does,
+    // and this event can switch it on at runtime.
     expect(panelFor(html, "hints")).toContain("Hint cost");
     expect(() => panelFor(html, "secure-development")).toThrow();
   });
@@ -818,48 +813,6 @@ describe("module toggles", () => {
 
   it("says a disabled module's data survives, because that is the question an organizer has", () => {
     expect(render()).toMatch(/deletes nothing|Nothing is deleted/i);
-  });
-});
-
-// A SEPARATE fixture (not a mutation of `twoModules`/`settings` above) so the
-// "7 tabs"/"7 panels" assertions in the first describe block stay pinned to
-// exactly the module set they were written against — adding a third module
-// to that shared fixture would silently need every one of those counts
-// bumped to 8, and a forgotten one would pass for the wrong reason.
-describe("AdminControls ai panel", () => {
-  const withAi: readonly ResolvedModule[] = [
-    ...twoModules,
-    { id: "ai", title: "AI", blurb: "Prompt-injection and jailbreak challenges hosted externally." },
-  ];
-
-  it("renders the ai module's tab with an eleventh destination and panel", () => {
-    const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={withAi} />);
-    expect(html).toContain("AI");
-    expect(html.match(/href="\/admin\//g)?.length).toBe(11);
-    expect(html.match(/role="region"/g)?.length).toBe(11);
-  });
-
-  it("renders AdminAiControls in the ai panel, not the fallback placeholder", () => {
-    const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={withAi} />);
-    const aiPanel = panelFor(html, "ai");
-    expect(aiPanel).toContain("Submission cooldown (sec)");
-    expect(aiPanel).toContain("Add challenge");
-    expect(aiPanel).not.toContain("No settings for this module yet.");
-  });
-
-  it("keeps the ai cooldown field out of every other panel", () => {
-    const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={withAi} />);
-    expect(panelFor(html, "event")).not.toContain("Submission cooldown (sec)");
-    expect(panelFor(html, "quiz")).not.toContain("Submission cooldown (sec)");
-  });
-
-  it("shows the ai cooldown override, falling back to the module default when unset", () => {
-    const withDefault = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={settings} modules={withAi} />);
-    expect(panelFor(withDefault, "ai")).toContain(`placeholder="${AI_COOLDOWN_SEC}"`);
-
-    const overridden = { ...settings, aiCooldownSec: 42 };
-    const html = renderToStaticMarkup(<AdminControls viewerLogin="organizer" eventName="OWASP CTF in a Box" defaultModuleIds={["secure-development"]} secureDevAvailable initial={overridden} modules={withAi} />);
-    expect(panelFor(html, "ai")).toContain('value="42"');
   });
 });
 

@@ -697,7 +697,7 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
   // write pipeline would replace the box's whole category list with only the
   // bundle's — and re-spell every stored challenge's category to the bundle's
   // casing, hiding them from the board's exact-match filter. A failed HKEYS
-  // would report every row `created`. Same guard as ai-store's.
+  // would report every row `created`. Same guard as quiz-store's.
   const failedRead = [idsRes, categoriesRes, storiesRes].find((r) => r?.error);
   if (failedRead) throw new Error(`Upstash read failed before import: ${failedRead.error}`);
 
@@ -946,7 +946,7 @@ function extractAttempt(v: Record<string, unknown>): Attempt | null {
 }
 
 // `parseJsonValue` / `parseHashEntries` / `parseCounterHash` come from
-// lib/redis-decode.ts — the one copy quiz, classic and ai share (#504 M13).
+// lib/redis-decode.ts — the one copy quiz and classic share (#504 M13).
 
 export type ViewerClassic = {
   /** Solves only, keyed by challenge id. Points are what the challenge was
@@ -1240,7 +1240,7 @@ local cooldownMs = tonumber(ARGV[5])
 local nowMs = tonumber(ARGV[6])
 
 -- The shared attempt-row read (#504 M13) — attempts, lastAtMs and firstAt —
--- declared here as ATTEMPT_ROW_LUA, so quiz's and ai's scripts read the same
+-- declared here as ATTEMPT_ROW_LUA, so quiz's script reads the same
 -- three fields out of the same row shape.
 ${ATTEMPT_ROW_LUA}
 

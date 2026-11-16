@@ -78,6 +78,9 @@ export default function PasswordAuthForm({ next }: { next: string }) {
     setError(null);
     if (creating) {
       if (usernameProblem(username)) return setError(USERNAME_COPY);
+      // The server's bounds (emailAndPassword in lib/auth.ts), checked here
+      // so a short password costs no request and no sign-up budget.
+      if (password.length < 12 || password.length > 128) return setError(PASSWORD_COPY);
       if (password !== confirm) return setError(MISMATCH_COPY);
     }
     setPending(true);

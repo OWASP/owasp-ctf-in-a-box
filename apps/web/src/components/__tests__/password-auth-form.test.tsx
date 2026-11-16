@@ -160,6 +160,27 @@ describe("PasswordAuthForm sign-up", () => {
     expect($fetch).not.toHaveBeenCalled();
   });
 
+  it.each([11, 129])("refuses a %i-character password locally, making no request", (n) => {
+    render(<PasswordAuthForm next="/profile" />);
+    openCreate();
+    type("Username", "alice");
+    type("Password", "p".repeat(n));
+    type("Confirm password", "p".repeat(n));
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+    expect(screen.getByText("Passwords are 12 to 128 characters.")).toBeTruthy();
+    expect($fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([12, 128])("posts a %i-character password", async (n) => {
+    render(<PasswordAuthForm next="/profile" />);
+    openCreate();
+    type("Username", "alice");
+    type("Password", "p".repeat(n));
+    type("Confirm password", "p".repeat(n));
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+    await waitFor(() => expect($fetch).toHaveBeenCalledTimes(1));
+  });
+
   it("checks the username locally before posting", () => {
     render(<PasswordAuthForm next="/profile" />);
     openCreate();

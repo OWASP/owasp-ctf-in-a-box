@@ -230,7 +230,7 @@ describe("redisAdapter (mocked pipeline)", () => {
     pipeline.mockClear();
     await expect(
       adapter.update({ model: "user", where: [w("id", "u1")], update: { email: "b@x.test" } }),
-    ).rejects.toThrow("auth store: update user failed: unique email taken");
+    ).rejects.toThrow("auth store: update user failed: unique email, username taken");
     expect(names().filter((n) => n === "EVAL")).toHaveLength(1);
   });
 

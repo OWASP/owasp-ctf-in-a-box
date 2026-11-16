@@ -197,11 +197,43 @@ _entry() {
   _commit apps/web/src/a.ts
   run "$SCRIPT" base HEAD
   [ "$status" -eq 1 ]
-  _has "no changelog fragment added"
+  _has "empty or not a bullet entry"
+  _has "  changelog.d/1-empty.md"
+  _has "  changelog.d/2-prose.md"
+}
+
+@test "a bullet marker with nothing after it does not count" {
+  mkdir -p changelog.d
+  printf -- '- \n' > changelog.d/3-blank.md
+  _commit apps/web/src/a.ts
+  run "$SCRIPT" base HEAD
+  [ "$status" -eq 1 ]
+  _has "  changelog.d/3-blank.md"
+}
+
+@test "an invalid fragment fails even beside a valid one" {
+  mkdir -p changelog.d
+  printf -- '- **Fixed: a thing (#1).** prose.\n' > changelog.d/1-good.md
+  printf 'prose\n' > changelog.d/2-bad.md
+  _commit apps/web/src/a.ts
+  run "$SCRIPT" base HEAD
+  [ "$status" -eq 1 ]
+  _has "  changelog.d/2-bad.md"
+}
+
+@test "an invalid fragment fails a PR that needs no entry" {
+  mkdir -p changelog.d
+  printf 'prose\n' > changelog.d/4-bad.md
+  _commit docs/x.md
+  run "$SCRIPT" base HEAD
+  [ "$status" -eq 1 ]
+  _has "  changelog.d/4-bad.md"
 }
 
 @test "a fragment alone, with no shipped code, passes" {
-  _commit changelog.d/9-x.md
+  mkdir -p changelog.d
+  printf -- '- **Changed: docs (#9).** prose.\n' > changelog.d/9-x.md
+  _commit docs/x.md
   run "$SCRIPT" base HEAD
   [ "$status" -eq 0 ]
 }

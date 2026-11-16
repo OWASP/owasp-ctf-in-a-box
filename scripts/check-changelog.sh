@@ -95,6 +95,38 @@ exempt() {
   return 1
 }
 
+# A fragment is a file directly in changelog.d/ ending in .md, not the README.
+# Every added fragment must be one the release assembler accepts: its first
+# non-blank line is a bullet with text after the "- ". One bad fragment fails
+# the check even beside a good one, and even on a PR that needs no entry,
+# because the assembler would stop on it at release.
+fragment=""
+invalid=""
+while IFS= read -r -d '' path; do
+  case "$path" in
+    changelog.d/README.md) ;;
+    changelog.d/*/*) ;;
+    changelog.d/*.md)
+      first="$(git show "${head}:${path}" | grep -m1 -v '^[[:space:]]*$' || true)"
+      case "$first" in
+        "- "*[![:space:]]*) fragment="$path" ;;
+        *) invalid="${invalid}  ${path}
+" ;;
+      esac
+      ;;
+  esac
+done < "$added"
+
+if [ -n "$invalid" ]; then
+  {
+    echo "check-changelog: these changelog fragments are empty or not a bullet entry:"
+    printf '%s' "$invalid"
+    echo "Fix: each changelog.d/<issue>-<slug>.md starts with a '- **Kind: summary (#N).** ...'"
+    echo "bullet; see changelog.d/README.md."
+  } >&2
+  exit 1
+fi
+
 triggers=""
 while IFS= read -r -d '' path; do
   [ -n "$path" ] || continue
@@ -112,23 +144,6 @@ if [ -z "$triggers" ]; then
   echo "check-changelog: ok — no shipped code changed outside tests and docs"
   exit 0
 fi
-
-# A fragment is a file directly in changelog.d/ ending in .md, not the README.
-fragment=""
-while IFS= read -r -d '' path; do
-  case "$path" in
-    changelog.d/README.md) ;;
-    changelog.d/*/*) ;;
-    changelog.d/*.md)
-      # The assembler refuses an empty fragment or one that is not a bullet,
-      # so one that is either does not count as an entry.
-      first="$(git show "${head}:${path}" | grep -m1 -v '^[[:space:]]*$' || true)"
-      case "$first" in
-        "- "*) fragment="$path" ;;
-      esac
-      ;;
-  esac
-done < "$added"
 
 if [ -n "$fragment" ]; then
   echo "check-changelog: ok — code changed and the PR adds the fragment ${fragment}"

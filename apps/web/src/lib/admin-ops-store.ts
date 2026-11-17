@@ -1,6 +1,7 @@
 import "server-only";
 import { assertPipelineOk, parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
-import { ADMIN_AUDIT_KEY, AUDIT_CAP, resetEvent, scanDelByPrefix } from "@/lib/admin-store";
+import { ADMIN_AUDIT_KEY, AUDIT_CAP, getAdminSettings, resetEvent, scanDelByPrefix } from "@/lib/admin-store";
+import { enabledSignInProviders } from "@/lib/sign-in-providers";
 import { ADMIN_GRANTS_KEY, isAdminGrantee } from "@/lib/admin-grants";
 import { ADMIN_CODE_PREFIX, ADMIN_GRANT_GEN_KEY } from "@/lib/admin-claim";
 import { RESET_CODE_PREFIX } from "@/lib/password-reset";
@@ -14,7 +15,7 @@ import { logActivity } from "@/lib/activity-log";
 import { errorLabel } from "@/lib/error-label";
 import { OpsValidationError } from "@/lib/ops-errors";
 import { auth } from "@/lib/auth";
-import { getGithubLink, releaseGithubLink } from "@/lib/github-link";
+import { type TakenLink, getGithubLink, releaseGithubLink, restoreGithubLink, takeGithubLink } from "@/lib/github-link";
 import { currentUsername, renameUsername } from "@/lib/username-store";
 import { USERNAME_COPY } from "@/lib/username-rules";
 import { resolveTeamMaxMembers } from "@/lib/team-store";
@@ -509,6 +510,10 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
  *  while the delete ran. */
 export const GRANT_CLAIMED_DURING_DELETE = "An admin grant was claimed during the delete and has been removed.";
 
+/** The warning a retried `deleteUser` returns when it removes the grant an
+ *  earlier, failed run left on the deleted account. */
+export const ORPHAN_GRANT_REMOVED = "An admin grant left by an earlier failed delete has been removed.";
+
 // KEYS: [1]=ctf:sd:held:by:<login> [2]=ctf:sd:held:authors  ARGV: [1]=login.
 // The hash first: a DEL that errors stops the script, so the author stays
 // indexed and sync can still find the entries.
@@ -527,9 +532,12 @@ return 1`;
  *
  * Refused for an organizer (revoke the grant first: this also covers deleting
  * yourself and the last admin) and for a captain (see `forceTransferCaptain`).
- * Both refusals, and the "No such player." for an id with neither an account
- * nor event state, come before any write. A grant claimed after that check
- * is removed once the account row is gone, with a warning.
+ * Both refusals, and the "No such player." for an id with neither an account,
+ * event state nor a grant, come before any write. A grant claimed after that
+ * check is removed once the account row is gone, with a warning. A grant on
+ * an id with no account row is not an organizer (nobody signs in as it): it is
+ * what a run that failed at the grant removal leaves, and the retry removes
+ * it, with its own warning.
  *
  * Re-runnable: every step tolerates what an earlier, failed run already
  * removed, so a delete that threw part way completes on the next call. One
@@ -545,7 +553,14 @@ export async function deleteUser(
   const player = requirePlayerId(rawId);
 
   const detail = await lookupUser(player);
-  if (await isAdminGrantee(player)) {
+  const { internalAdapter } = await auth.$context;
+  const granted = await isAdminGrantee(player);
+  const hasAccount = Boolean(await internalAdapter.findUserById(player));
+  // A grant on an id whose account row is gone is what a delete that failed
+  // at its grant removal leaves, and nobody can sign in as it: the retry goes
+  // on to remove it. A grant with the row in place is a live organizer.
+  const orphanGrant = granted && !hasAccount;
+  if (granted && hasAccount) {
     throw new OpsValidationError("id", `${detail.name} is an organizer. Revoke their admin access first.`);
   }
   if (detail.team?.isCaptain) {
@@ -554,8 +569,7 @@ export async function deleteUser(
       `${detail.name} is captain of "${detail.team.name}". Transfer the captaincy or disband the team first.`,
     );
   }
-  const { internalAdapter } = await auth.$context;
-  if (!detail.known && !(await internalAdapter.findUserById(player))) {
+  if (!detail.known && !hasAccount && !orphanGrant) {
     throw new OpsValidationError("id", "No such player.");
   }
 
@@ -612,14 +626,15 @@ export async function deleteUser(
     );
     const grantRemoved = Number(grant.result) === 1;
     const warnings = [...reset.warnings];
-    if (grantRemoved) warnings.push(GRANT_CLAIMED_DURING_DELETE);
+    const grantWarning = orphanGrant ? ORPHAN_GRANT_REMOVED : GRANT_CLAIMED_DURING_DELETE;
+    if (grantRemoved) warnings.push(grantWarning);
 
     await audit("ops:user-delete", actor, {
       player,
       leftTeam,
       blockedLogin,
       grantRemoved,
-      ...(grantRemoved ? { warning: GRANT_CLAIMED_DURING_DELETE } : {}),
+      ...(grantRemoved ? { warning: grantWarning } : {}),
     });
     return { cleared: reset.cleared, warnings, leftTeam };
   } finally {
@@ -905,39 +920,89 @@ export async function renameUser(
   return { from, to };
 }
 
+/** The unlink refusal when no sign-in method would be left. A credential row
+ *  signs in only with a username; an OAuth row only while its provider is
+ *  enabled. The steps name what the Support card offers. */
+function noOtherSignIn(hasUsername: boolean, hasPassword: boolean): string {
+  const steps: string[] = [];
+  if (!hasUsername) steps.push("set a username for them (Username, then Save)");
+  if (!hasPassword) steps.push("give them a reset code so they can set a password");
+  const [first, ...rest] = steps;
+  return `This player cannot sign in without GitHub. First ${first}${rest.map((s) => `, then ${s}`).join("")}.`;
+}
+
 /**
- * Removes a player's GitHub link: their `github` account rows, then the link
- * keys, with no re-link block, so the login is free to link again. Sync reads
+ * Removes a player's GitHub link: the link keys, then their `github` account
+ * rows, with no re-link block, so the login is free to link again. Sync reads
  * a released login as unlinked and holds its scores.
  *
- * Refused while the link has scored (any Secure Development solve: the score
- * is attributed through it) and when GitHub is the player's only sign-in
- * method (removing it would lock them out). Both are read before any write,
- * and a failed read throws. The account rows go before the link keys, so a
- * failure between the two leaves a link a retry finishes. Whether Secure
+ * Refused when no usable sign-in method would remain (a password with a
+ * username, or another provider that is enabled), read before any write; a
+ * failed read throws. Refused while the link has scored (any Secure
+ * Development solve: the score is attributed through it). That count runs
+ * AFTER the link is released, so a score sync attributes from then on is
+ * held, not scored; a solve found puts the link back exactly as it was (time
+ * included) and refuses, and a failed count does the same before it throws.
+ * What this cannot see is a score sync resolved to this player before the
+ * release and the scorer persists after the count: the scorer's HSETNX does
+ * not consult the link, so closing that needs a lock shared with the scorer.
+ * A link that cannot be put back throws and is logged.
+ *
+ * The link keys go before the account rows, so a failure between the two
+ * leaves GitHub rows with no link, which a retry deletes. Whether Secure
  * Development is on is the caller's check.
  */
-export async function unlinkGithub(rawId: unknown, actor: AuditActor): Promise<{ login: string }> {
+export async function unlinkGithub(rawId: unknown, actor: AuditActor): Promise<{ login: string | null }> {
   const player = requirePlayerId(rawId);
   const link = await getGithubLink(player);
-  if (!link) throw new OpsValidationError("id", "No GitHub account is linked.");
-  if ((await countSecureDevSolves(player)) > 0) {
-    throw new OpsValidationError("id", "This GitHub link has scored and cannot be removed.");
-  }
   const { internalAdapter } = await auth.$context;
   const accounts = await internalAdapter.findAccounts(player);
-  // Link keys with no account rows behind them: nothing signs in through
-  // this link, so the GitHub-only copy would send the admin the wrong way.
-  if (accounts.length === 0) throw new OpsValidationError("id", "No GitHub account is linked.");
   const github = accounts.filter((a) => a.providerId === "github");
-  if (github.length === accounts.length) {
-    throw new OpsValidationError(
-      "id",
-      "This player signs in only with GitHub. Give them a reset code so they can set a password first.",
-    );
+  // Link keys with no account rows behind them: nothing signs in through
+  // this link, so the sign-in copy would send the admin the wrong way.
+  if (accounts.length === 0 || (!link && github.length === 0)) {
+    throw new OpsValidationError("id", "No GitHub account is linked.");
+  }
+
+  const others = accounts.filter((a) => a.providerId !== "github");
+  const hasPassword = others.some((a) => a.providerId === "credential");
+  const hasUsername = Boolean(await currentUsername(player));
+  let usable = hasPassword && hasUsername;
+  const social = others.filter((a) => a.providerId !== "credential").map((a) => a.providerId);
+  if (!usable && social.length > 0) {
+    const enabled: readonly string[] = enabledSignInProviders(await getAdminSettings(), process.env);
+    usable = social.some((p) => enabled.includes(p));
+  }
+  if (!usable) throw new OpsValidationError("id", noOtherSignIn(hasUsername, hasPassword));
+
+  const taken = link ? await takeGithubLink(player) : null;
+  if (taken) {
+    let solves: number;
+    try {
+      solves = await countSecureDevSolves(player);
+    } catch (err) {
+      await putBack(player, taken);
+      throw err;
+    }
+    if (solves > 0) {
+      await putBack(player, taken);
+      throw new OpsValidationError("id", "This GitHub link has scored and cannot be removed.");
+    }
   }
   for (const account of github) await internalAdapter.deleteAccount(account.id);
-  const login = (await releaseGithubLink(player, { block: false })) ?? link.login;
+  const login = taken?.login ?? null;
   await audit("ops:github-unlink", actor, { player, login });
   return { login };
+}
+
+/** Restores a link `unlinkGithub` took, logging (without the login or id) a
+ *  restore that fails: a scored login left unlinked is one another account
+ *  can link. */
+async function putBack(player: string, taken: TakenLink): Promise<void> {
+  try {
+    await restoreGithubLink(player, taken);
+  } catch (err) {
+    console.error(`[admin-ops] could not restore a scored GitHub link: ${errorLabel(err)}`);
+    throw err;
+  }
 }

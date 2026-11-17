@@ -87,6 +87,72 @@ if ARGV[3] == '1' and (ours or not holder) then redis.call('SADD', KEYS[3], logi
 return login
 `;
 
+/**
+ * KEYS[1] reverse pointer, KEYS[2] link-time hash; ARGV[1] player id, ARGV[2]
+ * login-key prefix. RELEASE_LINK_SCRIPT without a block, returning what
+ * RESTORE_LINK_SCRIPT needs to put the link back exactly: {login, link time
+ * or '', '1' when the login key named this player}. nil when there is no link.
+ */
+export const TAKE_LINK_SCRIPT = `
+local login = redis.call('GET', KEYS[1])
+if not login then return false end
+local at = redis.call('HGET', KEYS[2], ARGV[1]) or ''
+local key = ARGV[2] .. login
+local ours = redis.call('GET', key) == ARGV[1]
+if ours then redis.call('DEL', key) end
+redis.call('DEL', KEYS[1])
+redis.call('HDEL', KEYS[2], ARGV[1])
+return {login, at, ours and '1' or '0'}
+`;
+
+/**
+ * KEYS[1] login key, KEYS[2] reverse pointer, KEYS[3] link-time hash; ARGV[1]
+ * player id, ARGV[2] lowercased login, ARGV[3] link time or '', ARGV[4] '1'
+ * when the login key named this player when it was taken.
+ * Puts back what TAKE_LINK_SCRIPT removed, with the original link time, so a
+ * restored link reads exactly as it did. Writes nothing and returns
+ * 'relinked' when the player has a link again, or 'taken' when another player
+ * now holds the login key.
+ */
+export const RESTORE_LINK_SCRIPT = `
+if redis.call('EXISTS', KEYS[2]) == 1 then return 'relinked' end
+if ARGV[4] == '1' then
+  local holder = redis.call('GET', KEYS[1])
+  if holder and holder ~= ARGV[1] then return 'taken' end
+  redis.call('SET', KEYS[1], ARGV[1])
+end
+redis.call('SET', KEYS[2], ARGV[2])
+if ARGV[3] ~= '' then redis.call('HSET', KEYS[3], ARGV[1], ARGV[3]) end
+return 'restored'
+`;
+
+/** A link as TAKE_LINK_SCRIPT removed it: everything a restore needs. */
+export type TakenLink = { login: string; at: string; ours: boolean };
+
+/** Releases a player's link without a block and returns it for a possible
+ *  restore, or null when the player has no link. Throws on a Redis error. */
+export async function takeGithubLink(playerId: string, keys: LinkKeys = {}): Promise<TakenLink | null> {
+  const { prefix = LINK_GITHUB_PREFIX, userPrefix = LINK_USER_PREFIX, atKey = LINK_AT_KEY } = keys;
+  const res = await upstashEval(TAKE_LINK_SCRIPT, [`${userPrefix}${playerId}`, atKey], [playerId, prefix]);
+  if (res === null) return null;
+  if (!Array.isArray(res) || typeof res[0] !== "string" || res[0] === "" || typeof res[1] !== "string") {
+    throw new Error("github link: unexpected take reply");
+  }
+  return { login: res[0], at: res[1], ours: res[2] === "1" };
+}
+
+/** Puts a taken link back. Throws on a Redis error, and when the link could
+ *  not be restored as it was (the player re-linked, or the login is held). */
+export async function restoreGithubLink(playerId: string, taken: TakenLink, keys: LinkKeys = {}): Promise<void> {
+  const { prefix = LINK_GITHUB_PREFIX, userPrefix = LINK_USER_PREFIX, atKey = LINK_AT_KEY } = keys;
+  const res = await upstashEval(
+    RESTORE_LINK_SCRIPT,
+    [`${prefix}${taken.login}`, `${userPrefix}${playerId}`, atKey],
+    [playerId, taken.login, taken.at, taken.ours ? "1" : "0"],
+  );
+  if (res !== "restored") throw new Error(`github link: restore refused (${String(res)})`);
+}
+
 export type LinkOutcome = "linked" | "unchanged" | "taken" | "blocked";
 
 /** Records the GitHub login `userId` signed in with. Throws on a Redis error. */

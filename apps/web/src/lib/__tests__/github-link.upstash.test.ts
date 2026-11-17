@@ -3,7 +3,15 @@ import { freshId, liveConfigured, liveKey } from "./live-redis";
 
 vi.mock("server-only", () => ({}));
 
-import { getGithubLink, recordGithubSignIn, releaseGithubLink, resolveGithubLogin } from "@/lib/github-link";
+import {
+  getGithubLink,
+  recordGithubSignIn,
+  releaseGithubLink,
+  resolveGithubLogin,
+  restoreGithubLink,
+  takeGithubLink,
+  type TakenLink,
+} from "@/lib/github-link";
 import { upstashPipeline } from "@/lib/upstash";
 
 describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", () => {
@@ -42,6 +50,8 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
         return r?.result ?? null;
       },
       read: (id: string) => getGithubLink(id, us, at),
+      take: (id: string) => takeGithubLink(id, { prefix: gh, userPrefix: us, atKey: at }),
+      restore: (id: string, taken: TakenLink) => restoreGithubLink(id, taken, { prefix: gh, userPrefix: us, atKey: at }),
     };
   }
 
@@ -192,5 +202,54 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
     const t = fresh();
     expect(await t.release("u1", true)).toBeNull();
     expect(await t.record("u1", "octocat")).toBe("linked");
+  });
+
+  it("a take releases the link and a restore puts it back with its original time", async () => {
+    const t = fresh();
+    await t.record("u1", "OctoCat");
+    const time = await t.linkedAt("u1");
+    const taken = await t.take("u1");
+    expect(taken).toEqual({ login: "octocat", at: time, ours: true });
+    expect(await t.resolve("octocat")).toBeNull();
+    expect(await t.read("u1")).toBeNull();
+    await t.restore("u1", taken!);
+    expect(await t.resolve("octocat")).toBe("u1");
+    expect(await t.read("u1")).toEqual({ login: "octocat", linkedAt: Number(time) });
+  });
+
+  it("a restore refuses, writing nothing, once another player holds the login", async () => {
+    const t = fresh();
+    await t.record("u1", "octocat");
+    const taken = await t.take("u1");
+    expect(await t.record("u2", "octocat")).toBe("linked");
+    await expect(t.restore("u1", taken!)).rejects.toThrow(/restore refused \(taken\)/);
+    expect(await t.resolve("octocat")).toBe("u2");
+    expect(await t.read("u1")).toBeNull();
+  });
+
+  it("a restore leaves a newer link of the player's own alone", async () => {
+    const t = fresh();
+    await t.record("u1", "octocat");
+    const taken = await t.take("u1");
+    await t.record("u1", "octo-new");
+    await expect(t.restore("u1", taken!)).rejects.toThrow(/relinked/);
+    expect(await t.resolve("octocat")).toBeNull();
+    expect(await t.resolve("octo-new")).toBe("u1");
+  });
+
+  it("a take through a stale pointer leaves the other player's login key, and the restore does not claim it", async () => {
+    const t = fresh();
+    await t.record("u1", "octocat");
+    await t.setPointer("u3", "octocat");
+    const taken = await t.take("u3");
+    expect(taken).toMatchObject({ login: "octocat", ours: false });
+    expect(await t.resolve("octocat")).toBe("u1");
+    await t.restore("u3", taken!);
+    expect(await t.resolve("octocat")).toBe("u1");
+  });
+
+  it("a take with no link returns null", async () => {
+    const t = fresh();
+    expect(await t.take("u1")).toBeNull();
   });
 });

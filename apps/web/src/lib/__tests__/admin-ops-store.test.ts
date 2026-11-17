@@ -5,7 +5,7 @@
 // else?), the aggregate bookkeeping (the counters are NOT all keyed the same
 // way), and the refusals that keep a team administrable.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(script: string, keys: string[], args: (string | number)[]) => Promise<unknown>>(),
@@ -29,7 +29,9 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
 });
 // deleteAllAccounts runs the master reset and sweeps the account namespaces
 // through the reset's own SCAN+DEL walk.
-const storeDeps = vi.hoisted(() => ({ resetEvent: vi.fn(), scanDelByPrefix: vi.fn() }));
+// unlinkGithub reads the sign-in switches to tell an enabled provider row
+// from one that cannot sign in.
+const storeDeps = vi.hoisted(() => ({ resetEvent: vi.fn(), scanDelByPrefix: vi.fn(), getAdminSettings: vi.fn() }));
 vi.mock("@/lib/admin-store", () => ({ ADMIN_AUDIT_KEY: "ctf:admin:audit", AUDIT_CAP: 500, ...storeDeps }));
 // deleteUser refuses an organizer before anything is written.
 const grantDeps = vi.hoisted(() => ({ isAdminGrantee: vi.fn() }));
@@ -53,8 +55,13 @@ vi.mock("@/lib/player", () => ({
 }));
 
 // deleteUser reads the player's link once to name the held-score keys to clear.
-// unlinkGithub releases it.
-const linkDeps = vi.hoisted(() => ({ getGithubLink: vi.fn(), releaseGithubLink: vi.fn() }));
+// unlinkGithub takes it, and puts it back when it turns out to have scored.
+const linkDeps = vi.hoisted(() => ({
+  getGithubLink: vi.fn(),
+  releaseGithubLink: vi.fn(),
+  takeGithubLink: vi.fn(),
+  restoreGithubLink: vi.fn(),
+}));
 vi.mock("@/lib/github-link", () => linkDeps);
 
 // unlinkGithub reads and deletes the player's better-auth account rows;
@@ -77,6 +84,7 @@ vi.mock("@/lib/username-store", () => nameDeps);
 import {
   CLEAR_HELD_SCRIPT,
   GRANT_CLAIMED_DURING_DELETE,
+  ORPHAN_GRANT_REMOVED,
   OpsValidationError,
   deleteAllAccounts,
   deleteUser,
@@ -883,6 +891,39 @@ describe("deleteUser: the account and its GitHub login", () => {
     expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(2);
   });
 
+  it("a retry after a failed grant removal removes the orphaned grant instead of refusing it as an organizer", async () => {
+    // The first run deleted the account row, then its grant SREM failed.
+    authDeps.findUserById.mockResolvedValue(null);
+    grantDeps.isAdminGrantee.mockResolvedValue(true);
+    queueDelete(true, 1);
+    const result = await deleteUser(OCTO, ADMIN);
+    expect(allCommands()).toContainEqual(["SREM", "ctf:admin:grants", OCTO]);
+    expect(result.warnings).toContain(ORPHAN_GRANT_REMOVED);
+    expect(result.warnings).not.toContain(GRANT_CLAIMED_DURING_DELETE);
+    expect(auditLine("ops:user-delete")).toMatchObject({ player: OCTO, grantRemoved: true, warning: ORPHAN_GRANT_REMOVED });
+  });
+
+  it("still refuses a grant whose account row is in place", async () => {
+    grantDeps.isAdminGrantee.mockResolvedValue(true);
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/is an organizer/);
+    nothingDeleted();
+  });
+
+  it("a failed account-row read refuses instead of reading as an orphaned grant", async () => {
+    grantDeps.isAdminGrantee.mockResolvedValue(true);
+    authDeps.findUserById.mockRejectedValue(new Error("NOAUTH"));
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("NOAUTH");
+    nothingDeleted();
+  });
+
   it("a user row that survives the delete is a failure, not a delete", async () => {
     // better-auth's single-row delete swallows a failed read and deletes
     // nothing; the re-read is what notices.
@@ -1202,103 +1243,182 @@ describe("unlinkGithub", () => {
     return cmd ? JSON.parse(String(cmd[2])) : null;
   };
   const account = (id: string, providerId: string) => ({ id, providerId, userId: OCTO, accountId: id });
+  const TAKEN = { login: "octocat", at: "1700000000000", ours: true };
+  const switches = (on: Partial<Record<"github" | "google" | "discord", boolean>>) => ({
+    signInProviders: { github: false, google: false, discord: false, ...on },
+  });
 
-  it("refuses a link that has scored and changes nothing", async () => {
-    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
-    mockSecureDevKeys("ctf:solves:vampi", [`${OCTO}:api1`, `${BOB}:api1`]);
-    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
-    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
-    expect(err).toBeInstanceOf(OpsValidationError);
-    expect(err.message).toBe("This GitHub link has scored and cannot be removed.");
+  beforeEach(() => {
+    linkDeps.getGithubLink.mockResolvedValue({ login: "octocat", linkedAt: 1700000000000 });
+    linkDeps.takeGithubLink.mockResolvedValue(TAKEN);
+    linkDeps.restoreGithubLink.mockResolvedValue(undefined);
+    nameDeps.currentUsername.mockResolvedValue("octocat");
+    authDeps.deleteAccount.mockReset().mockResolvedValue(undefined);
+    storeDeps.getAdminSettings.mockResolvedValue(switches({}));
+    vi.stubEnv("GOOGLE_CLIENT_ID", "id");
+    vi.stubEnv("GOOGLE_CLIENT_SECRET", "secret");
+    vi.stubEnv("DISCORD_CLIENT_ID", "id");
+    vi.stubEnv("DISCORD_CLIENT_SECRET", "secret");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  const nothingWritten = () => {
+    expect(linkDeps.takeGithubLink).not.toHaveBeenCalled();
     expect(authDeps.deleteAccount).not.toHaveBeenCalled();
-    expect(linkDeps.releaseGithubLink).not.toHaveBeenCalled();
     expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
-  });
+  };
 
-  it("refuses a player whose only sign-in is GitHub", async () => {
-    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
-    mockSecureDevKeys("ctf:solves:vampi", [`${BOB}:api1`]);
-    authDeps.findAccounts.mockResolvedValue([account("a1", "github")]);
-    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
-    expect(err).toBeInstanceOf(OpsValidationError);
-    expect(err.message).toBe(
-      "This player signs in only with GitHub. Give them a reset code so they can set a password first.",
-    );
-    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
-    expect(linkDeps.releaseGithubLink).not.toHaveBeenCalled();
-  });
-
-  it("answers no link, not the GitHub-only copy, when the player has no account rows", async () => {
-    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
-    mockSecureDevKeys("ctf:solves:vampi", [`${BOB}:api1`]);
-    authDeps.findAccounts.mockResolvedValue([]);
-    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
-    expect(err).toBeInstanceOf(OpsValidationError);
-    expect(err.message).toBe("No GitHub account is linked.");
-    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
-    expect(linkDeps.releaseGithubLink).not.toHaveBeenCalled();
-    expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
-  });
-
-  it("refuses a player with no link", async () => {
-    linkDeps.getGithubLink.mockResolvedValueOnce(null);
-    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
-    expect(err).toBeInstanceOf(OpsValidationError);
-    expect(err.message).toBe("No GitHub account is linked.");
-    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
-    expect(linkDeps.releaseGithubLink).not.toHaveBeenCalled();
-  });
-
-  it("deletes only the github account rows, releases the link without a block, and audits", async () => {
-    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
-    mockNoSecureDevKeys();
+  it("takes the link, finds no solve, then deletes only the github rows and audits", async () => {
     authDeps.findAccounts.mockResolvedValue([
       account("a1", "github"),
       account("a2", "credential"),
       account("a3", "github"),
-      account("a4", "google"),
     ]);
-    authDeps.deleteAccount.mockResolvedValue(undefined);
-    linkDeps.releaseGithubLink.mockResolvedValueOnce("octocat");
+    mockNoSecureDevKeys();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
     expect(await unlinkGithub(OCTO, ADMIN)).toEqual({ login: "octocat" });
-    expect(authDeps.findAccounts).toHaveBeenCalledWith(OCTO);
+    expect(linkDeps.takeGithubLink).toHaveBeenCalledWith(OCTO);
+    expect(linkDeps.releaseGithubLink).not.toHaveBeenCalled();
+    expect(linkDeps.restoreGithubLink).not.toHaveBeenCalled();
     expect(authDeps.deleteAccount.mock.calls.map((c) => c[0])).toEqual(["a1", "a3"]);
-    expect(linkDeps.releaseGithubLink).toHaveBeenCalledWith(OCTO, { block: false });
-    expect(authDeps.deleteAccount.mock.invocationCallOrder.at(-1)).toBeLessThan(
-      linkDeps.releaseGithubLink.mock.invocationCallOrder[0],
-    );
+    // The release comes before the solve count, and the count before any row goes.
+    const take = linkDeps.takeGithubLink.mock.invocationCallOrder[0];
+    const scan = mocks.upstashPipeline.mock.invocationCallOrder[0];
+    expect(take).toBeLessThan(scan);
+    expect(scan).toBeLessThan(authDeps.deleteAccount.mock.invocationCallOrder[0]);
     expect(auditLine()).toMatchObject({ action: "ops:github-unlink", player: OCTO, login: "octocat", by: ADMIN.id });
   });
 
-  it("another provider alone counts as a sign-in method", async () => {
-    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
-    mockNoSecureDevKeys();
+  it("puts a scored link back exactly as taken and refuses, deleting nothing", async () => {
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mockSecureDevKeys("ctf:solves:vampi", [`${OCTO}:api1`, `${BOB}:api1`]);
+    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err.message).toBe("This GitHub link has scored and cannot be removed.");
+    expect(linkDeps.restoreGithubLink).toHaveBeenCalledWith(OCTO, TAKEN);
+    expect(linkDeps.restoreGithubLink.mock.invocationCallOrder[0]).toBeGreaterThan(
+      linkDeps.takeGithubLink.mock.invocationCallOrder[0],
+    );
+    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
+    expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
+  });
+
+  it("a failed solve count puts the link back and throws instead of reading as unscored", async () => {
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }]);
+    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow();
+    expect(linkDeps.restoreGithubLink).toHaveBeenCalledWith(OCTO, TAKEN);
+    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
+  });
+
+  it("a scored link that cannot be put back throws, not the refusal copy", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mockSecureDevKeys("ctf:solves:vampi", [`${OCTO}:api1`]);
+    linkDeps.restoreGithubLink.mockRejectedValueOnce(new Error("github link: restore refused (taken)"));
+    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
+    expect(err).not.toBeInstanceOf(OpsValidationError);
+    expect(err.message).toMatch(/restore refused/);
+    expect(log.mock.calls.flat().join(" ")).not.toContain("octocat");
+    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
+
+  it.each([
+    [
+      "GitHub alone",
+      [account("a1", "github")],
+      "octocat",
+      "This player cannot sign in without GitHub. First give them a reset code so they can set a password.",
+    ],
+    [
+      "a password but no username",
+      [account("a1", "github"), account("a2", "credential")],
+      null,
+      "This player cannot sign in without GitHub. First set a username for them (Username, then Save).",
+    ],
+    [
+      "neither a password nor a username",
+      [account("a1", "github")],
+      null,
+      "This player cannot sign in without GitHub. First set a username for them (Username, then Save), then give them a reset code so they can set a password.",
+    ],
+    [
+      "a provider that is switched off",
+      [account("a1", "github"), account("a4", "discord")],
+      "octocat",
+      "This player cannot sign in without GitHub. First give them a reset code so they can set a password.",
+    ],
+  ])("refuses a player with %s, before any write", async (_label, rows, username, message) => {
+    authDeps.findAccounts.mockResolvedValue(rows);
+    nameDeps.currentUsername.mockResolvedValue(username);
+    storeDeps.getAdminSettings.mockResolvedValue(switches({ google: true }));
+    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err.message).toBe(message);
+    nothingWritten();
+  });
+
+  it("refuses a provider whose switch is on but has no keys", async () => {
+    vi.stubEnv("DISCORD_CLIENT_SECRET", "");
     authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a4", "discord")]);
-    linkDeps.releaseGithubLink.mockResolvedValueOnce("octocat");
+    storeDeps.getAdminSettings.mockResolvedValue(switches({ discord: true }));
+    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow(/cannot sign in without GitHub/);
+    nothingWritten();
+  });
+
+  it("an enabled provider counts as a sign-in method", async () => {
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a4", "discord")]);
+    nameDeps.currentUsername.mockResolvedValue(null);
+    storeDeps.getAdminSettings.mockResolvedValue(switches({ discord: true }));
+    mockNoSecureDevKeys();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
     expect(await unlinkGithub(OCTO, ADMIN)).toEqual({ login: "octocat" });
     expect(authDeps.deleteAccount.mock.calls.map((c) => c[0])).toEqual(["a1"]);
   });
 
-  it("validates the id first and lets a store failure throw without releasing", async () => {
-    await expect(unlinkGithub("OctoCat", ADMIN)).rejects.toThrow("invalid player id");
-    expect(linkDeps.getGithubLink).not.toHaveBeenCalled();
-    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
-    mockNoSecureDevKeys();
-    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
-    authDeps.deleteAccount.mockRejectedValueOnce(new Error("auth store: delete failed"));
-    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow("auth store");
-    expect(linkDeps.releaseGithubLink).not.toHaveBeenCalled();
-    expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
+  it("a failed sign-in switch read refuses instead of reading as enabled", async () => {
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a4", "google")]);
+    storeDeps.getAdminSettings.mockRejectedValue(new Error("NOAUTH"));
+    nameDeps.currentUsername.mockResolvedValue(null);
+    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow("NOAUTH");
+    nothingWritten();
   });
 
-  it("a failed SD solve count refuses instead of reading as unscored", async () => {
-    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
-    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }]);
+  it("answers no link, not the sign-in copy, when the player has no account rows", async () => {
+    authDeps.findAccounts.mockResolvedValue([]);
+    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err.message).toBe("No GitHub account is linked.");
+    nothingWritten();
+  });
+
+  it("refuses a player with neither a link nor a github row", async () => {
+    linkDeps.getGithubLink.mockResolvedValue(null);
+    authDeps.findAccounts.mockResolvedValue([account("a2", "credential")]);
+    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err.message).toBe("No GitHub account is linked.");
+    nothingWritten();
+  });
+
+  it("a retry after the link went finishes deleting the github rows", async () => {
+    linkDeps.getGithubLink.mockResolvedValue(null);
     authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
-    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow();
-    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
-    expect(linkDeps.releaseGithubLink).not.toHaveBeenCalled();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
+    expect(await unlinkGithub(OCTO, ADMIN)).toEqual({ login: null });
+    expect(linkDeps.takeGithubLink).not.toHaveBeenCalled();
+    expect(authDeps.deleteAccount.mock.calls.map((c) => c[0])).toEqual(["a1"]);
+    expect(auditLine()).toMatchObject({ action: "ops:github-unlink", player: OCTO, login: null });
+  });
+
+  it("validates the id first, and a failed row delete leaves no audit line", async () => {
+    await expect(unlinkGithub("OctoCat", ADMIN)).rejects.toThrow("invalid player id");
+    expect(linkDeps.getGithubLink).not.toHaveBeenCalled();
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mockNoSecureDevKeys();
+    authDeps.deleteAccount.mockRejectedValueOnce(new Error("auth store: delete failed"));
+    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow("auth store");
+    expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
   });
 });

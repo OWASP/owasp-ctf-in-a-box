@@ -12,6 +12,8 @@ import {
   recordGithubSignIn,
   releaseGithubLink,
   resolveGithubLogin,
+  restoreGithubLink,
+  takeGithubLink,
 } from "@/lib/github-link";
 
 beforeEach(() => {
@@ -122,6 +124,33 @@ describe("github link", () => {
       await expect(releaseGithubLink("id-1", { block: false })).rejects.toThrow(/unexpected/);
       upstash.upstashEval.mockRejectedValue(new Error("NOAUTH"));
       await expect(releaseGithubLink("id-1", { block: false })).rejects.toThrow("NOAUTH");
+    });
+  });
+
+  describe("takeGithubLink and restoreGithubLink", () => {
+    it("takes with the pointer and link-time keys and returns what a restore needs", async () => {
+      upstash.upstashEval.mockResolvedValue(["octocat", "1700000000000", "1"]);
+      expect(await takeGithubLink("id-1")).toEqual({ login: "octocat", at: "1700000000000", ours: true });
+      const [, keys, args] = upstash.upstashEval.mock.calls[0];
+      expect(keys).toEqual(["ctf:link:user:id-1", "ctf:link:at"]);
+      expect(args).toEqual(["id-1", "ctf:link:github:"]);
+    });
+
+    it("returns null with no link and rejects an unexpected reply", async () => {
+      upstash.upstashEval.mockResolvedValueOnce(null);
+      expect(await takeGithubLink("id-1")).toBeNull();
+      upstash.upstashEval.mockResolvedValueOnce("octocat");
+      await expect(takeGithubLink("id-1")).rejects.toThrow(/unexpected/);
+    });
+
+    it("restores the exact login, time and ownership, and throws unless restored", async () => {
+      upstash.upstashEval.mockResolvedValueOnce("restored");
+      await restoreGithubLink("id-1", { login: "octocat", at: "17", ours: true });
+      const [, keys, args] = upstash.upstashEval.mock.calls[0];
+      expect(keys).toEqual(["ctf:link:github:octocat", "ctf:link:user:id-1", "ctf:link:at"]);
+      expect(args).toEqual(["id-1", "octocat", "17", "1"]);
+      upstash.upstashEval.mockResolvedValueOnce("taken");
+      await expect(restoreGithubLink("id-1", { login: "octocat", at: "", ours: false })).rejects.toThrow(/taken/);
     });
   });
 

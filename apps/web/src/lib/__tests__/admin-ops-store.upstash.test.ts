@@ -360,6 +360,71 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     }
   });
 
+  it("a retry removes a grant a failed run left on the deleted account", async () => {
+    const { ctx, pipeline, ops } = await load();
+    const gh = `vt5${tag}`.slice(0, 39);
+    const id = await makePlayer(gh);
+    // What a run that failed at its grant SREM leaves: no account row, a grant.
+    await ctx.internalAdapter.deleteUser(id);
+    await pipeline([["SADD", "ctf:admin:grants", id]]);
+    try {
+      const result = await ops.deleteUser(id, { id: crypto.randomUUID(), name: "organizer" });
+      expect(result.warnings).toContain(ops.ORPHAN_GRANT_REMOVED);
+      const [granted] = await pipeline([["SISMEMBER", "ctf:admin:grants", id]]);
+      expect(granted.result).toBe(0);
+    } finally {
+      await pipeline([["SREM", "ctf:admin:grants", id]]);
+    }
+  });
+
+  it("unlinkGithub puts a scored link back with its time and deletes no account row", async () => {
+    const { pipeline, ops } = await load();
+    const gh = `vt6${tag}`.slice(0, 39);
+    const id = await makePlayer(gh, `vt6${tag}`.slice(0, 20));
+    const [before] = await pipeline([["HGET", "ctf:link:at", id]]);
+    expect(typeof before.result).toBe("string");
+    await pipeline([["HSET", `ctf:solves:${target}`, `${id}:api1`, at]]);
+    try {
+      await expect(ops.unlinkGithub(id, { id: crypto.randomUUID(), name: "organizer" })).rejects.toThrow(
+        "This GitHub link has scored and cannot be removed.",
+      );
+      const [owner, pointer, time] = await pipeline([
+        ["GET", `ctf:link:github:${gh}`],
+        ["GET", `ctf:link:user:${id}`],
+        ["HGET", "ctf:link:at", id],
+      ]);
+      expect([owner.result, pointer.result, time.result]).toEqual([id, gh, before.result]);
+      expect((await authState(id)).accounts).toBe(2);
+    } finally {
+      await pipeline([["HDEL", `ctf:solves:${target}`, `${id}:api1`]]);
+    }
+  });
+
+  it("unlinkGithub releases an unscored link and its github row for a player with a username and password", async () => {
+    const { ctx, pipeline, ops } = await load();
+    const gh = `vt7${tag}`.slice(0, 39);
+    const id = await makePlayer(gh, `vt7${tag}`.slice(0, 20));
+    await expect(ops.unlinkGithub(id, { id: crypto.randomUUID(), name: "organizer" })).resolves.toEqual({ login: gh });
+    const [owner, pointer] = await pipeline([
+      ["GET", `ctf:link:github:${gh}`],
+      ["GET", `ctf:link:user:${id}`],
+    ]);
+    expect([owner.result, pointer.result]).toEqual([null, null]);
+    expect((await ctx.internalAdapter.findAccounts(id)).map((a) => a.providerId)).toEqual(["credential"]);
+  });
+
+  it("unlinkGithub refuses a player with a password but no username and changes nothing", async () => {
+    const { pipeline, ops } = await load();
+    const gh = `vt8${tag}`.slice(0, 39);
+    const id = await makePlayer(gh);
+    await expect(ops.unlinkGithub(id, { id: crypto.randomUUID(), name: "organizer" })).rejects.toThrow(
+      /cannot sign in without GitHub. First set a username/,
+    );
+    const [owner] = await pipeline([["GET", `ctf:link:github:${gh}`]]);
+    expect(owner.result).toBe(id);
+    expect((await authState(id)).accounts).toBe(2);
+  });
+
   it("refuses an organizer and leaves the account in place", async () => {
     const { pipeline, ops } = await load();
     const gh = `vt3${tag}`.slice(0, 39);

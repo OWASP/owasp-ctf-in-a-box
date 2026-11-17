@@ -1163,7 +1163,12 @@ outage answers "try again", never a grant.
 The Support tab acts on one player's sign-in account; the Event tab's danger
 zone acts on all of them. Every action here is written to the admin audit
 log, naming the player and never a code or a password. A failed Redis write
-is reported as a failure (HTTP 503), never as success.
+in the action itself is reported as a failure (HTTP 503), never as success.
+The audit line is the exception: it is written after the action has landed,
+so a failed audit write does not undo or fail the action. The action reports
+success and the app logs `audit write failed` (`[admin-ops]` for the Support
+actions, `[password-reset]` for a redeemed code); the code issue writes its
+audit line in the same script as the code, so it has no such gap.
 
 **Reset code (a forgotten password).** Search the player in Support and press
 **Reset password**, then **Issue reset code** to confirm. The code appears once, in the same eight groups of four
@@ -1195,8 +1200,19 @@ renamed player's header can keep showing the old name for up to 5 minutes.
 
 **Unlink GitHub** (Secure Development on only). Releases the player's GitHub
 link so they can link another account. It is refused once the link has scored
-a Secure Development solve, and refused when GitHub is the player's only
-sign-in; give them a reset code first so they have a password.
+a Secure Development solve, and refused when the player would have no other
+way to sign in. Another way means a password with a username, or a Google or
+Discord account whose sign-in is switched on. For a player who signs in only
+with GitHub, first set a username for them in Support (type it in the
+**Username** box and press **Save**), then give them a reset code so they can
+set a password. The refusal names whichever of the two steps is missing.
+
+The scored check runs after the link is released: from that moment sync
+holds the login's new scores instead of scoring them, and if a solve is
+found the link is put back exactly as it was and the unlink is refused. A
+score that sync had already attributed before the release and that the
+scorer writes after the check can still land on an unlinked player; it shows
+on their card as a Secure Development solve.
 
 **Delete contestant.** Removes the account, its sessions, progress, team
 membership and held scores. A team captain is refused, and so is an

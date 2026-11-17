@@ -69,7 +69,8 @@ output "next_steps" {
        decrypt grant names only this key, so a parameter stored under any
        other one fails at task start with an AccessDeniedException on KMS.
        One command per secret, the same list as the module README; only
-       GITHUB_CLIENT_SECRET needs a value you paste in (the OAuth app's).
+       the OAuth client secrets (GITHUB_, and GOOGLE_/DISCORD_ when their ids
+       are set) need a value you paste in.
 
          P=${var.ssm_prefix}
          K=${aws_kms_alias.secrets.name}
@@ -77,6 +78,12 @@ output "next_steps" {
          aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/BETTER_AUTH_SECRET   --value "$(openssl rand -base64 32)"
          aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/SRH_TOKEN            --value "$(openssl rand -hex 24)"
          aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/GITHUB_CLIENT_SECRET --value "<the OAuth app's client secret>"
+%{if trimspace(var.google_client_id) != ""~}
+         aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/GOOGLE_CLIENT_SECRET  --value "<the Google OAuth client's secret>"
+%{endif~}
+%{if trimspace(var.discord_client_id) != ""~}
+         aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/DISCORD_CLIENT_SECRET --value "<the Discord application's client secret>"
+%{endif~}
          # Secure Development only:
          aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/GITHUB_APP_PRIVATE_KEY --value "$(base64 < app.private-key.pem | tr -d '\n')"
          aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/SCORER_TOKEN           --value "$(openssl rand -hex 24)"

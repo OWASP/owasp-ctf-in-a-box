@@ -11,7 +11,8 @@
 //
 // THE OPERATOR MUST USE THIS KEY for the secrets they create by hand. The
 // module writes the two parameters it generates itself (elasticache.tf), but
-// BETTER_AUTH_SECRET, GITHUB_CLIENT_SECRET, SRH_TOKEN, GITHUB_APP_PRIVATE_KEY
+// BETTER_AUTH_SECRET, GITHUB_CLIENT_SECRET (and GOOGLE_/DISCORD_CLIENT_SECRET for
+// the providers whose id is set), SRH_TOKEN, GITHUB_APP_PRIVATE_KEY
 // and SCORER_TOKEN are `aws ssm put-parameter` calls an operator makes — and a parameter encrypted
 // under a different key cannot be decrypted by the scoped grant, so the task
 // fails to start with an `AccessDeniedException` on the KMS key rather than

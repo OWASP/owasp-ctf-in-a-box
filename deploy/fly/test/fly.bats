@@ -969,6 +969,55 @@ EOF
   echo "$output" | grep -qF 'UPSTASH_REDIS_REST_TOKEN=<redacted>'
 }
 
+@test "optional Google and Discord keys reach the app, and their secrets are redacted in the dry-run" {
+  need_docker
+  cd "$REPO"
+  {
+    echo "GOOGLE_CLIENT_ID=fixture-google-id"
+    echo "GOOGLE_CLIENT_SECRET=FIXTUREGOOGLESECRETaaaaaaaa"
+    echo "DISCORD_CLIENT_ID=fixture-discord-id"
+    echo "DISCORD_CLIENT_SECRET=FIXTUREDISCORDSECRETbbbbbbb"
+  } >> "$BATS_TEST_TMPDIR/env"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env"
+  [ "$status" -eq 0 ]
+  for value in FIXTUREGOOGLESECRETaaaaaaaa FIXTUREDISCORDSECRETbbbbbbb; do
+    if echo "$output" | grep -qF -- "$value"; then
+      echo "LEAKED in dry-run output: $value"
+      return 1
+    fi
+  done
+  echo "$output" | grep -qF 'GOOGLE_CLIENT_SECRET=<redacted>'
+  echo "$output" | grep -qF 'DISCORD_CLIENT_SECRET=<redacted>'
+  render
+  app_env="$(awk '/^  app:/{f=1;next} /^  [a-z]+:/{f=0} f' "$RENDERED")"
+  echo "$app_env" | grep -qF 'GOOGLE_CLIENT_ID: fixture-google-id'
+  echo "$app_env" | grep -qF 'DISCORD_CLIENT_ID: fixture-discord-id'
+  echo "$app_env" | grep -qF 'GOOGLE_CLIENT_SECRET: FIXTUREGOOGLESECRETaaaaaaaa'
+}
+
+@test "a deploy is not refused when the optional provider keys are missing" {
+  need_docker
+  cd "$REPO"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'GOOGLE_CLIENT_SECRET=<redacted>'
+  render
+  app_env="$(awk '/^  app:/{f=1;next} /^  [a-z]+:/{f=0} f' "$RENDERED")"
+  [ -n "$app_env" ]
+  [ -z "$(echo "$app_env" | grep -E 'GOOGLE_CLIENT_ID: [^"[:space:]]' )" ]
+}
+
+@test "GitHub keys stay required on Fly even when another provider is set" {
+  need_docker
+  cd "$REPO"
+  grep -v '^GITHUB_CLIENT_ID=' "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env2"
+  echo "GOOGLE_CLIENT_ID=fixture-google-id" >> "$BATS_TEST_TMPDIR/env2"
+  echo "GOOGLE_CLIENT_SECRET=FIXTUREGOOGLESECRETaaaaaaaa" >> "$BATS_TEST_TMPDIR/env2"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env2"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'GITHUB_CLIENT_ID'
+}
+
 @test "the srh connection string points at loopback" {
   need_docker
   cd "$REPO"

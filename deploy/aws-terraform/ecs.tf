@@ -109,14 +109,27 @@ locals {
   // task definitions, so the invariant is checked rather than merely stated.
   secret_arn_prefix = "arn:${data.aws_partition.current.partition}:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${var.ssm_prefix}"
 
-  app_secrets = [
-    { name = "BETTER_AUTH_SECRET", valueFrom = "${local.secret_arn_prefix}/BETTER_AUTH_SECRET" },
-    { name = "GITHUB_CLIENT_SECRET", valueFrom = "${local.secret_arn_prefix}/GITHUB_CLIENT_SECRET" },
-    { name = "UPSTASH_REDIS_REST_TOKEN", valueFrom = "${local.secret_arn_prefix}/SRH_TOKEN" },
-    // The SHA-256 of the one-time admin claim code (ADR 72): the parameter
-    // below, whose real value deploy.sh writes. The code never reaches AWS.
-    { name = "ADMIN_CLAIM_CODE_HASH", valueFrom = "${local.secret_arn_prefix}/ADMIN_CLAIM_CODE_HASH" },
-  ]
+  // A provider's secret is listed only when its client id is set: a task whose
+  // `secrets` names an SSM parameter nobody created never starts.
+  oauth_provider_ids = {
+    GITHUB_CLIENT_SECRET  = var.github_client_id
+    GOOGLE_CLIENT_SECRET  = var.google_client_id
+    DISCORD_CLIENT_SECRET = var.discord_client_id
+  }
+
+  app_secrets = concat(
+    [
+      { name = "BETTER_AUTH_SECRET", valueFrom = "${local.secret_arn_prefix}/BETTER_AUTH_SECRET" },
+      { name = "UPSTASH_REDIS_REST_TOKEN", valueFrom = "${local.secret_arn_prefix}/SRH_TOKEN" },
+      // The SHA-256 of the one-time admin claim code (ADR 72): the parameter
+      // below, whose real value deploy.sh writes. The code never reaches AWS.
+      { name = "ADMIN_CLAIM_CODE_HASH", valueFrom = "${local.secret_arn_prefix}/ADMIN_CLAIM_CODE_HASH" },
+    ],
+    [
+      for name, id in local.oauth_provider_ids :
+      { name = name, valueFrom = "${local.secret_arn_prefix}/${name}" } if trimspace(id) != ""
+    ],
+  )
 
   // One SCORER_TOKEN, two readers: the scorer checks it on every POST /score
   // and sync presents it (compose passes the same value to both).
@@ -380,6 +393,8 @@ resource "aws_ecs_task_definition" "app" {
       { name = "GITHUB_ORG", value = var.github_org },
       // The OAuth client id is public; its secret is in app_secrets.
       { name = "GITHUB_CLIENT_ID", value = var.github_client_id },
+      { name = "GOOGLE_CLIENT_ID", value = var.google_client_id },
+      { name = "DISCORD_CLIENT_ID", value = var.discord_client_id },
       // Unset, the board serves the mock fixture (leaderboard/source.ts);
       // compose sets the same pair. With Secure Development off the source
       // resolves to "empty" whatever this says, so it can stay constant.

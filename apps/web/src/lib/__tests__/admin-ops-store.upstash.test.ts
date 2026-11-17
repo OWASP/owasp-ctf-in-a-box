@@ -316,7 +316,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
 
   it("a finished delete leaves the deleted marker and no account row, so the scorer answers deleted", async () => {
     const { pipeline, ops } = await load();
-    const gh = `vt5${tag}`.slice(0, 39);
+    const gh = `vd5${tag}`.slice(0, 39);
     const id = await makePlayer(gh);
     const [before] = await pipeline([["EXISTS", `ctf:deleted:${id}`]]);
     expect(before.result).toBe(0);
@@ -330,7 +330,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
 
   it("a second delete that fails after the first finished keeps the marker", async () => {
     const { ctx, pipeline, ops } = await load();
-    const gh = `vt6${tag}`.slice(0, 39);
+    const gh = `vd6${tag}`.slice(0, 39);
     const id = await makePlayer(gh);
     const actor = { id: crypto.randomUUID(), name: "organizer" };
     await ops.deleteUser(id, actor);
@@ -352,7 +352,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
   it("restore lifts only its own token, and only while the account row exists", async () => {
     const { pipeline } = await load();
     const { markDeleting, restoreAfterFailedDelete } = await import("@/lib/deleted-player");
-    const gh = `vt7${tag}`.slice(0, 39);
+    const gh = `vd7${tag}`.slice(0, 39);
     const id = await makePlayer(gh);
 
     const mine = crypto.randomUUID();
@@ -370,7 +370,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
   it("A fails while B is in flight: B's mark survives A's restore, and B finishes deleted", async () => {
     const { ctx, pipeline, ops } = await load();
     const { markDeleting, restoreAfterFailedDelete } = await import("@/lib/deleted-player");
-    const gh = `vt8${tag}`.slice(0, 39);
+    const gh = `vd8${tag}`.slice(0, 39);
     const id = await makePlayer(gh);
     const actor = { id: crypto.randomUUID(), name: "organizer" };
 

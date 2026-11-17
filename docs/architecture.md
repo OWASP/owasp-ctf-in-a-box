@@ -185,8 +185,9 @@ state; everything else that touches scores goes through it.
    scorer compares the token in constant time: both sides are SHA-256'd and
    passed to `timingSafeEqual`, so neither the token's bytes nor its length
    are recoverable from how long a rejection takes. A `2xx` is success; a
-   `422` is the scorer's final verdict on *when* the score was posted
-   (logged as `refused`, never retried, not counted as dropped); any other
+   `422` is the scorer's final verdict on *when* the score was posted or *who*
+   posted it (a deleted player: `player-deleted`; logged as `refused`, never
+   retried, not counted as dropped); any other
    `4xx` is treated as a permanent rejection (dropped, logged); anything
    else throws and the poller un-marks the comment as seen so it retries
    next tick. The poller does not hold its cursor while scoring is frozen or
@@ -197,8 +198,14 @@ state; everything else that touches scores goes through it.
    is clamped to now, and one before the master-reset epoch, outside the
    scoring window (`outsideScoringWindow`) or inside a freeze (`pausedAt`,
    over `pausedSince` and the `ctf:admin:pauses` interval log the app writes
-   with the flag) is refused with a final `422`. A freeze with no recorded
-   start answers `503`, which the poller retries. A payload with no `at` (an
+   with the flag) is refused with a final `422`. A score for a deleted player
+   (`player-deleted`) is also a final `422`, once their account row is gone.
+   A freeze with no recorded start answers `503`, which the poller retries,
+   and so does a player whose scores are on hold while a delete or a GitHub
+   unlink runs (`player scores on hold`: `ctf:score-hold:<id>` is set and the
+   account row is present), or whose link changed after sync resolved it
+   (sync sends the `login` it resolved, and the scorer writes only while
+   `ctf:link:github:<login>` still names the player). A payload with no `at` (an
    older sync) keeps the arrival-time rule. The
    scorer then writes the score
    to Redis (via `srh`), timed `at`, as a monotonic, idempotent-on-replay
@@ -685,7 +692,9 @@ See [ADR 68](decisions.md#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled
   archive never contains `ctf:auth:*` or `ctf:link:*`. **`ctf:sd:held:*`**
   holds the scores sync could not attribute yet (`ctf:sd:held:authors`, a set
   of lowercased logins, and `ctf:sd:held:by:<login>`, a hash per author); the
-  master reset wipes them, and deleting a player clears theirs.
+  master reset wipes them, and deleting a player clears theirs. **`ctf:relink:blocked`**
+  (a set of lowercased logins) holds the GitHub logins of deleted players,
+  which `LINK_SCRIPT` refuses to link; the master reset wipes it.
   `GET /api/admin/sd/held` lists them read-only on the Secure Development
   admin tab, marking as `unclaimed` those no tick can release any more: the
   author linked at or after the close, or is still unlinked once it has
@@ -1100,7 +1109,10 @@ have deduped them was just cleared), so the epoch is also the ingestion
 **watermark** (#551): a bot comment whose `updated_at` predates `resetAt` is
 marked seen and skipped (tallied once as `preReset` in the poll summary), while
 a re-run that edits the comment past the epoch is a new revision and lands as
-normal. The scorer applies the same watermark to each score's `at`, and the
+normal. The scorer applies the same watermark to each score's `at`, when it
+judges the score and again inside the solve write's own script, and the reset
+writes the epoch before it sweeps a solve, so a score judged before the reset
+and written after the sweep is refused rather than restored (#791). The
 reset clears the freeze log and opens its own freeze, so a PR scored between
 the reset and the un-freeze is refused too. The epoch is epoch-milliseconds from `resetEvent` (an ISO string from
 an older state file is read too); an unparseable value is no watermark —
@@ -1422,7 +1434,7 @@ build.
 | Shell (bats) | `setup/test/`, `scripts/test/`, `deploy/fly/test/` and `deploy/aws-terraform/test/`, each run by the `shell` job in `ci.yml` | `ctf-setup.sh`'s subcommands against fixture `.env` files: dry-run fork/workflow/mirror/teardown plans, secrets generation, the wizard's answers, and the `.env` reader's edge cases (trailing comments, blank values, a missing file refused rather than read as "no Secure Development") — no real `gh`/`docker` calls needed. The other directories cover the repo's scripts (the shared `.env` reader against `docker compose config`, the CI path filter, the changelog and comment-policy checks, image pins) the Fly module's `deploy.sh` and `render-compose.sh`, and the AWS module's `deploy.sh` with stubbed `docker`/`aws`/`terraform`. |
 | Offline smoke | `scripts/smoke.sh` | The full poll pipeline against fixture services (`test/fixtures/mock-github.mjs`, `test/fixtures/mock-scorer.mjs`, `docker-compose.smoke.yml`): Redis and the `srh` REST proxy work, `sync` ingests fixture score comments, scores match the fixtures, a forged comment is dropped by the trust filter, an unauthenticated `POST /score` is rejected, each score carries its own comment's `updated_at` as `at`, and — the poller's half of the freeze — setting `ctf:admin:settings paused` directly on Redis (the same key the app's settings route writes) shows in `ctf:sync:status` while the poller keeps forwarding a queued fixture score, with its comment time, for the scorer to judge. The scorer's half (refusing a score posted before the launch, during a freeze or before a reset, against a real Redis) is `scripts/acceptance-scorer.sh`'s freeze stage. This is what CI's `smoke` job runs, and needs no live GitHub org, Action runs, or scorer image access. |
 | Docker acceptance | `scripts/acceptance-app.sh` | Builds the real `apps/web/Dockerfile` **once**, with no config build-arg, then runs that same image as four containers with different runtime environments and asserts what each renders. `web-acceptance` has `GITHUB_ORG` and `SCORE_IMAGE` set but no Redis at all: `/challenges` redirects to the landing page (the launch lock fails closed on an unreadable settings read), the page `<title>` is the identity default "OWASP CTF in a Box" (identity fails open to its default rather than being read from anywhere baked), Secure Development is the only default board, `/admin` renders its shell, `/health` carries the build stamp the image was built with, and `/health/deep` answers 503 `degraded` with `redis` down and `launched: null`, leaking no host or error detail. `web-launched` is its twin on a real Redis behind srh with `scoringStartsAt` written, so `/challenges` renders all six targets with every fork link following `GITHUB_ORG`. `web-noscorer` has `SCORE_IMAGE` empty: nothing is enabled, the landing page renders its no-boards copy pointing at `/admin`, and `/challenges` 404s. `web-default` has no `GITHUB_ORG`: `/challenges` renders bare repo names and no fork link. This is the layer that proves the runtime config flow actually reaches rendered HTML. |
-| Docker acceptance (scorer) | `scripts/acceptance-scorer.sh` | Builds the scorer image from `scorer/` with the example rubric and closes the scoring loop offline: judge runs against a fake target that passes some probes and fails others, and the script asserts the report's score-action regexes, that no probe internals leak into the comment, that the sync marker parses via the real `sync/src/parse.js`, and that the marker POSTed the way `sync` does lands on `GET /leaderboard` with rubric-derived points/totals. A second, stock fake app fails every probe and must score 0 and gain no leaderboard entry. A second serve instance backed by real Redis (via srh) then covers the freeze and comment-time rules: an unlaunched event answers 503, a hand-set `paused` answers 503 until cleared, and a score sent with its comment's `at` is recorded at that time and judged by it — refused for good (422) when posted before the launch, inside a recorded freeze (still refused after the freeze lifts) or before the master-reset epoch, scored when posted before the freeze, and held with a 503 under a freeze with no recorded start. That `SCORE_API`/`SCORE_TOKEN` are inert in the judge is pinned in `scorer/test/judge.test.js`, not here. |
+| Docker acceptance (scorer) | `scripts/acceptance-scorer.sh` | Builds the scorer image from `scorer/` with the example rubric and closes the scoring loop offline: judge runs against a fake target that passes some probes and fails others, and the script asserts the report's score-action regexes, that no probe internals leak into the comment, that the sync marker parses via the real `sync/src/parse.js`, and that the marker POSTed the way `sync` does lands on `GET /leaderboard` with rubric-derived points/totals. A second, stock fake app fails every probe and must score 0 and gain no leaderboard entry. A second serve instance backed by real Redis (via srh) then covers the freeze and comment-time rules: an unlaunched event answers 503, a hand-set `paused` answers 503 until cleared, and a score sent with its comment's `at` is recorded at that time and judged by it — refused for good (422) when posted before the launch, inside a recorded freeze (still refused after the freeze lifts) or before the master-reset epoch, scored when posted before the freeze, and held with a 503 under a freeze with no recorded start. The score-hold checks follow: a score for a player on hold (mid-delete or mid-unlink) answers 503 and writes nothing, one for a deleted player answers 422 and writes nothing, and a surviving player's score still lands (202). That `SCORE_API`/`SCORE_TOKEN` are inert in the judge is pinned in `scorer/test/judge.test.js`, not here. |
 | Docker acceptance (quiz-only) | `scripts/acceptance-quiz-only.sh` | Boots the real app image with `SCORE_IMAGE` empty and `quiz` enabled through the admin settings route (no config file exists to bind it to), seeds one question and one contestant's answer straight into Redis (no OAuth app in CI to drive real authoring/answering), and asserts against the running app: `/quiz` shows the seeded question by name, `/challenges` 404s, and `/leaderboard` shows the contestant by login with their quiz points — the one assertion a vacuously-up-but-broken app can't fake, since a quiz-only event's leaderboard source is `emptySource` and carries no rows of its own. It also asserts the DOCUMENTED bring-up structurally: `--profile app` must resolve to a line-up with no `scorer` and no `sync` (a quiz-only organizer cannot pull the private scorer image), while `--profile secdev --profile app` — what a non-empty `SCORE_IMAGE` derives — must still contain both. Separately brings `sync` up under `secdev` with no `GITHUB_ORG` and asserts it refuses at start-up, naming the key, with a non-zero exit. |
 | Docker acceptance (classic-only) | `scripts/acceptance-classic-only.sh` | The classic module's sibling of the quiz-only script, following every one of its design decisions: boots the real app image with `SCORE_IMAGE` empty and `classic` enabled at runtime, seeds a challenge and a solve straight into Redis, and asserts `/flags` shows the challenge by title, `/challenges` 404s, `/leaderboard` shows the contestant's classic points by login, and the `--profile app` line-up contains no secure-development service. Like the quiz-only script it then brings `sync` up under `secdev` with no `GITHUB_ORG` and asserts it refuses at start-up, naming the key, with a non-zero exit. |
 | Vacuous-pass sweep | `scorer/tools/vacuous-sweep.mjs` | Points every target's rubric at an in-process HTTP stub that is UP but USELESS (three personalities: empty-200, not-found, server-error) and fails if any challenge passes — a challenge that "blocks the exploit" against a stub proves nothing. Must report 0; wired into CI only once the count reached 0/321. |

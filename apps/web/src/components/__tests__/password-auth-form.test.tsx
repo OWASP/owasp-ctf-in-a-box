@@ -290,3 +290,11 @@ describe("PasswordAuthForm providers", () => {
     expect(await screen.findByText("Sign-in options could not be loaded. Try again.")).toBeTruthy();
   });
 });
+
+describe("PasswordAuthForm reset link", () => {
+  it("links to /reset for a player holding an organizer's reset code", () => {
+    render(<PasswordAuthForm next="/" providers={[]} />);
+    const link = screen.getByRole("link", { name: "Have a reset code from an organizer?" });
+    expect(link.getAttribute("href")).toBe("/reset");
+  });
+});

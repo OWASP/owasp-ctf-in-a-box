@@ -728,3 +728,151 @@ test("an unreadable scoring policy fails OPEN: the score is recorded at its comm
   assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"))).status, 202);
   assert.deepEqual(await store.getSolves("dvwa"), { [pid("octocat") + ":sqli-low"]: "2026-08-14T10:00:00.000Z" });
 });
+
+// A held player's score. The app adds to ctf:score-hold:<id> before a delete
+// or an unlink writes anything; the solve write checks that hold atomically, so
+// a score that lands mid-delete or mid-unlink waits (503, sync retries) and one
+// after the account row is gone is refused for good (422).
+
+test("a score for a player on hold (delete or unlink in progress) answers 503 and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t);
+  store.holds.add(pid("octocat"));
+  store.users.add(pid("octocat"));
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: "player scores on hold" });
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+});
+
+// The link check: sync sends the login it resolved the player from, and the
+// write lands only while that login still links to the player.
+
+test("a score whose login no longer links to the player answers 503 and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t);
+  const res = await post({ ...timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"), login: "octocat" });
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: "the login no longer links to this player" });
+  store.links.set("octocat", pid("hubot"));
+  assert.equal((await post({ ...timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"), login: "octocat" })).status, 503);
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+  store.links.set("octocat", pid("octocat"));
+  assert.equal((await post({ ...timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"), login: "OctoCat" })).status, 202);
+  assert.deepEqual(await store.getSolves("dvwa"), { [pid("octocat") + ":sqli-low"]: "2026-08-14T10:00:00.000Z" });
+});
+
+// The reset check at write time: a master reset that lands after the judge
+// read the settings and before the write is applied by the write's own
+// script, so the score is refused like any other pre-reset score.
+
+test("a score judged before a master reset and written after it answers 422 pre-reset and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t);
+  const original = store.recordSolves.bind(store);
+  store.recordSolves = async (...args) => {
+    // After NOW, which also times a score sent with no `at`.
+    store.__setPolicy({ ...LAUNCHED, resetAt: String(Date.parse("2026-08-14T12:30:00Z")) });
+    return original(...args);
+  };
+  for (const body of [timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"), { player: pid("octocat"), target: "dvwa", solved: ["sqli-low"] }]) {
+    store.__setPolicy(LAUNCHED);
+    const res = await post(body);
+    assert.equal(res.status, 422);
+    assert.deepEqual(await res.json(), { error: "the score predates the last master reset", refused: "pre-reset" });
+  }
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+});
+
+test("a future-skewed score judged before a reset and written after it, timed past the new epoch, answers 503 to be judged again", async (t) => {
+  const { store, post } = await bootWith(t);
+  const original = store.recordSolves.bind(store);
+  store.recordSolves = async (...args) => {
+    store.__setPolicy({ ...LAUNCHED, resetAt: String(Date.parse("2026-08-14T12:00:30Z")) });
+    return original(...args);
+  };
+  // NOW is 12:00; an `at` one minute ahead is within the skew allowance.
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T12:01:00Z"));
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: "the master reset changed while the score was judged" });
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+});
+
+test("a score without `at` reads one settings snapshot for the freeze and the epoch", async (t) => {
+  const { store, post } = await bootWith(t);
+  let reads = 0;
+  const read = store.readScoringPolicy.bind(store);
+  store.readScoringPolicy = async () => {
+    reads++;
+    const snapshot = await read();
+    // A reset lands right after the snapshot: frozen, new epoch.
+    store.__setPolicy({ ...LAUNCHED, paused: true, pausedSince: NOW, resetAt: String(Date.parse(NOW)) });
+    return snapshot;
+  };
+  store.isPaused = async () => {
+    throw new Error("the snapshot decides the freeze");
+  };
+  const res = await post({ player: pid("octocat"), target: "dvwa", solved: ["sqli-low"] });
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: "the master reset changed while the score was judged" });
+  assert.equal(reads, 1);
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+});
+
+test("a score without `at` is 503 when its one snapshot is frozen or outside the window", async (t) => {
+  for (const policy of [{ ...LAUNCHED, paused: true }, { ...LAUNCHED, startsAt: null }]) {
+    const { store, post } = await bootWith(t, { policy });
+    const res = await post({ player: pid("octocat"), target: "dvwa", solved: ["sqli-low"] });
+    assert.equal(res.status, 503);
+    assert.deepEqual(await res.json(), { error: "scoring is paused" });
+    assert.deepEqual(await store.getSolves("dvwa"), {});
+  }
+});
+
+test("a non-numeric reset epoch that changed after the judge read it answers 503 and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t, { policy: { ...LAUNCHED, resetAt: "2026-08-14T09:30:00Z" } });
+  const original = store.recordSolves.bind(store);
+  store.recordSolves = async (...args) => {
+    store.__setPolicy({ ...LAUNCHED, resetAt: "2026-08-14T11:00:00Z" });
+    return original(...args);
+  };
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: "the master reset changed while the score was judged" });
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+  // Unchanged since the judge read it: the judge already applied it.
+  store.recordSolves = original;
+  assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T11:30:00Z"))).status, 202);
+});
+
+test("a malformed login is a 400 and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t);
+  for (const login of ["", "-x", "a b", 7, "ctf:link:github:x"]) {
+    const res = await post({ ...timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"), login });
+    assert.equal(res.status, 400, String(login));
+  }
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+});
+
+test("a score for a deleted player answers 422 player-deleted and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t);
+  store.holds.add(pid("octocat"));
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
+  assert.equal(res.status, 422);
+  assert.deepEqual(await res.json(), { error: "player deleted", refused: "player-deleted" });
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+  assert.equal((await post(timed("hubot", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"))).status, 202);
+});
+
+test("a store error on the solve write answers 5xx, never 202 or 422", async (t) => {
+  const store = createMemoryStore();
+  store.__setPolicy(LAUNCHED);
+  store.recordSolves = async () => {
+    throw new Error("upstash: ERR Error running script");
+  };
+  const server = await startServer({ rubric: RUBRIC, store, token: TOKEN, now: () => NOW });
+  t.after(() => server.close());
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/score`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z")),
+  });
+  assert.ok(res.status >= 500 && res.status < 600, `expected 5xx, got ${res.status}`);
+});

@@ -60,6 +60,42 @@ export async function setUsernameOnce(userId: string, raw: string): Promise<SetU
   }
 }
 
+export type RenameUsernameResult = "ok" | "taken" | "invalid" | "missing";
+
+/**
+ * An organizer's rename: replaces the username of the user `userId`, whatever
+ * it held before. Same rule and the same two stored forms as
+ * `setUsernameOnce`, but the write matches on the id alone, so there is no
+ * `already_set`: no row matched is `missing`.
+ *
+ * Renaming to the same name in another case matches the user's own row in the
+ * unique index (`Alice` to `alice` only changes `displayUsername`); another
+ * user's name is `taken` in any case. Any other failure throws (fail closed).
+ */
+export async function renameUsername(userId: string, raw: string): Promise<RenameUsernameResult> {
+  if (usernameProblem(raw) !== null) return "invalid";
+  const { adapter } = await auth.$context;
+  try {
+    const updated = await adapter.update({
+      model: "user",
+      where: [{ field: "id", value: userId }],
+      update: { username: normalizeUsername(raw), displayUsername: raw.trim(), updatedAt: new Date() },
+    });
+    return updated ? "ok" : "missing";
+  } catch (err) {
+    if (isTakenError(err)) return "taken";
+    throw err;
+  }
+}
+
+/** The stored (normalized) username, or null when the user has none or does
+ *  not exist. A read error throws. */
+export async function currentUsername(userId: string): Promise<string | null> {
+  const { internalAdapter } = await auth.$context;
+  const user = await internalAdapter.findUserById(userId);
+  return (user as { username?: string | null } | null)?.username ?? null;
+}
+
 /** True when the user has a username-and-password (`credential`) account.
  *  A read error throws: callers decide their own fail direction. */
 export async function hasPassword(userId: string): Promise<boolean> {

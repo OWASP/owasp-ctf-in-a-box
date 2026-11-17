@@ -66,16 +66,21 @@ end
 // KEYS[1] rows hash
 // ARGV: prefix, model, id, expectedJson ("" = must not exist), newJson,
 //       indexedFieldsCsv, uniqueFieldsCsv (each also in indexedFieldsCsv),
-//       [ownerToken, ownerTtlMs]
+//       [ownerToken ("" = none), ownerTtlMs, [fenceKey, fenceMember]]
 // Returns 1 written, 0 snapshot mismatch, 2 a unique field's value is held by
-// another row that still exists. On 0 and 2 nothing is written. A create that
-// writes sets the row's owner key to ownerToken for ownerTtlMs, or clears it
-// when no token is given; an update leaves the owner key alone.
+// another row that still exists, 3 the write fence is gone (fenceKey, a set,
+// no longer holds fenceMember: see write-fence.ts). On 0, 2 and 3 nothing is
+// written. A create that writes sets the row's owner key to ownerToken for
+// ownerTtlMs, or clears it when no token is given; an update leaves the owner
+// key alone.
 export const PUT_ROW_SCRIPT = `${INDEX_HELPERS}
 local prefix, model, id = ARGV[1], ARGV[2], ARGV[3]
 local expected, newJson, csv = ARGV[4], ARGV[5], ARGV[6]
 local unique = ARGV[7] or ""
 local token, ttl = ARGV[8] or "", tonumber(ARGV[9] or "")
+local fenceKey, fenceMember = ARGV[10] or "", ARGV[11] or ""
+
+if fenceKey ~= "" and redis.call("SISMEMBER", fenceKey, fenceMember) == 0 then return 3 end
 
 local row, rowErr = decode_object(newJson, "newJson")
 if not row then return redis.error_reply(rowErr) end

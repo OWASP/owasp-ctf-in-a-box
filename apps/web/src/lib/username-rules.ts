@@ -8,6 +8,9 @@ export const USERNAME_MIN = 3;
 export const USERNAME_MAX = 30;
 export const USERNAME_RE = /^[A-Za-z0-9_.]+$/;
 
+/** The message for a username the rule refuses; the form and the admin rename share it. */
+export const USERNAME_COPY = "Usernames are 3 to 30 letters, digits, dots or underscores.";
+
 /** The stored, unique form of a username, and the rate-limit key. */
 export function normalizeUsername(raw: string): string {
   return raw.trim().toLowerCase();

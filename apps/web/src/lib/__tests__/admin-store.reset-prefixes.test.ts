@@ -35,6 +35,7 @@ describe("RESET_PREFIXES", () => {
       expect(globToRegExp(pattern).test("ctf:link:github:x")).toBe(false);
       expect(globToRegExp(pattern).test("ctf:link:user:x")).toBe(false);
       expect(globToRegExp(pattern).test("ctf:link:at")).toBe(false);
+      expect(globToRegExp(pattern).test("ctf:link:x")).toBe(false);
     }
   });
 
@@ -44,9 +45,21 @@ describe("RESET_PREFIXES", () => {
     }
   });
 
+  it("wipes the re-link blocklist, and no link key matches that row's pattern", () => {
+    const rows = RESET_PREFIXES.filter(([, pattern]) => globToRegExp(pattern).test("ctf:relink:blocked"));
+    expect(rows.map(([label]) => label)).toEqual(["relinkBlock"]);
+    for (const [, pattern] of rows) expect(globToRegExp(pattern).test("ctf:link:x")).toBe(false);
+  });
+
   it("wipes held Secure Development scores", () => {
     for (const key of ["ctf:sd:held:by:octocat", "ctf:sd:held:authors"]) {
       expect(RESET_PREFIXES.some(([, pattern]) => globToRegExp(pattern).test(key))).toBe(true);
+    }
+  });
+
+  it("keeps the score holds through a master reset", () => {
+    for (const [, pattern] of RESET_PREFIXES) {
+      expect(globToRegExp(pattern).test("ctf:score-hold:x")).toBe(false);
     }
   });
 

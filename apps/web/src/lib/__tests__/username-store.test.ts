@@ -14,7 +14,7 @@ vi.mock("@/lib/auth", () => ({
   auth: { $context: Promise.resolve({ internalAdapter: adapter, adapter: { update: adapter.update } }) },
 }));
 
-import { hasPassword, setUsernameOnce } from "@/lib/username-store";
+import { currentUsername, hasPassword, renameUsername, setUsernameOnce } from "@/lib/username-store";
 
 const ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
 
@@ -98,5 +98,47 @@ describe("hasPassword", () => {
   it("throws on a read error rather than answering false", async () => {
     adapter.findAccounts.mockRejectedValue(new Error("boom"));
     await expect(hasPassword(ID)).rejects.toThrow("boom");
+  });
+});
+
+describe("renameUsername", () => {
+  it("matches on the id alone and stores the normalized and the display form", async () => {
+    expect(await renameUsername(ID, "  Bob_1 ")).toBe("ok");
+    expect(adapter.update).toHaveBeenCalledWith({
+      model: "user",
+      where: [{ field: "id", value: ID }],
+      update: { username: "bob_1", displayUsername: "Bob_1", updatedAt: expect.any(Date) },
+    });
+  });
+
+  it.each(["ab", "x".repeat(31), "bad name", "bob!"])("refuses %j as invalid without writing", async (raw) => {
+    expect(await renameUsername(ID, raw)).toBe("invalid");
+    expect(adapter.update).not.toHaveBeenCalled();
+  });
+
+  it("answers missing when no row matched", async () => {
+    adapter.update.mockResolvedValue(null);
+    expect(await renameUsername(ID, "bob")).toBe("missing");
+  });
+
+  it("maps the unique-index refusal to taken", async () => {
+    adapter.update.mockRejectedValue(new Error("auth store: update user failed: unique email, username taken"));
+    expect(await renameUsername(ID, "bob")).toBe("taken");
+  });
+
+  it("lets any other failure throw", async () => {
+    adapter.update.mockRejectedValue(new Error("auth store: update user failed: NOAUTH"));
+    await expect(renameUsername(ID, "bob")).rejects.toThrow("NOAUTH");
+  });
+});
+
+describe("currentUsername", () => {
+  it("reads the stored username, null when none or no user", async () => {
+    adapter.findUserById.mockResolvedValue({ id: ID, username: "alice" });
+    expect(await currentUsername(ID)).toBe("alice");
+    adapter.findUserById.mockResolvedValue({ id: ID, username: null });
+    expect(await currentUsername(ID)).toBeNull();
+    adapter.findUserById.mockResolvedValue(null);
+    expect(await currentUsername(ID)).toBeNull();
   });
 });

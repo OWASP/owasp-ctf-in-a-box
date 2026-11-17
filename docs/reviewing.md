@@ -158,17 +158,21 @@ rebuild. The last three of those are machine-enforced as well: `.coderabbit.yaml
 carries path instructions for `bootstrap-env.ts` and the snapshot readers, and
 for `apps/web/src/**/*.tsx` (the client-bundle read and the prerendered `/`).
 
-**11. The public surface is a named list, not a shape.** Exactly seven routes
+**11. The public surface is a named list, not a shape.** Exactly eight routes
 under `/api` answer without a session, and each is
-on the list for its own stated reason — an eighth does not inherit an exemption
+on the list for its own stated reason — a ninth does not inherit an exemption
 by resembling one that has it; it needs its own case. Six are read-only,
 policy or public-by-design content out and never facts in, nothing secret in
 the response: `GET /api/public/scoring`, `GET
 /api/board/items`, `GET /api/sponsors/logo/[id]`, `GET
-/api/attachments/[id]`, `GET /api/event/logo` and `GET /api/event/icon`. One is a POST that exists
+/api/attachments/[id]`, `GET /api/event/logo` and `GET /api/event/icon`. Two are POSTs that exist
 *before* identity: `POST /api/stats/visit` (the approximate, no-PII
 per-country reach counter, always `204`, whose own header comment documents
-that it is not a security boundary). The pre-event password check
+that it is not a security boundary) and `POST /api/reset-password` (a signed-out
+player redeems the password reset code an organizer handed them: a single-use
+128-bit code consumed in Lua before any write, one uniform answer for every
+invalid code, a per-address rate limit charged fail-closed, the proxy's origin
+check, and `no-store` on every answer). The pre-event password check
 (`POST /api/gate`) that used to be the second is gone (#464); a route that
 brings back a pre-identity credential check is a new case, not a
 restoration. `/api/auth/*` is better-auth's and is outside this list. Anything else under `/api` that answers without

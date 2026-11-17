@@ -6,9 +6,8 @@
 
 import { useState } from "react";
 import { postSigninCallbackURL } from "@/lib/post-signin";
-import { usernameProblem } from "@/lib/username-rules";
+import { USERNAME_COPY, usernameProblem } from "@/lib/username-rules";
 
-const USERNAME_COPY = "Usernames are 3 to 30 letters, digits, dots or underscores.";
 const GENERIC_COPY = "Something went wrong. Try again.";
 
 const INPUT =

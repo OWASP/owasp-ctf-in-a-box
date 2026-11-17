@@ -5,7 +5,7 @@
 // else?), the aggregate bookkeeping (the counters are NOT all keyed the same
 // way), and the refusals that keep a team administrable.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(script: string, keys: string[], args: (string | number)[]) => Promise<unknown>>(),
@@ -27,7 +27,15 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
     upstashPipeline: mocks.upstashPipeline,
   };
 });
-vi.mock("@/lib/admin-store", () => ({ ADMIN_AUDIT_KEY: "ctf:admin:audit", AUDIT_CAP: 500 }));
+// deleteAllAccounts runs the master reset and sweeps the account namespaces
+// through the reset's own SCAN+DEL walk.
+// unlinkGithub reads the sign-in switches to tell an enabled provider row
+// from one that cannot sign in.
+const storeDeps = vi.hoisted(() => ({ resetEvent: vi.fn(), scanDelByPrefix: vi.fn(), getAdminSettings: vi.fn() }));
+vi.mock("@/lib/admin-store", () => ({ ADMIN_AUDIT_KEY: "ctf:admin:audit", AUDIT_CAP: 500, ...storeDeps }));
+// deleteUser refuses an organizer before anything is written.
+const grantDeps = vi.hoisted(() => ({ isAdminGrantee: vi.fn() }));
+vi.mock("@/lib/admin-grants", () => ({ ADMIN_GRANTS_KEY: "ctf:admin:grants", ...grantDeps }));
 // #553: a per-player reset lowers that player's score; the store brackets
 // its writes with the leaf's begin/end (shared in-progress marker + revision
 // bump) so no app task charges a hint against a gross the reset is removing.
@@ -47,20 +55,62 @@ vi.mock("@/lib/player", () => ({
 }));
 
 // deleteUser reads the player's link once to name the held-score keys to clear.
-const linkDeps = vi.hoisted(() => ({ getGithubLink: vi.fn() }));
-vi.mock("@/lib/github-link", () => ({ getGithubLink: linkDeps.getGithubLink }));
+// unlinkGithub takes it, and puts it back when it turns out to have scored.
+const linkDeps = vi.hoisted(() => ({
+  getGithubLink: vi.fn(),
+  releaseGithubLink: vi.fn(),
+  takeGithubLink: vi.fn(),
+  restoreGithubLink: vi.fn(),
+  isReleasedAndBlocked: vi.fn(),
+}));
+vi.mock("@/lib/github-link", () => linkDeps);
+
+// deleteUser and unlinkGithub put the player's scores on hold before their
+// first write; a failed delete lifts its own token while the account row is
+// still there, an unlink lifts its own token when it ends. The scripts
+// themselves run in score-hold.test.ts and the live suite.
+const holdDeps = vi.hoisted(() => ({
+  holdScores: vi.fn(),
+  restoreAfterFailedDelete: vi.fn(),
+  releaseScoreHold: vi.fn(),
+}));
+vi.mock("@/lib/score-hold", () => holdDeps);
+
+// unlinkGithub reads and deletes the player's better-auth account rows;
+// deleteUser removes the user row, its accounts and its sessions.
+const authDeps = vi.hoisted(() => ({
+  findAccounts: vi.fn(),
+  deleteAccount: vi.fn(),
+  findUserById: vi.fn(),
+  deleteUserSessions: vi.fn(),
+  deleteAccounts: vi.fn(),
+  deleteUser: vi.fn(),
+}));
+vi.mock("@/lib/auth", () => ({ auth: { $context: Promise.resolve({ internalAdapter: authDeps }) } }));
+
+// renameUser reads the old username and writes the new one through the
+// username store (the auth adapter), which these suites do not stand up.
+const nameDeps = vi.hoisted(() => ({ renameUsername: vi.fn(), currentUsername: vi.fn() }));
+vi.mock("@/lib/username-store", () => nameDeps);
 
 import {
+  BLOCKED_DURING_UNLINK,
   CLEAR_HELD_SCRIPT,
+  GRANT_CLAIMED_DURING_DELETE,
+  ORPHAN_GRANT_REMOVED,
   OpsValidationError,
+  RESET_MODULE_SOLVES_SCRIPT,
+  deleteAllAccounts,
   deleteUser,
   forceAddToTeam,
   forceDisbandTeam,
   forceRemoveFromTeam,
   forceTransferCaptain,
   lookupUser,
+  renameUser,
   requirePlayerId,
   resetUserProgress,
+  unlinkGithub,
 } from "@/lib/admin-ops-store";
 
 const OCTO = "0c7aca70-0000-4000-8000-00000000000a";
@@ -115,9 +165,69 @@ function mockQuizAndHintsPipeline() {
   mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1, 1, 1, 1, 1, 1, 1));
 }
 
+/** What `deleteUser` reads before any write: the lookup (with the team read
+ *  when `slug` is set, `captain` naming the captain) and its secure-dev count. */
+function queueDeleteLookup(slug: string | null = null, captain: string = BOB, marker: number | null = 0) {
+  mocks.upstashPipeline.mockResolvedValueOnce(
+    replies(userHmget(slug), [], [], null, null, [], [], null, null, 0, null),
+  );
+  if (slug) mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", captain));
+  mockNoSecureDevKeys();
+  // null for a delete that throws before it reads the marker.
+  if (marker !== null) mocks.upstashPipeline.mockResolvedValueOnce(replies(marker)); // the deleting marker's EXISTS
+}
+
+/** The deleting marker's SET, the first write after the hold and the link
+ *  release, before the account delete. */
+function queueDeleteMark() {
+  mocks.upstashPipeline.mockResolvedValueOnce(replies("OK"));
+}
+
+/** What `deleteUser` writes once the account row is confirmed gone, in
+ *  order: the grant SREM, the held-score clear (`held`), the progress reset
+ *  (its secure-dev sweep, the classic script, the quiz/hints pipeline and its
+ *  audit), the membership SREM (`team`), the record DEL, the marker DEL and
+ *  the delete's audit. `stopAfter` leaves the later
+ *  stages unqueued, so a delete that fails there leaves no reply over for the
+ *  next test. */
+function queueDeleteWrites(
+  opts: { grantRemoved?: number; held?: boolean; team?: boolean; stopAfter?: "grant" | "held" | "reset" | "tail" | "audit" } = {},
+) {
+  const { grantRemoved = 0, held = false, team = false, stopAfter = "audit" } = opts;
+  queueDeleteMark();
+  mocks.upstashPipeline.mockResolvedValueOnce(replies(grantRemoved)); // grant SREM
+  if (stopAfter === "grant") return;
+  if (held) mocks.upstashEval.mockResolvedValueOnce(1); // held clear
+  if (stopAfter === "held") return;
+  mockNoSecureDevKeys(); // the reset's own sweep
+  mockModuleResets([0, 0, 0, 0, 0]);
+  mockQuizAndHintsPipeline();
+  mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
+  if (stopAfter === "reset") return;
+  if (team) mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // membership SREM
+  mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // record DEL
+  if (stopAfter === "tail") return;
+  mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // marker DEL
+  mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   linkDeps.getGithubLink.mockResolvedValue(null);
+  linkDeps.releaseGithubLink.mockResolvedValue(null);
+  linkDeps.isReleasedAndBlocked.mockResolvedValue(false);
+  holdDeps.holdScores.mockResolvedValue(undefined);
+  holdDeps.restoreAfterFailedDelete.mockResolvedValue("restored");
+  holdDeps.releaseScoreHold.mockResolvedValue("released");
+  grantDeps.isAdminGrantee.mockResolvedValue(false);
+  // The auth row exists until deleteUser removes it.
+  let authRow = true;
+  authDeps.findUserById.mockReset().mockImplementation(async (id: string) => (authRow ? { id } : null));
+  authDeps.deleteUserSessions.mockReset().mockResolvedValue(undefined);
+  authDeps.deleteAccounts.mockReset().mockResolvedValue(undefined);
+  authDeps.deleteUser.mockReset().mockImplementation(async () => {
+    authRow = false;
+  });
   playerDeps.getPlayerProfiles.mockImplementation(async (ids: string[]) => new Map(ids.map((id) => [id, profile(id, "octocat")])));
 });
 
@@ -519,29 +629,17 @@ describe("deleteUser", () => {
   it("refuses to delete a captain, naming the way out", async () => {
     // Deleting the captain would leave a team nobody can administer: rename,
     // remove, regenerate and disband are all captain-only.
-    mocks.upstashPipeline.mockResolvedValueOnce(
-      replies(userHmget("red-team"), [], [], null, null, [], [], null, null, 0, null),
-    );
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", "0c7aca70-0000-4000-8000-00000000000a"));
-    mockNoSecureDevKeys();
+    queueDeleteLookup("red-team", "0c7aca70-0000-4000-8000-00000000000a");
 
     await expect(deleteUser("0c7aca70-0000-4000-8000-00000000000a", ADMIN)).rejects.toThrow(/captain/i);
     // and nothing was cleared on the way to that refusal
     expect(allCommands().some((c) => c[0] === "DEL")).toBe(false);
+    expect(holdDeps.holdScores).not.toHaveBeenCalled();
   });
 
   it("removes the membership and the account record", async () => {
-    mocks.upstashPipeline.mockResolvedValueOnce(
-      replies(userHmget("red-team"), [], [], null, null, [], [], null, null, 0, null),
-    );
-    mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", "a11ce000-0000-4000-8000-00000000000c"));
-    mockNoSecureDevKeys();
-    mockNoSecureDevKeys(); // the reset's own sweep
-    mockModuleResets([0, 0, 0, 0, 0]);
-    mockQuizAndHintsPipeline();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // SREM + DEL
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
+    queueDeleteLookup("red-team", "a11ce000-0000-4000-8000-00000000000c");
+    queueDeleteWrites({ team: true });
 
     const result = await deleteUser("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
     expect(result.leftTeam).toBe("red-team");
@@ -552,21 +650,18 @@ describe("deleteUser", () => {
     for (const bucket of ["team-join", "hint-reveal"]) {
       expect(cmds).toContainEqual(["DEL", `ctf:rl:${bucket}:${OCTO}`]);
     }
-    // The account and its GitHub link are the account store's, not this
-    // tool's: nothing here names a ctf:auth:* or ctf:link:* key.
+    // The account goes through better-auth's adapter and the link through
+    // github-link's script: no pipeline here names a ctf:auth:* or ctf:link:* key.
     expect(cmds.some((c) => c.slice(1).some((a) => /^ctf:(auth|link):/.test(String(a))))).toBe(false);
-    // #553: the delete brackets the WHOLE thing (the inner reset nests its
-    // own bracket — the marker is a counter), so the in-progress flag stays
-    // up through the tail writes (membership, account record) and the last
+    // #553: one bracket around the WHOLE delete, so the in-progress flag
+    // stays up through the tail writes (membership, account record) and the
     // close comes after the last write.
-    expect(foldCache.beginScoreLowering).toHaveBeenCalledTimes(2);
-    expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(2);
+    expect(foldCache.beginScoreLowering).toHaveBeenCalledTimes(1);
+    expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(1);
     // The lookup before the reset is a READ; the bound is the first WRITE
-    // (the tail's SREM certainly is one).
-    const srem = mocks.upstashPipeline.mock.calls.findIndex((c) => c[0].some((cmd) => cmd[0] === "SREM"));
-    expect(srem).toBeGreaterThan(-1);
+    // (the account delete).
     expect(foldCache.beginScoreLowering.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.upstashPipeline.mock.invocationCallOrder[srem],
+      authDeps.deleteUserSessions.mock.invocationCallOrder[0],
     );
     expect(Math.max(...foldCache.endScoreLowering.mock.invocationCallOrder)).toBeGreaterThan(
       Math.max(...mocks.upstashPipeline.mock.invocationCallOrder),
@@ -575,88 +670,566 @@ describe("deleteUser", () => {
 });
 
 describe("deleteUser: held Secure Development scores", () => {
-  /** Queues the pipelines a no-team, no-SD-keys delete walks through. */
-  function queueDelete() {
-    mocks.upstashPipeline.mockResolvedValueOnce(
-      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
-    );
-    mockNoSecureDevKeys();
-    mockNoSecureDevKeys();
-    mockModuleResets([0, 0, 0, 0, 0]);
-    mockQuizAndHintsPipeline();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
-  }
-
-  it("clears the linked login's held scores by one script after the record is gone, link untouched", async () => {
+  it("clears the linked login's held scores by one script once the account row is gone, link untouched", async () => {
     linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
-    queueDelete();
-    mocks.upstashEval.mockResolvedValueOnce(1);
+    queueDeleteLookup();
+    queueDeleteWrites({ held: true });
     await deleteUser(OCTO, ADMIN);
-    const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0]);
-    const tailAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "DEL" && c[1] === `ctf:user:${OCTO}`));
-    expect(calls[tailAt].some((c) => String(c[1]).startsWith("ctf:sd:held"))).toBe(false);
-    // One script, the hash before the author index, after the record's DEL.
+    // One script, the hash before the author index.
     expect(mocks.upstashEval).toHaveBeenCalledWith(CLEAR_HELD_SCRIPT, ["ctf:sd:held:by:octocat", "ctf:sd:held:authors"], ["octocat"]);
     expect(CLEAR_HELD_SCRIPT.indexOf("DEL")).toBeLessThan(CLEAR_HELD_SCRIPT.indexOf("SREM"));
     const clearAt = mocks.upstashEval.mock.calls.findIndex((c) => c[0] === CLEAR_HELD_SCRIPT);
-    expect(mocks.upstashEval.mock.invocationCallOrder[clearAt]).toBeGreaterThan(
-      mocks.upstashPipeline.mock.invocationCallOrder[tailAt],
-    );
+    const clearOrder = mocks.upstashEval.mock.invocationCallOrder[clearAt];
+    // After the account delete and the re-read that confirms it.
+    expect(clearOrder).toBeGreaterThan(authDeps.deleteUser.mock.invocationCallOrder[0]);
+    expect(clearOrder).toBeGreaterThan(Math.max(...authDeps.findUserById.mock.invocationCallOrder));
+    // No pipeline names a held key: the script is the one writer.
+    expect(allCommands().some((c) => c.slice(1).some((a) => String(a).startsWith("ctf:sd:held")))).toBe(false);
     expect(allCommands().some((c) => c.slice(1).some((a) => /^ctf:link:/.test(String(a))))).toBe(false);
   });
 
   it("clears nothing held for an unlinked player", async () => {
     linkDeps.getGithubLink.mockResolvedValueOnce(null);
-    queueDelete();
+    queueDeleteLookup();
+    queueDeleteWrites();
     await deleteUser(OCTO, ADMIN);
+    expect(mocks.upstashEval.mock.calls.some((c) => c[0] === CLEAR_HELD_SCRIPT)).toBe(false);
     expect(allCommands().some((c) => c.slice(1).some((a) => String(a).startsWith("ctf:sd:held")))).toBe(false);
+  });
+
+  it("a re-run after a failed account delete clears the held scores of the released login the row still carries", async () => {
+    // The first run released (and blocked) the link, then its account delete
+    // failed: the lookup finds no link, the row still has the login.
+    authDeps.findUserById.mockResolvedValueOnce({ id: OCTO, login: "OctoCat" });
+    linkDeps.isReleasedAndBlocked.mockResolvedValueOnce(true);
+    queueDeleteLookup();
+    queueDeleteWrites({ held: true });
+    await deleteUser(OCTO, ADMIN);
+    expect(linkDeps.isReleasedAndBlocked).toHaveBeenCalledWith("octocat");
+    expect(linkDeps.isReleasedAndBlocked.mock.invocationCallOrder[0]).toBeLessThan(holdDeps.holdScores.mock.invocationCallOrder[0]);
+    expect(mocks.upstashEval).toHaveBeenCalledWith(CLEAR_HELD_SCRIPT, ["ctf:sd:held:by:octocat", "ctf:sd:held:authors"], ["octocat"]);
+  });
+
+  it("leaves held scores alone for a row login that is linked or not blocked", async () => {
+    authDeps.findUserById.mockResolvedValueOnce({ id: OCTO, login: "octocat" });
+    queueDeleteLookup();
+    queueDeleteWrites();
+    await deleteUser(OCTO, ADMIN);
+    expect(linkDeps.isReleasedAndBlocked).toHaveBeenCalledWith("octocat");
+    expect(mocks.upstashEval.mock.calls.some((c) => c[0] === CLEAR_HELD_SCRIPT)).toBe(false);
+  });
+
+  it("a re-run after the account and every counted trace are gone is found by the deleting marker and finishes", async () => {
+    // The first run deleted the account and then failed in the reset: what is
+    // left (an aggregate field) is nothing the lookup counts.
+    authDeps.findUserById.mockResolvedValue(null);
+    queueDeleteLookup(null, BOB, 1);
+    queueDeleteWrites();
+    await expect(deleteUser(OCTO, ADMIN)).resolves.toMatchObject({ leftTeam: null });
+    expect(allCommands()).toContainEqual(["HDEL", "ctf:quiz:points", OCTO]);
+    // The marker goes on its own, after the record's cleanup batch.
+    const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0]);
+    const tailAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "DEL" && c[1] === `ctf:user:${OCTO}`));
+    const markAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "DEL" && c[1] === `ctf:admin:deleting:${OCTO}`));
+    expect(calls[markAt]).toEqual([["DEL", `ctf:admin:deleting:${OCTO}`]]);
+    expect(calls[tailAt].some((c) => c[1] === `ctf:admin:deleting:${OCTO}`)).toBe(false);
+    expect(mocks.upstashPipeline.mock.invocationCallOrder[markAt]).toBeGreaterThan(mocks.upstashPipeline.mock.invocationCallOrder[tailAt]);
+  });
+
+  it("without the marker, no account and nothing counted is No such player.", async () => {
+    authDeps.findUserById.mockResolvedValue(null);
+    queueDeleteLookup(null, BOB, 0);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("No such player.");
+    expect(holdDeps.holdScores).not.toHaveBeenCalled();
+  });
+
+  it("a failed membership removal leaves the record and the marker, so the re-run still finds the team", async () => {
+    // First run: the account goes, the reset lands, the membership SREM fails.
+    queueDeleteLookup("red-team", BOB);
+    queueDeleteWrites({ stopAfter: "reset" });
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/delete user membership.*READONLY/);
+    const deleted = (key: string) =>
+      mocks.upstashPipeline.mock.calls.some((c) => c[0].some((cmd) => cmd[0] === "DEL" && cmd[1] === key));
+    // Neither the record (the team's only pointer) nor the marker was touched.
+    expect(deleted(`ctf:user:${OCTO}`)).toBe(false);
+    expect(deleted(`ctf:admin:deleting:${OCTO}`)).toBe(false);
+
+    // Re-run: no account row; the record still names the team.
+    vi.clearAllMocks();
+    authDeps.findUserById.mockResolvedValue(null);
+    queueDeleteLookup("red-team", BOB, 1);
+    queueDeleteWrites({ team: true });
+    await expect(deleteUser(OCTO, ADMIN)).resolves.toMatchObject({ leftTeam: "red-team" });
+    const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0]);
+    const sremAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "SREM" && c[1] === "ctf:team:red-team:members"));
+    const recordAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "DEL" && c[1] === `ctf:user:${OCTO}`));
+    expect(calls[sremAt]).toEqual([["SREM", "ctf:team:red-team:members", OCTO]]);
+    expect(sremAt).toBeLessThan(recordAt);
+    expect(deleted(`ctf:admin:deleting:${OCTO}`)).toBe(true);
+  });
+
+  it("a failed record DEL keeps the marker for the re-run", async () => {
+    queueDeleteLookup();
+    queueDeleteWrites({ stopAfter: "reset" });
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }, { result: 1 }]);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/delete user.*READONLY/);
+    expect(
+      mocks.upstashPipeline.mock.calls.some((c) => c[0].some((cmd) => cmd[0] === "DEL" && cmd[1] === `ctf:admin:deleting:${OCTO}`)),
+    ).toBe(false);
+  });
+
+  it("sets the deleting marker before the account delete", async () => {
+    queueDeleteLookup();
+    queueDeleteWrites();
+    await deleteUser(OCTO, ADMIN);
+    const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0]);
+    const setAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "SET" && c[1] === `ctf:admin:deleting:${OCTO}`));
+    expect(setAt).toBeGreaterThan(-1);
+    expect(mocks.upstashPipeline.mock.invocationCallOrder[setAt]).toBeLessThan(authDeps.deleteUserSessions.mock.invocationCallOrder[0]);
+  });
+
+  it("a failed released-login read aborts before any write", async () => {
+    authDeps.findUserById.mockResolvedValueOnce({ id: OCTO, login: "octocat" });
+    linkDeps.isReleasedAndBlocked.mockRejectedValueOnce(new Error("github link: GET failed: NOAUTH"));
+    queueDeleteLookup();
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/NOAUTH/);
+    expect(holdDeps.holdScores).not.toHaveBeenCalled();
+    expect(allCommands().some((c) => c[0] === "DEL")).toBe(false);
   });
 
   it("aborts before any write when the link read fails", async () => {
     linkDeps.getGithubLink.mockRejectedValueOnce(new Error("github link: GET failed: READONLY"));
-    mocks.upstashPipeline.mockResolvedValueOnce(
-      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
-    );
-    mockNoSecureDevKeys();
+    queueDeleteLookup(null, BOB, null);
     await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/github link/);
     expect(foldCache.beginScoreLowering).not.toHaveBeenCalled();
     expect(allCommands().some((c) => c[0] === "DEL")).toBe(false);
   });
 });
 
-describe("deleteUser: held scores outlive a failed record delete", () => {
-  it("leaves the held scores when the record's DEL fails, so a player who stays keeps them", async () => {
-    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
-    mocks.upstashPipeline.mockResolvedValueOnce(
-      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
-    );
-    mockNoSecureDevKeys();
-    mockNoSecureDevKeys();
-    mockModuleResets([0, 0, 0, 0, 0]);
-    mockQuizAndHintsPipeline();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
-    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]); // tail
-    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
-    expect(mocks.upstashEval.mock.calls.some((c) => c[0] === CLEAR_HELD_SCRIPT)).toBe(false);
-    expect(allCommands().some((c) => String(c[1]).startsWith("ctf:sd:held"))).toBe(false);
-  });
+describe("deleteUser: a failed account delete keeps progress and held scores", () => {
+  for (const step of ["deleteUserSessions", "deleteAccounts", "deleteUser"] as const) {
+    it(`a failed ${step} writes no progress, held-score, grant or record change`, async () => {
+      linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
+      queueDeleteLookup();
+      queueDeleteMark();
+      authDeps[step].mockRejectedValueOnce(new Error("auth store: down"));
+      await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("auth store: down");
+      // Only the lookup's reads ran: no SD sweep, no classic script, no
+      // quiz/hints DEL, no held clear, no grant SREM, no record DEL.
+      expect(mocks.upstashPipeline).toHaveBeenCalledTimes(4);
+      expect(mocks.upstashEval).not.toHaveBeenCalled();
+      expect(allCommands().some((c) => ["DEL", "HDEL", "SREM", "LPUSH"].includes(String(c[0])))).toBe(false);
+      expect(holdDeps.restoreAfterFailedDelete).toHaveBeenCalledWith(OCTO, holdDeps.holdScores.mock.calls[0][1]);
+    });
+  }
 });
 
 describe("deleteUser: a failed tail write is not a delete", () => {
   it("rejects when the membership/account pipeline reports an error", async () => {
-    mocks.upstashPipeline.mockResolvedValueOnce(
-      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    queueDeleteLookup();
+    queueDeleteWrites({ stopAfter: "reset" });
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+    expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("deleteUser: the account and its GitHub login", () => {
+  const auditLine = (action: string) => {
+    const cmd = allCommands().find((c) => c[0] === "LPUSH" && String(c[2]).includes(`"${action}"`));
+    return cmd ? JSON.parse(String(cmd[2])) : null;
+  };
+  const nothingDeleted = () => {
+    expect(allCommands().some((c) => c[0] === "DEL" || c[0] === "SREM" || c[0] === "LPUSH")).toBe(false);
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    expect(linkDeps.releaseGithubLink).not.toHaveBeenCalled();
+    expect(authDeps.deleteUserSessions).not.toHaveBeenCalled();
+    expect(authDeps.deleteAccounts).not.toHaveBeenCalled();
+    expect(authDeps.deleteUser).not.toHaveBeenCalled();
+    expect(holdDeps.holdScores).not.toHaveBeenCalled();
+  };
+
+  it("refuses an organizer with the organizer copy and deletes nothing", async () => {
+    grantDeps.isAdminGrantee.mockResolvedValue(true);
+    queueDeleteLookup();
+    const err = await deleteUser(OCTO, ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err.message).toBe("octocat is an organizer. Revoke their admin access first.");
+    expect(grantDeps.isAdminGrantee).toHaveBeenCalledWith(OCTO);
+    nothingDeleted();
+    expect(foldCache.beginScoreLowering).not.toHaveBeenCalled();
+  });
+
+  it("checks the grant before the captaincy", async () => {
+    grantDeps.isAdminGrantee.mockResolvedValue(true);
+    queueDeleteLookup("red-team", OCTO);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/organizer/);
+    nothingDeleted();
+  });
+
+  it("a failed grant read refuses instead of reading as not an organizer", async () => {
+    grantDeps.isAdminGrantee.mockRejectedValue(new Error("Upstash SISMEMBER admin grants failed: NOAUTH"));
+    queueDeleteLookup(null, BOB, null);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/NOAUTH/);
+    nothingDeleted();
+  });
+
+  it("releases the link with a block, deletes sessions, accounts and the user, then the held scores and the progress, then audits", async () => {
+    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
+    linkDeps.releaseGithubLink.mockResolvedValueOnce("octocat");
+    queueDeleteLookup();
+    queueDeleteWrites({ held: true });
+    await deleteUser(OCTO, ADMIN);
+
+    expect(linkDeps.releaseGithubLink).toHaveBeenCalledWith(OCTO, { block: true });
+    expect(authDeps.deleteUserSessions).toHaveBeenCalledWith(OCTO);
+    expect(authDeps.deleteAccounts).toHaveBeenCalledWith(OCTO);
+    expect(authDeps.deleteUser).toHaveBeenCalledWith(OCTO);
+    const evals = mocks.upstashEval.mock.calls.map((c) => c[0]);
+    const order = [
+      linkDeps.releaseGithubLink.mock.invocationCallOrder[0],
+      authDeps.deleteUserSessions.mock.invocationCallOrder[0],
+      authDeps.deleteAccounts.mock.invocationCallOrder[0],
+      authDeps.deleteUser.mock.invocationCallOrder[0],
+      mocks.upstashEval.mock.invocationCallOrder[evals.indexOf(CLEAR_HELD_SCRIPT)], // held clear
+      mocks.upstashEval.mock.invocationCallOrder[evals.indexOf(RESET_MODULE_SOLVES_SCRIPT)], // first progress write
+      mocks.upstashPipeline.mock.invocationCallOrder.at(-1)!, // audit
+    ];
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(auditLine("ops:user-delete")).toMatchObject({
+      action: "ops:user-delete",
+      player: OCTO,
+      leftTeam: null,
+      blockedLogin: "octocat",
+      by: ADMIN.id,
+    });
+  });
+
+  it("audits blockedLogin null for a player with no link", async () => {
+    queueDeleteLookup();
+    queueDeleteWrites();
+    await deleteUser(OCTO, ADMIN);
+    expect(linkDeps.releaseGithubLink).toHaveBeenCalledWith(OCTO, { block: true });
+    expect(auditLine("ops:user-delete")).toMatchObject({ player: OCTO, blockedLogin: null });
+  });
+
+  it("deletes an account that holds no event state", async () => {
+    queueDeleteLookup();
+    queueDeleteWrites();
+    await expect(deleteUser(OCTO, ADMIN)).resolves.toMatchObject({ leftTeam: null });
+    expect(authDeps.deleteUser).toHaveBeenCalledWith(OCTO);
+  });
+
+  it("an id with neither an account nor event state is No such player., and nothing is written", async () => {
+    authDeps.findUserById.mockResolvedValue(null);
+    queueDeleteLookup();
+    const err = await deleteUser(OCTO, ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err.message).toBe("No such player.");
+    nothingDeleted();
+  });
+
+  it("event state with no account row is still deleted", async () => {
+    authDeps.findUserById.mockResolvedValue(null);
+    queueDeleteLookup("red-team", BOB);
+    queueDeleteWrites({ team: true });
+    await expect(deleteUser(OCTO, ADMIN)).resolves.toMatchObject({ leftTeam: "red-team" });
+  });
+
+  it("a failed auth delete rejects with no audit line", async () => {
+    linkDeps.releaseGithubLink.mockResolvedValueOnce("octocat");
+    queueDeleteLookup();
+    queueDeleteMark();
+    authDeps.deleteAccounts.mockRejectedValueOnce(new Error("auth store: deleteMany account failed"));
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("auth store");
+    expect(authDeps.deleteUser).not.toHaveBeenCalled();
+    expect(auditLine("ops:user-delete")).toBeNull();
+    expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes the id's admin grant after the account row is gone and the re-read confirms it", async () => {
+    queueDeleteLookup();
+    queueDeleteWrites();
+    const result = await deleteUser(OCTO, ADMIN);
+    const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0]);
+    const sremAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "SREM" && c[1] === "ctf:admin:grants"));
+    expect(calls[sremAt]).toEqual([["SREM", "ctf:admin:grants", OCTO]]);
+    const sremOrder = mocks.upstashPipeline.mock.invocationCallOrder[sremAt];
+    expect(sremOrder).toBeGreaterThan(authDeps.deleteUser.mock.invocationCallOrder[0]);
+    expect(sremOrder).toBeGreaterThan(Math.max(...authDeps.findUserById.mock.invocationCallOrder));
+    expect(result.warnings).not.toContain(GRANT_CLAIMED_DURING_DELETE);
+    expect(auditLine("ops:user-delete")).toMatchObject({ grantRemoved: false });
+    expect(auditLine("ops:user-delete")).not.toHaveProperty("warning");
+  });
+
+  it("a grant claimed during the delete is removed, returned as a warning and audited", async () => {
+    queueDeleteLookup();
+    queueDeleteWrites({ grantRemoved: 1 });
+    const result = await deleteUser(OCTO, ADMIN);
+    expect(result.warnings).toContain(GRANT_CLAIMED_DURING_DELETE);
+    expect(auditLine("ops:user-delete")).toMatchObject({
+      player: OCTO,
+      grantRemoved: true,
+      warning: GRANT_CLAIMED_DURING_DELETE,
+    });
+  });
+
+  it("a failed grant removal rejects with no audit line and no progress write", async () => {
+    queueDeleteLookup();
+    queueDeleteMark();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/admin grant.*READONLY/);
+    expect(authDeps.deleteUser).toHaveBeenCalledWith(OCTO);
+    expect(auditLine("ops:user-delete")).toBeNull();
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(1);
+  });
+
+  it("a retry after a failed grant removal removes the orphaned grant instead of refusing it as an organizer", async () => {
+    // The first run deleted the account row, then its grant SREM failed.
+    authDeps.findUserById.mockResolvedValue(null);
+    grantDeps.isAdminGrantee.mockResolvedValue(true);
+    queueDeleteLookup();
+    queueDeleteWrites({ grantRemoved: 1 });
+    const result = await deleteUser(OCTO, ADMIN);
+    expect(allCommands()).toContainEqual(["SREM", "ctf:admin:grants", OCTO]);
+    expect(result.warnings).toContain(ORPHAN_GRANT_REMOVED);
+    expect(result.warnings).not.toContain(GRANT_CLAIMED_DURING_DELETE);
+    expect(auditLine("ops:user-delete")).toMatchObject({ player: OCTO, grantRemoved: true, warning: ORPHAN_GRANT_REMOVED });
+    // The no-row retry still marks; with the row already gone it has nothing
+    // to restore.
+    expect(holdDeps.holdScores).toHaveBeenCalledWith(OCTO, expect.stringMatching(/^[0-9a-f-]{36}$/));
+    expect(holdDeps.restoreAfterFailedDelete).not.toHaveBeenCalled();
+  });
+
+  it("still refuses a grant whose account row is in place", async () => {
+    grantDeps.isAdminGrantee.mockResolvedValue(true);
+    queueDeleteLookup();
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/is an organizer/);
+    nothingDeleted();
+  });
+
+  it("a failed account-row read refuses instead of reading as an orphaned grant", async () => {
+    grantDeps.isAdminGrantee.mockResolvedValue(true);
+    authDeps.findUserById.mockRejectedValue(new Error("NOAUTH"));
+    queueDeleteLookup(null, BOB, null);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("NOAUTH");
+    nothingDeleted();
+  });
+
+  it("a user row that survives the delete is a failure, not a delete", async () => {
+    // better-auth's single-row delete swallows a failed read and deletes
+    // nothing; the re-read is what notices.
+    authDeps.deleteUser.mockResolvedValueOnce(undefined);
+    queueDeleteLookup();
+    queueDeleteMark();
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/account/);
+    expect(auditLine("ops:user-delete")).toBeNull();
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteUser: the score hold (#775)", () => {
+  it("holds after the refusals and before the link release and every account or progress write", async () => {
+    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
+    linkDeps.releaseGithubLink.mockResolvedValueOnce("octocat");
+    queueDeleteLookup();
+    queueDeleteWrites({ held: true });
+    await deleteUser(OCTO, ADMIN);
+
+    expect(holdDeps.holdScores).toHaveBeenCalledWith(OCTO, expect.stringMatching(/^[0-9a-f-]{36}$/));
+    const order = [
+      grantDeps.isAdminGrantee.mock.invocationCallOrder[0],
+      holdDeps.holdScores.mock.invocationCallOrder[0],
+      linkDeps.releaseGithubLink.mock.invocationCallOrder[0],
+      foldCache.beginScoreLowering.mock.invocationCallOrder[0],
+      authDeps.deleteUser.mock.invocationCallOrder[0],
+      mocks.upstashEval.mock.invocationCallOrder[0], // the held clear, then the classic reset
+    ];
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(holdDeps.restoreAfterFailedDelete).not.toHaveBeenCalled();
+  });
+
+  it("a failed hold writes nothing and restores with the token it tried to add", async () => {
+    holdDeps.holdScores.mockRejectedValueOnce(new Error("Upstash EVAL failed: READONLY"));
+    holdDeps.restoreAfterFailedDelete.mockResolvedValueOnce("restored");
+    queueDeleteLookup();
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
+    expect(linkDeps.releaseGithubLink).not.toHaveBeenCalled();
+    expect(foldCache.beginScoreLowering).not.toHaveBeenCalled();
+    expect(allCommands().some((c) => c[0] === "DEL" || c[0] === "SREM" || c[0] === "LPUSH")).toBe(false);
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    expect(holdDeps.restoreAfterFailedDelete).toHaveBeenCalledTimes(1);
+    expect(holdDeps.restoreAfterFailedDelete).toHaveBeenCalledWith(OCTO, holdDeps.holdScores.mock.calls[0][1]);
+  });
+
+  it("a throw before the account row is gone restores with this delete's token and rethrows the original", async () => {
+    queueDeleteLookup();
+    queueDeleteMark();
+    authDeps.deleteAccounts.mockRejectedValueOnce(new Error("auth store: deleteMany account failed"));
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("auth store: deleteMany account failed");
+    expect(holdDeps.restoreAfterFailedDelete).toHaveBeenCalledTimes(1);
+    expect(holdDeps.restoreAfterFailedDelete).toHaveBeenCalledWith(OCTO, holdDeps.holdScores.mock.calls[0][1]);
+    expect(holdDeps.restoreAfterFailedDelete.mock.invocationCallOrder[0]).toBeGreaterThan(
+      authDeps.deleteAccounts.mock.invocationCallOrder[0],
     );
-    mockNoSecureDevKeys();
-    mockNoSecureDevKeys();
+  });
+
+  it("a failed link release restores too", async () => {
+    linkDeps.releaseGithubLink.mockRejectedValueOnce(new Error("github link: release failed"));
+    queueDeleteLookup();
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("github link: release failed");
+    expect(holdDeps.restoreAfterFailedDelete).toHaveBeenCalledWith(OCTO, holdDeps.holdScores.mock.calls[0][1]);
+  });
+
+  it("a user row that survives the delete restores", async () => {
+    authDeps.deleteUser.mockResolvedValueOnce(undefined);
+    queueDeleteLookup();
+    queueDeleteMark();
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/account row is still there/);
+    expect(holdDeps.restoreAfterFailedDelete).toHaveBeenCalledWith(OCTO, holdDeps.holdScores.mock.calls[0][1]);
+  });
+
+  it("a failed restore is logged with the re-run instruction and the original error is rethrown", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      queueDeleteLookup();
+      queueDeleteMark();
+      authDeps.deleteAccounts.mockRejectedValueOnce(new Error("auth store: deleteMany account failed"));
+      holdDeps.restoreAfterFailedDelete.mockRejectedValueOnce(new Error("Upstash EVAL failed: NOAUTH"));
+      await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("auth store: deleteMany account failed");
+      const line = log.mock.calls.find((c) => String(c[0]).includes("score hold"));
+      expect(line).toBeDefined();
+      expect(String(line![0])).toContain(OCTO);
+      expect(String(line![0])).toMatch(/re-run of the delete succeeds/i);
+      expect(line![1]).toBe("Error: Upstash EVAL failed: NOAUTH");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("logs ids only when another token of the player stays on the hold", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      queueDeleteLookup();
+      queueDeleteMark();
+      authDeps.deleteAccounts.mockRejectedValueOnce(new Error("auth store: deleteMany account failed"));
+      holdDeps.restoreAfterFailedDelete.mockResolvedValueOnce("in-flight");
+      await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("auth store: deleteMany account failed");
+      const line = log.mock.calls.find((c) => String(c[0]).includes("another token"));
+      expect(line).toEqual([`[admin-ops] delete ${OCTO} failed; another token remains on the score hold (a delete or unlink running, or failed without lifting it)`]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("a throw after the row is confirmed gone does not restore", async () => {
+    queueDeleteLookup();
+    queueDeleteMark();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]); // grant SREM
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/admin grant.*READONLY/);
+    expect(holdDeps.restoreAfterFailedDelete).not.toHaveBeenCalled();
+  });
+
+  it("does not repeat the reset's 'scored again' warning: a deleted player's PR is refused", async () => {
+    queueDeleteLookup();
+    queueDeleteMark();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(0)); // grant SREM
+    mockSecureDevKeys("ctf:solves:dvwa", [`${OCTO}:c1`]);
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // HDEL of those fields
     mockModuleResets([0, 0, 0, 0, 0]);
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
+    const result = await deleteUser(OCTO, ADMIN);
+    expect(result.cleared.secureDevSolves).toBe(1);
+    expect(result.warnings.join(" ")).not.toMatch(/scored again|re-ingest|HSETNX/i);
+  });
+});
+
+describe("deleteAllAccounts", () => {
+  const auditLine = () => {
+    const cmd = allCommands().find((c) => c[0] === "LPUSH");
+    return cmd ? JSON.parse(String(cmd[2])) : null;
+  };
+
+  it.each([["DELETE ALL ACCOUNTS"], ["delete all accounts "], [""], [undefined], [true]])(
+    "refuses confirm %j and changes nothing",
+    async (confirm) => {
+      const err = await deleteAllAccounts(confirm, ADMIN).catch((e) => e);
+      expect(err).toBeInstanceOf(OpsValidationError);
+      expect(err.field).toBe("confirm");
+      expect(err.message).toBe("Type delete all accounts to confirm.");
+      expect(storeDeps.resetEvent).not.toHaveBeenCalled();
+      expect(storeDeps.scanDelByPrefix).not.toHaveBeenCalled();
+      expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+    },
+  );
+
+  it("resets the event, sweeps the account namespaces, drops the grants, and audits the counts", async () => {
+    storeDeps.resetEvent.mockResolvedValueOnce({ cleared: { solves: 3, users: 2 }, resetAt: "1" });
+    storeDeps.scanDelByPrefix.mockImplementation(async (pattern: string) => pattern.length);
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(2)); // DEL grants + gen
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
+
+    const { cleared } = await deleteAllAccounts("delete all accounts", ADMIN);
+
+    expect(storeDeps.resetEvent).toHaveBeenCalledWith(ADMIN);
+    // The links go first, so sync holds a linked login's scores instead of
+    // scoring them into the reset; master reset clears ctf:relink:* itself.
+    expect(storeDeps.scanDelByPrefix.mock.calls.map((c) => c[0])).toEqual([
+      "ctf:link:*",
+      "ctf:auth:*",
+      "ctf:admin:code:*",
+      "ctf:admin:reset-code:*",
+      "ctf:admin:deleting:*",
+    ]);
+    expect(storeDeps.scanDelByPrefix.mock.invocationCallOrder[0]).toBeLessThan(
+      storeDeps.resetEvent.mock.invocationCallOrder[0],
+    );
+    expect(storeDeps.resetEvent.mock.invocationCallOrder[0]).toBeLessThan(
+      storeDeps.scanDelByPrefix.mock.invocationCallOrder[1],
+    );
+    expect(allCommands()).toContainEqual(["DEL", "ctf:admin:grants", "ctf:admin:grant-gen"]);
+    // The spent bootstrap code stays spent.
+    expect(allCommands().some((c) => c.includes("ctf:admin:claim:spent"))).toBe(false);
+    expect(storeDeps.scanDelByPrefix.mock.calls.some((c) => "ctf:admin:claim:spent".startsWith(String(c[0]).replaceAll("*", "")))).toBe(false);
+    expect(cleared).toEqual({
+      solves: 3,
+      users: 2,
+      auth: "ctf:auth:*".length,
+      links: "ctf:link:*".length,
+      adminCodes: "ctf:admin:code:*".length,
+      resetCodes: "ctf:admin:reset-code:*".length,
+      deleting: "ctf:admin:deleting:*".length,
+      adminGrantKeys: 2,
+    });
+    expect(auditLine()).toMatchObject({ action: "ops:delete-all-accounts", by: ADMIN.id, cleared });
+  });
+
+  it("a failed sweep rejects with no audit line and no grant delete", async () => {
+    storeDeps.resetEvent.mockResolvedValueOnce({ cleared: {}, resetAt: "1" });
+    storeDeps.scanDelByPrefix.mockResolvedValueOnce(0).mockRejectedValueOnce(new Error("command failed (reset ctf:auth:*): READONLY"));
+    await expect(deleteAllAccounts("delete all accounts", ADMIN)).rejects.toThrow(/READONLY/);
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+  });
+
+  it("a failed grant delete rejects with no audit line", async () => {
+    storeDeps.resetEvent.mockResolvedValueOnce({ cleared: {}, resetAt: "1" });
+    storeDeps.scanDelByPrefix.mockResolvedValue(0);
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]);
-    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
-    expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(2);
+    await expect(deleteAllAccounts("delete all accounts", ADMIN)).rejects.toThrow(/READONLY/);
+    expect(auditLine()).toBeNull();
+  });
+
+  it("a failed reset stops after the links, before any account is touched", async () => {
+    storeDeps.resetEvent.mockRejectedValueOnce(new Error("reset failed"));
+    storeDeps.scanDelByPrefix.mockResolvedValue(0);
+    await expect(deleteAllAccounts("delete all accounts", ADMIN)).rejects.toThrow("reset failed");
+    expect(storeDeps.scanDelByPrefix.mock.calls.map((c) => c[0])).toEqual(["ctf:link:*"]);
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 });
 
@@ -755,6 +1328,20 @@ describe("lookupUser — known", () => {
   });
 });
 
+describe("lookupUser — github", () => {
+  it("carries the player's GitHub link, or null", async () => {
+    const id = "0c7aca70-0000-4000-8000-00000000000a";
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null));
+    mockNoSecureDevKeys();
+    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 7 });
+    expect((await lookupUser(id)).github).toEqual({ login: "octocat", linkedAt: 7 });
+
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null));
+    mockNoSecureDevKeys();
+    expect((await lookupUser(id)).github).toBeNull();
+  });
+});
+
 // #597: after registration closes a player who left can't rejoin on their
 // own; an organizer puts them on a team (or moves them) from Support. The
 // write is one atomic script, keyed by the player id the search handed over.
@@ -821,5 +1408,325 @@ describe("forceAddToTeam (#597)", () => {
     mocks.upstashEval.mockResolvedValueOnce(verdict);
     await expect(forceAddToTeam("red-team", BOB, ADMIN)).rejects.toThrow(message);
     expect(teamDeps.logActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe("renameUser", () => {
+  const auditLine = () => {
+    const cmd = allCommands().find((c) => c[0] === "LPUSH");
+    return cmd ? JSON.parse(String(cmd[2])) : null;
+  };
+
+  it("renames and audits from and to", async () => {
+    nameDeps.currentUsername.mockResolvedValue("alice");
+    nameDeps.renameUsername.mockResolvedValue("ok");
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
+    expect(await renameUser(OCTO, " Alicia ", ADMIN)).toEqual({ from: "alice", to: "Alicia" });
+    expect(nameDeps.renameUsername).toHaveBeenCalledWith(OCTO, " Alicia ");
+    expect(auditLine()).toMatchObject({ action: "ops:user-rename", player: OCTO, from: "alice", to: "Alicia", by: ADMIN.id });
+  });
+
+  it.each([
+    ["taken", "That username is taken."],
+    ["invalid", "Usernames are 3 to 30 letters, digits, dots or underscores."],
+    ["missing", "No such player."],
+  ])("maps %s to a username validation error and audits nothing", async (result, message) => {
+    nameDeps.currentUsername.mockResolvedValue(null);
+    nameDeps.renameUsername.mockResolvedValue(result);
+    const err = await renameUser(OCTO, "bob", ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err).toMatchObject({ field: "username", message });
+    expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
+  });
+
+  it("validates the id before touching the store, and a non-string name is invalid", async () => {
+    await expect(renameUser("OctoCat", "bob", ADMIN)).rejects.toThrow("invalid player id");
+    expect(nameDeps.renameUsername).not.toHaveBeenCalled();
+    nameDeps.currentUsername.mockResolvedValue(null);
+    await expect(renameUser(OCTO, 42, ADMIN)).rejects.toMatchObject({ field: "username" });
+    expect(nameDeps.renameUsername).not.toHaveBeenCalled();
+  });
+
+  it("lets a store failure throw", async () => {
+    nameDeps.currentUsername.mockResolvedValue("alice");
+    nameDeps.renameUsername.mockRejectedValue(new Error("NOAUTH"));
+    await expect(renameUser(OCTO, "bob", ADMIN)).rejects.toThrow("NOAUTH");
+  });
+});
+
+describe("unlinkGithub", () => {
+  const auditLine = () => {
+    const cmd = allCommands().find((c) => c[0] === "LPUSH");
+    return cmd ? JSON.parse(String(cmd[2])) : null;
+  };
+  const account = (id: string, providerId: string) => ({ id, providerId, userId: OCTO, accountId: id });
+  const TAKEN = { login: "octocat", at: "1700000000000", ours: true };
+  const switches = (on: Partial<Record<"github" | "google" | "discord", boolean>>) => ({
+    signInProviders: { github: false, google: false, discord: false, ...on },
+  });
+
+  beforeEach(() => {
+    linkDeps.getGithubLink.mockResolvedValue({ login: "octocat", linkedAt: 1700000000000 });
+    linkDeps.takeGithubLink.mockResolvedValue(TAKEN);
+    linkDeps.restoreGithubLink.mockResolvedValue("restored");
+    nameDeps.currentUsername.mockResolvedValue("octocat");
+    authDeps.deleteAccount.mockReset().mockResolvedValue(undefined);
+    storeDeps.getAdminSettings.mockResolvedValue(switches({}));
+    vi.stubEnv("GOOGLE_CLIENT_ID", "id");
+    vi.stubEnv("GOOGLE_CLIENT_SECRET", "secret");
+    vi.stubEnv("DISCORD_CLIENT_ID", "id");
+    vi.stubEnv("DISCORD_CLIENT_SECRET", "secret");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  const nothingWritten = () => {
+    expect(holdDeps.holdScores).not.toHaveBeenCalled();
+    expect(linkDeps.takeGithubLink).not.toHaveBeenCalled();
+    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
+    expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
+  };
+
+  it("takes the link, finds no solve, then deletes only the github rows and audits", async () => {
+    authDeps.findAccounts.mockResolvedValue([
+      account("a1", "github"),
+      account("a2", "credential"),
+      account("a3", "github"),
+    ]);
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
+    expect(await unlinkGithub(OCTO, ADMIN)).toEqual({ login: "octocat" });
+    expect(linkDeps.takeGithubLink).toHaveBeenCalledWith(OCTO);
+    expect(linkDeps.releaseGithubLink).not.toHaveBeenCalled();
+    expect(linkDeps.restoreGithubLink).not.toHaveBeenCalled();
+    expect(authDeps.deleteAccount.mock.calls.map((c) => c[0])).toEqual(["a1", "a3"]);
+    // The release comes before the solve count, and the count before any row goes.
+    const take = linkDeps.takeGithubLink.mock.invocationCallOrder[0];
+    const scan = mocks.upstashPipeline.mock.invocationCallOrder[0];
+    expect(take).toBeLessThan(scan);
+    expect(scan).toBeLessThan(authDeps.deleteAccount.mock.invocationCallOrder[0]);
+    expect(auditLine()).toMatchObject({ action: "ops:github-unlink", player: OCTO, login: "octocat", by: ADMIN.id });
+  });
+
+  it("puts a scored link back exactly as taken and refuses, deleting nothing", async () => {
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mockSecureDevKeys("ctf:solves:vampi", [`${OCTO}:api1`, `${BOB}:api1`]);
+    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err.message).toBe("This GitHub link has scored and cannot be removed.");
+    expect(linkDeps.restoreGithubLink).toHaveBeenCalledWith(OCTO, TAKEN);
+    expect(linkDeps.restoreGithubLink.mock.invocationCallOrder[0]).toBeGreaterThan(
+      linkDeps.takeGithubLink.mock.invocationCallOrder[0],
+    );
+    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
+    expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
+  });
+
+  it("holds the player's scores before the take and lifts only its own token after the last write", async () => {
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
+    await unlinkGithub(OCTO, ADMIN);
+    const [[heldFor, token]] = holdDeps.holdScores.mock.calls;
+    expect(heldFor).toBe(OCTO);
+    expect(token).toMatch(/^[0-9a-f-]{36}$/);
+    expect(holdDeps.releaseScoreHold).toHaveBeenCalledTimes(1);
+    expect(holdDeps.releaseScoreHold).toHaveBeenCalledWith(OCTO, token);
+    expect(holdDeps.restoreAfterFailedDelete).not.toHaveBeenCalled();
+    // hold -> take -> count -> rows -> audit -> lift
+    const hold = holdDeps.holdScores.mock.invocationCallOrder[0];
+    const take = linkDeps.takeGithubLink.mock.invocationCallOrder[0];
+    const scan = mocks.upstashPipeline.mock.invocationCallOrder[0];
+    const rows = authDeps.deleteAccount.mock.invocationCallOrder[0];
+    const auditCall = mocks.upstashPipeline.mock.invocationCallOrder.at(-1)!;
+    const lift = holdDeps.releaseScoreHold.mock.invocationCallOrder[0];
+    expect(hold).toBeLessThan(take);
+    expect(take).toBeLessThan(scan);
+    expect(scan).toBeLessThan(rows);
+    expect(rows).toBeLessThan(auditCall);
+    expect(auditCall).toBeLessThan(lift);
+  });
+
+  it("a scored link is put back under the hold, and the hold is lifted after the restore", async () => {
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mockSecureDevKeys("ctf:solves:vampi", [`${OCTO}:api1`]);
+    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow("This GitHub link has scored and cannot be removed.");
+    expect(holdDeps.holdScores.mock.invocationCallOrder[0]).toBeLessThan(linkDeps.takeGithubLink.mock.invocationCallOrder[0]);
+    expect(linkDeps.restoreGithubLink.mock.invocationCallOrder[0]).toBeLessThan(
+      holdDeps.releaseScoreHold.mock.invocationCallOrder[0],
+    );
+    expect(holdDeps.releaseScoreHold).toHaveBeenCalledWith(OCTO, holdDeps.holdScores.mock.calls[0][1]);
+  });
+
+  it("a failed hold takes nothing and still lifts the token it tried to add", async () => {
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    holdDeps.holdScores.mockRejectedValueOnce(new Error("Upstash EVAL failed: READONLY"));
+    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow("READONLY");
+    expect(linkDeps.takeGithubLink).not.toHaveBeenCalled();
+    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
+    expect(holdDeps.releaseScoreHold).toHaveBeenCalledWith(OCTO, holdDeps.holdScores.mock.calls[0][1]);
+  });
+
+  it("a failed lift is logged and does not undo or mask a finished unlink", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
+    holdDeps.releaseScoreHold.mockRejectedValueOnce(new Error("Upstash EVAL failed: NOAUTH"));
+    expect(await unlinkGithub(OCTO, ADMIN)).toEqual({ login: "octocat" });
+    expect(log.mock.calls.some((c) => String(c[0]).includes("score hold"))).toBe(true);
+    log.mockRestore();
+  });
+
+  it("a player deleted during the unlink gets no link back and the unlink refuses", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }]);
+    linkDeps.restoreGithubLink.mockResolvedValueOnce("deleted");
+    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err.message).toBe("This player was deleted while the unlink ran.");
+    expect(log.mock.calls.flat().join(" ")).not.toContain("octocat");
+    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
+    expect(holdDeps.releaseScoreHold).toHaveBeenCalledTimes(1);
+    log.mockRestore();
+  });
+
+  it("a scored link whose login was blocked during the unlink gets no link back and the unlink refuses", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+      mocks.upstashPipeline.mockResolvedValueOnce(replies(["0", ["ctf:solves:dvwa"]]));
+      mocks.upstashPipeline.mockResolvedValueOnce(replies([`${OCTO}:c1`]));
+      linkDeps.restoreGithubLink.mockResolvedValueOnce("blocked");
+      const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
+      expect(err).toBeInstanceOf(OpsValidationError);
+      expect(err.message).toBe(BLOCKED_DURING_UNLINK);
+      expect(linkDeps.restoreGithubLink).toHaveBeenCalledWith(OCTO, TAKEN);
+      expect(log.mock.calls.flat().join(" ")).not.toContain("octocat");
+      expect(authDeps.deleteAccount).not.toHaveBeenCalled();
+      expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
+      expect(holdDeps.releaseScoreHold).toHaveBeenCalledTimes(1);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("a failed solve count puts the link back and throws instead of reading as unscored", async () => {
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }]);
+    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow();
+    expect(linkDeps.restoreGithubLink).toHaveBeenCalledWith(OCTO, TAKEN);
+    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
+  });
+
+  it("a scored link that cannot be put back throws, not the refusal copy", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mockSecureDevKeys("ctf:solves:vampi", [`${OCTO}:api1`]);
+    linkDeps.restoreGithubLink.mockRejectedValueOnce(new Error("github link: restore refused (taken)"));
+    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
+    expect(err).not.toBeInstanceOf(OpsValidationError);
+    expect(err.message).toMatch(/restore refused/);
+    expect(log.mock.calls.flat().join(" ")).not.toContain("octocat");
+    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
+
+  it.each([
+    [
+      "GitHub alone",
+      [account("a1", "github")],
+      "octocat",
+      "This player cannot sign in without GitHub. First give them a reset code so they can set a password.",
+    ],
+    [
+      "a password but no username",
+      [account("a1", "github"), account("a2", "credential")],
+      null,
+      "This player cannot sign in without GitHub. First set a username for them (Username, then Save).",
+    ],
+    [
+      "neither a password nor a username",
+      [account("a1", "github")],
+      null,
+      "This player cannot sign in without GitHub. First set a username for them (Username, then Save), then give them a reset code so they can set a password.",
+    ],
+    [
+      "a provider that is switched off",
+      [account("a1", "github"), account("a4", "discord")],
+      "octocat",
+      "This player cannot sign in without GitHub. First give them a reset code so they can set a password.",
+    ],
+  ])("refuses a player with %s, before any write", async (_label, rows, username, message) => {
+    authDeps.findAccounts.mockResolvedValue(rows);
+    nameDeps.currentUsername.mockResolvedValue(username);
+    storeDeps.getAdminSettings.mockResolvedValue(switches({ google: true }));
+    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err.message).toBe(message);
+    nothingWritten();
+  });
+
+  it("refuses a provider whose switch is on but has no keys", async () => {
+    vi.stubEnv("DISCORD_CLIENT_SECRET", "");
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a4", "discord")]);
+    storeDeps.getAdminSettings.mockResolvedValue(switches({ discord: true }));
+    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow(/cannot sign in without GitHub/);
+    nothingWritten();
+  });
+
+  it("an enabled provider counts as a sign-in method", async () => {
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a4", "discord")]);
+    nameDeps.currentUsername.mockResolvedValue(null);
+    storeDeps.getAdminSettings.mockResolvedValue(switches({ discord: true }));
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
+    expect(await unlinkGithub(OCTO, ADMIN)).toEqual({ login: "octocat" });
+    expect(authDeps.deleteAccount.mock.calls.map((c) => c[0])).toEqual(["a1"]);
+  });
+
+  it("a failed sign-in switch read refuses instead of reading as enabled", async () => {
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a4", "google")]);
+    storeDeps.getAdminSettings.mockRejectedValue(new Error("NOAUTH"));
+    nameDeps.currentUsername.mockResolvedValue(null);
+    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow("NOAUTH");
+    nothingWritten();
+  });
+
+  it("answers no link, not the sign-in copy, when the player has no account rows", async () => {
+    authDeps.findAccounts.mockResolvedValue([]);
+    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err.message).toBe("No GitHub account is linked.");
+    nothingWritten();
+  });
+
+  it("refuses a player with neither a link nor a github row", async () => {
+    linkDeps.getGithubLink.mockResolvedValue(null);
+    authDeps.findAccounts.mockResolvedValue([account("a2", "credential")]);
+    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err.message).toBe("No GitHub account is linked.");
+    nothingWritten();
+  });
+
+  it("a retry after the link went finishes deleting the github rows", async () => {
+    linkDeps.getGithubLink.mockResolvedValue(null);
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
+    expect(await unlinkGithub(OCTO, ADMIN)).toEqual({ login: null });
+    expect(linkDeps.takeGithubLink).not.toHaveBeenCalled();
+    expect(authDeps.deleteAccount.mock.calls.map((c) => c[0])).toEqual(["a1"]);
+    expect(auditLine()).toMatchObject({ action: "ops:github-unlink", player: OCTO, login: null });
+  });
+
+  it("validates the id first, and a failed row delete leaves no audit line", async () => {
+    await expect(unlinkGithub("OctoCat", ADMIN)).rejects.toThrow("invalid player id");
+    expect(linkDeps.getGithubLink).not.toHaveBeenCalled();
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mockNoSecureDevKeys();
+    authDeps.deleteAccount.mockRejectedValueOnce(new Error("auth store: delete failed"));
+    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow("auth store");
+    expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
   });
 });

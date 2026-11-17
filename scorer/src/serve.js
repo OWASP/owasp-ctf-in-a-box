@@ -1,11 +1,14 @@
 import { createServer } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { PLAYER_ID_RE } from "./player-id.js";
-import { loadRubric } from "./rubric.js";
 import { createMemoryStore, createRedisStore, outsideScoringWindow, pausedAt } from "./store.js";
 
 // Targets and challenge ids share the rubric charset (Redis key/field segments).
 const SEGMENT = /^[a-z0-9][a-z0-9-]*$/;
+
+// A GitHub login: the grammar judge.js and sync/src/parse.js accept for a
+// score's author. It becomes a Redis key segment (the link key) here.
+const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$/;
 
 // A legitimate score payload is well under 1 KiB; 64 KiB is generous headroom.
 // Callers are bearer-authed only, so this is defense-in-depth — a leaked token
@@ -103,8 +106,19 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
    */
   async function solveTime(at) {
     if (at === undefined || at === null) {
-      if (await store.isPaused()) return { status: 503, body: { error: "scoring is paused" } };
-      return { iso: now() };
+      // One settings snapshot answers both the arrival-time freeze and the
+      // epoch the write checks against, so a reset cannot land between them:
+      // a snapshot taken after the reset's first write sees its freeze, and
+      // one taken before carries the old epoch, which the solve script then
+      // refuses. A failed read falls back to isPaused (open on error) with no
+      // epoch, which the solve script answers 503 once any reset has happened.
+      const policy = await store.readScoringPolicy();
+      const iso = now();
+      const paused = policy
+        ? policy.paused || outsideScoringWindow(Date.parse(iso), policy.startsAt, policy.endsAt)
+        : await store.isPaused();
+      if (paused) return { status: 503, body: { error: "scoring is paused" } };
+      return { iso, resetAt: typeof policy?.resetAt === "string" ? policy.resetAt : "" };
     }
     let atMs = typeof at === "string" ? Date.parse(at) : NaN;
     if (!Number.isFinite(atMs)) return { status: 400, body: { error: "invalid at" } };
@@ -114,7 +128,8 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     const verdict = policy ? judgeScoreTime(atMs, policy) : null;
     if (verdict?.retry) return { status: 503, body: { error: "scoring is paused" } };
     if (verdict) return { status: 422, body: { error: verdict.error, refused: verdict.refused } };
-    return { iso: new Date(atMs).toISOString() };
+    const resetAt = typeof policy?.resetAt === "string" ? policy.resetAt : "";
+    return { iso: new Date(atMs).toISOString(), resetAt };
   }
 
   async function score(req, res) {
@@ -139,8 +154,15 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
       return json(res, 400, { error: "body must be JSON" });
     }
     // The player id becomes a Redis field segment (`<player>:<challengeId>`).
-    const { player, target, solved, at } = data ?? {};
+    const { player, target, solved, at, login } = data ?? {};
     if (typeof player !== "string" || !PLAYER_ID_RE.test(player)) return json(res, 400, { error: "invalid player" });
+    // The login sync resolved `player` from. Optional on the wire for a caller
+    // that resolves no link (the acceptance and dev-stack seeds); sync always
+    // sends it, and with it the write lands only while that link still names
+    // the player.
+    if (login !== undefined && (typeof login !== "string" || !GITHUB_LOGIN.test(login))) {
+      return json(res, 400, { error: "invalid login" });
+    }
     if (typeof target !== "string" || !SEGMENT.test(target)) return json(res, 400, { error: "invalid target" });
     if (rubric && !rubric.targets.has(target)) return json(res, 400, { error: `unknown target: ${target}` });
     if (!Array.isArray(solved) || solved.some((s) => typeof s !== "string")) {
@@ -153,7 +175,23 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     );
     const solvedAt = await solveTime(at);
     if (solvedAt.status) return json(res, solvedAt.status, solvedAt.body);
-    await store.recordSolves(target, player, ids, solvedAt.iso);
+    // The reset check, the hold check, the link check and the write are one
+    // script: a score timed before the CURRENT reset epoch answers 422
+    // pre-reset (a reset that landed after the judge above read the
+    // settings), a delete or unlink in progress, a link that changed since
+    // sync resolved it, or an epoch that changed since the judge read it (or
+    // that the judge could not read) answers 503 (sync retries and judges
+    // again), a deleted player
+    // 422 (final, ADR 67). A store error throws to the 500 below, so sync
+    // retries and nothing is lost.
+    const written = await store.recordSolves(target, player, ids, solvedAt.iso, login ?? "", solvedAt.resetAt);
+    if (written === "pre-reset") {
+      return json(res, 422, { error: "the score predates the last master reset", refused: "pre-reset" });
+    }
+    if (written === "stale") return json(res, 503, { error: "the master reset changed while the score was judged" });
+    if (written === "pending") return json(res, 503, { error: "player scores on hold" });
+    if (written === "unlinked") return json(res, 503, { error: "the login no longer links to this player" });
+    if (written === "deleted") return json(res, 422, { error: "player deleted", refused: "player-deleted" });
     if (!rubric) seenTargets.add(target);
     res.writeHead(202).end();
   }
@@ -432,6 +470,10 @@ export async function serve(env = process.env, { log = console.error } = {}) {
   const token = env.CTF_SCORE_BEARER_TOKEN ?? env.SCORER_TOKEN;
   if (!token) throw new Error("refusing to start: set CTF_SCORE_BEARER_TOKEN or SCORER_TOKEN");
   const port = parsePort(env.PORT);
+  // Loaded here, not at module load: the rubric parser's YAML dependency is
+  // needed only by the process entry, so createHandler and judgeScoreTime
+  // import without the scorer's node_modules (the app's live suite does).
+  const { loadRubric } = await import("./rubric.js");
   const rubric = loadRubric(env.RUBRIC_DIR);
   const useRedis = Boolean(env.UPSTASH_REDIS_REST_URL);
   const store = useRedis ? createRedisStore({ log }) : createMemoryStore();

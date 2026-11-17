@@ -751,6 +751,9 @@ export const RESET_PREFIXES: readonly [string, string][] = [
   // Scores sync is holding for authors who have not linked yet belong to the
   // event being wiped. The link itself (`ctf:link:*`) is account data and stays.
   ["sdHeld", "ctf:sd:held:*"],
+  // Logins blocked from re-linking (a deleted player's) are blocked for this
+  // event only. The pattern must never match `ctf:link:*`.
+  ["relinkBlock", "ctf:relink:*"],
   ["hints", "ctf:hints:*"],
   ["quizAnswers", `${QUIZ_ANSWERS_PREFIX}*`],
   ["quizAttempts", `${QUIZ_ATTEMPTS_PREFIX}*`],
@@ -786,8 +789,9 @@ export const RESET_PREFIXES: readonly [string, string][] = [
 ];
 
 // SCAN (never KEYS — non-blocking) a prefix and DEL matches in batches until the
-// cursor wraps. Returns how many keys were removed.
-async function scanDelByPrefix(pattern: string): Promise<number> {
+// cursor wraps. Returns how many keys were removed. Exported for
+// deleteAllAccounts, which sweeps the account namespaces the same way.
+export async function scanDelByPrefix(pattern: string): Promise<number> {
   let cursor = "0";
   let total = 0;
   do {
@@ -828,14 +832,26 @@ redis.call('DEL', KEYS[3])
 redis.call('LPUSH', KEYS[2], ARGV[4])
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
 
+// The reset's first write, before its sweep: the freeze, the new `resetAt`
+// epoch and a `reset:start` audit line, in one atomic script, so the pause it
+// sets is never unaudited. Exported for the live suite only.
+// KEYS: [1]=settings [2]=audit
+// ARGV: [1]=actor [2]=at [3]=resetAt [4]=auditLine [5]=cap-1
+export const RESET_BEGIN_SCRIPT = `
+redis.call('HSET', KEYS[1], 'paused', '1', 'pausedSince', ARGV[2], 'resetAt', ARGV[3], 'updatedBy', ARGV[1], 'updatedAt', ARGV[2])
+redis.call('LPUSH', KEYS[2], ARGV[4])
+redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
+
 /**
  * Master reset: wipe all event data (solves, teams, users, join codes, hints),
  * freeze scoring, bump the sync reset epoch, and audit it. Keeps admin
  * settings. Server-only — callers gate on requireAdmin.
  *
  * Poll-mode note: freezing + the `resetAt` epoch (honoured by sync, which drops
- * its cursor) is what makes the wipe stick; a later unfreeze re-ingests from
- * live PR comments, so a post-event wipe also needs those comments gone.
+ * its cursor, and by the scorer's solve script, which refuses a score timed
+ * before it at write time) is what makes the wipe stick; a later unfreeze
+ * re-ingests from live PR comments, so a post-event wipe also needs those
+ * comments gone.
  */
 export async function resetEvent(actor: AuditActor): Promise<{ cleared: Record<string, number>; resetAt: string }> {
   const cleared: Record<string, number> = {};
@@ -849,11 +865,26 @@ export async function resetEvent(actor: AuditActor): Promise<{ cleared: Record<s
   // (`scanDelByPrefix` does not undo).
   await beginScoreLowering();
   try {
+    const now = Date.now();
+    const at = new Date(now).toISOString();
+    const resetAt = String(now);
+    // The epoch and the freeze land BEFORE the first solve is swept: the
+    // scorer's solve script reads `resetAt` in the same EVAL as its write and
+    // refuses a score timed before it, so a score judged before the reset and
+    // written after the sweep cannot bring a solve back. RESET_SCRIPT below
+    // writes the same values again with the relock, the pause-log reset and
+    // the closing audit line. A sweep that throws leaves the event frozen at
+    // the new epoch with only the `reset:start` line; re-running the reset
+    // finishes it.
+    const start = JSON.stringify({ at, by: actor.id, name: actor.name, action: "reset:start" });
+    await upstashEval(
+      RESET_BEGIN_SCRIPT,
+      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY],
+      [actor.name, at, resetAt, start, String(AUDIT_CAP - 1)],
+    );
     for (const [label, pattern] of RESET_PREFIXES) {
       cleared[label] = await scanDelByPrefix(pattern);
     }
-    const at = new Date().toISOString();
-    const resetAt = String(Date.now());
     const audit = JSON.stringify({ at, by: actor.id, name: actor.name, action: "reset", cleared });
     await upstashEval(
       RESET_SCRIPT,

@@ -148,7 +148,8 @@ Work down this list — each item is a different subsystem:
    before the launch or after the end **never counts**, not even after you
    unfreeze or set a start — the poller logs it as `refused (paused)` or
    `refused (outside-window)`. A score timed before the last master reset
-   never counts either, logged `refused (pre-reset)`. The contestant has to
+   never counts either, logged `refused (pre-reset)`. `refused
+   (player-deleted)` is a deleted contestant's PR: nothing to do. The contestant has to
    push again once scoring is live. One exception: a freeze set straight on
    the settings hash (`HSET … paused 1`, no recorded `pausedSince`) has an unknown start, so the
    scorer holds the scores it reads during it and judges them once the freeze
@@ -182,6 +183,17 @@ Work down this list — each item is a different subsystem:
    builds is this `held` count. The poller never logs the login. Sync also
    refuses to start without Redis
    (`ctf-sync: Secure Development needs Redis to attribute PRs to players`).
+   A tick that keeps logging `scorer 503` for one player's PRs, with the
+   event launched and not frozen, can mean a delete or a GitHub unlink of that player left its
+   token on `ctf:score-hold:<player id>` (the scorer's reply body is
+   `player scores on hold`, and the app log names the failed lift). For a delete, run it again. With no delete or unlink of the
+   player still running, `DEL ctf:score-hold:<player id>` releases their
+   scores, but only while the player's account still exists; a deleted
+   player's hold is what refuses their PRs. A `scorer 503` whose body reads
+   `the login no longer links to this player` is the link moving between
+   sync's lookup and the write (an unlink, a delete, delete all accounts);
+   the next tick looks the login up again and holds or scores the PR, so one
+   such line is not a fault.
 4. **Is the score comment authored by `github-actions[bot]`?** Only that
    author is trusted — a comment posted any other way (including by you) is
    dropped by design.
@@ -433,6 +445,32 @@ before the switch fails at the end. Switch it back on, or have the player use
 username and password. `SIGN_IN_SETTINGS_UNREADABLE` ("Sign-in options could
 not be loaded") means the switch could not be read from Redis; retry, and see
 [`/health/deep`](#the-monitor-says-healthdeep-is-503-but-the-site-loads-fine).
+
+## A player forgot their password
+
+**Symptom.** A player cannot sign in by username and has no other sign-in on
+the account.
+
+**Fix.** In `/admin`, open the Support tab, find the player and press **Reset
+password**, then **Issue reset code** to confirm. Hand the code over in person; the player enters it at `/reset`
+and chooses a new password. A code works once and expires after 15 minutes,
+and a new code voids the old one. If `/reset` says the code is invalid, it was
+used, expired, replaced, or its issuer lost admin access: issue another. See
+[Accounts](operations.md#accounts).
+
+## A GitHub login cannot be linked
+
+**Symptom.** A player's GitHub sign-in or link is refused, or their PRs stay
+held, although the GitHub account is theirs.
+
+**Cause and fix.** Deleting a contestant blocks their GitHub login from
+linking to any account until the next master reset, so a deleted player's
+scores cannot be claimed by a new account. If that login belongs to someone
+who should be playing, run the master reset (it clears the block along with
+the rest of the event's progress). Before the event that is fine; mid-event
+the player needs a different GitHub account. Unlinking a link
+that has not scored, from the Support tab, does not block the login. See
+[Accounts](operations.md#accounts).
 
 ## Still stuck
 

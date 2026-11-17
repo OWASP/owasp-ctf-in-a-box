@@ -13,6 +13,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { freshId, liveConfigured, liveKey } from "./live-redis";
 import { actor } from "./audit-actor";
+import { scorerSolveWrite } from "./scorer-solve-write";
 
 vi.mock("server-only", () => ({}));
 
@@ -278,6 +279,159 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
       await upstashPipeline([
         ["DEL", `ctf:link:github:${login}`, `ctf:link:user:${player}`],
         ["HDEL", "ctf:link:at", player],
+      ]);
+    }
+  });
+
+  // A score the scorer judged before a master reset and writes after the
+  // reset swept the solves: the solve script reads the CURRENT `resetAt` in
+  // the same EVAL as the write and refuses it, with or without a login, and
+  // nothing comes back.
+  it("a score judged before resetEvent and written after its sweep is refused pre-reset and writes nothing", async () => {
+    const { resetEvent } = await import("@/lib/admin-store");
+    const login = `pre${crypto.randomUUID().replace(/-/g, "")}`.slice(0, 30);
+    const player = crypto.randomUUID();
+    const target = `vtreset-${crypto.randomUUID().slice(0, 8)}`;
+    const seeded = await upstashPipeline([["SET", `ctf:link:github:${login}`, player]]);
+    expect(seeded.filter((r) => r.error)).toEqual([]);
+    try {
+      const judgedAt = new Date().toISOString();
+      expect(await scorerSolveWrite(target, player, judgedAt, "before", login)).toBe("ok");
+      await new Promise((r) => setTimeout(r, 5));
+      const { cleared, resetAt } = await resetEvent(actor("alice"));
+      expect(cleared.solves).toBeGreaterThanOrEqual(1);
+      expect(await settingsField("resetAt")).toBe(resetAt);
+      const [audit] = await upstashPipeline([["LRANGE", "ctf:admin:audit", 0, 1]]);
+      expect((audit.result as string[]).map((l) => JSON.parse(l).action)).toEqual(["reset", "reset:start"]);
+      // Judged against the settings before the reset, which had no epoch.
+      expect(await scorerSolveWrite(target, player, judgedAt, "late", login, "")).toBe("pre-reset");
+      expect(await scorerSolveWrite(target, player, judgedAt, "loginless", "", "")).toBe("pre-reset");
+      // A score timed past the new epoch but judged before the reset (a
+      // clock-skewed `at`) is judged again rather than written.
+      const skewed = new Date(Number(resetAt) + 60_000).toISOString();
+      expect(await scorerSolveWrite(target, player, skewed, "skewed", login, "")).toBe("stale");
+      const [solves] = await upstashPipeline([["EXISTS", `ctf:solves:${target}`]]);
+      expect(solves.result).toBe(0);
+      // A score timed after the epoch and judged against it still writes.
+      expect(await scorerSolveWrite(target, player, new Date(Number(resetAt) + 1).toISOString(), "after", login, resetAt)).toBe("ok");
+    } finally {
+      await upstashPipeline([["DEL", `ctf:link:github:${login}`, `ctf:solves:${target}`]]);
+    }
+  });
+
+  // The scorer's own POST /score (scorer/src/serve.js) over this Redis, for a
+  // score sent with neither `at` nor `login`: the master reset lands between
+  // the scorer's settings snapshot and its solve write, after the snapshot
+  // or after the solve time is taken. Either way nothing is written.
+  it("a score without at or login, with resetEvent between the scorer's snapshot and its write, writes nothing", async () => {
+    const { resetEvent } = await import("@/lib/admin-store");
+    const scorerSrc = (f: string) => new URL(`../../../../../scorer/src/${f}`, import.meta.url).href;
+    const { createHandler } = (await import(/* @vite-ignore */ scorerSrc("serve.js"))) as {
+      createHandler: (o: object) => (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void;
+    };
+    const { createRedisStore } = (await import(/* @vite-ignore */ scorerSrc("store.js"))) as {
+      createRedisStore: () => Record<string, (...a: unknown[]) => Promise<unknown>>;
+    };
+    const { createServer } = await import("node:http");
+    const target = `vtreset-${crypto.randomUUID().slice(0, 8)}`;
+    const player = crypto.randomUUID();
+    const post = async (store: Record<string, (...a: unknown[]) => Promise<unknown>>) => {
+      const server = createServer(createHandler({ store, token: "t" }));
+      await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+      try {
+        const { port } = server.address() as { port: number };
+        const res = await fetch(`http://127.0.0.1:${port}/score`, {
+          method: "POST",
+          headers: { authorization: "Bearer t", "content-type": "application/json" },
+          body: JSON.stringify({ player, target, solved: ["c1"] }),
+        });
+        return { status: res.status, body: (await res.json()) as unknown };
+      } finally {
+        server.close();
+      }
+    };
+    const launch = () => upstashPipeline([["HSET", "ctf:admin:settings", "scoringStartsAt", "2000-01-01T00:00:00.000Z", "paused", "0"]]);
+    try {
+      // The reset right after the scorer's first settings read, whichever
+      // read that is: the solve time is taken after it, so it is not before
+      // the new epoch, and a second read would see the new epoch without the
+      // freeze. One snapshot carries the old epoch, which the write refuses.
+      await launch();
+      const afterSnapshot = createRedisStore();
+      let resetDone = false;
+      for (const name of ["isPaused", "readScoringPolicy"]) {
+        const read = afterSnapshot[name];
+        afterSnapshot[name] = async (...args: unknown[]) => {
+          const value = await read(...args);
+          if (!resetDone) {
+            resetDone = true;
+            await resetEvent(actor("alice"));
+          }
+          return value;
+        };
+      }
+      expect(await post(afterSnapshot)).toEqual({ status: 503, body: { error: "the master reset changed while the score was judged" } });
+      expect(resetDone).toBe(true);
+
+      // The reset right before the write: the solve time predates the epoch.
+      await launch();
+      const beforeWrite = createRedisStore();
+      const write = beforeWrite.recordSolves;
+      beforeWrite.recordSolves = async (...args: unknown[]) => {
+        await new Promise((r) => setTimeout(r, 5));
+        await resetEvent(actor("alice"));
+        return write(...args);
+      };
+      expect(await post(beforeWrite)).toEqual({
+        status: 422,
+        body: { error: "the score predates the last master reset", refused: "pre-reset" },
+      });
+      const [solves] = await upstashPipeline([["EXISTS", `ctf:solves:${target}`]]);
+      expect(solves.result).toBe(0);
+
+      // Unlaunched by the reset: a plain request is the legacy 503.
+      expect(await post(createRedisStore())).toEqual({ status: 503, body: { error: "scoring is paused" } });
+    } finally {
+      await upstashPipeline([["DEL", `ctf:solves:${target}`]]);
+    }
+  });
+
+  it("the solve script compares a non-numeric resetAt with the value the score was judged against", async () => {
+    const target = `vtreset-${crypto.randomUUID().slice(0, 8)}`;
+    const player = crypto.randomUUID();
+    await upstashPipeline([["HSET", "ctf:admin:settings", "resetAt", "2026-01-01T00:00:00Z"]]);
+    try {
+      const at = new Date().toISOString();
+      expect(await scorerSolveWrite(target, player, at, "a", "", "2025-01-01T00:00:00Z")).toBe("stale");
+      expect(await scorerSolveWrite(target, player, at, "a", "", "")).toBe("stale");
+      expect(await scorerSolveWrite(target, player, at, "a", "", "2026-01-01T00:00:00Z")).toBe("ok");
+    } finally {
+      await upstashPipeline([["DEL", `ctf:solves:${target}`]]);
+    }
+  });
+
+  it("resetEvent wipes the re-link blocklist, so a blocked login links again", async () => {
+    const { resetEvent } = await import("@/lib/admin-store");
+    const { recordGithubSignIn, releaseGithubLink, RELINK_BLOCK_KEY } = await import("@/lib/github-link");
+    const login = `blk${crypto.randomUUID().replace(/-/g, "")}`.slice(0, 30);
+    const first = crypto.randomUUID();
+    const second = crypto.randomUUID();
+    try {
+      expect(await recordGithubSignIn(first, login)).toBe("linked");
+      expect(await releaseGithubLink(first, { block: true })).toBe(login);
+      expect(await recordGithubSignIn(second, login)).toBe("blocked");
+      const [held] = await upstashPipeline([["GET", `ctf:link:github:${login}`]]);
+      expect(held.result).toBeNull();
+      const { cleared } = await resetEvent(actor("alice"));
+      expect(cleared.relinkBlock).toBe(1);
+      const [member] = await upstashPipeline([["SISMEMBER", RELINK_BLOCK_KEY, login]]);
+      expect(member.result).toBe(0);
+      expect(await recordGithubSignIn(second, login)).toBe("linked");
+    } finally {
+      await upstashPipeline([
+        ["DEL", `ctf:link:github:${login}`, `ctf:link:user:${first}`, `ctf:link:user:${second}`],
+        ["HDEL", "ctf:link:at", first, second],
+        ["SREM", "ctf:relink:blocked", login],
       ]);
     }
   });

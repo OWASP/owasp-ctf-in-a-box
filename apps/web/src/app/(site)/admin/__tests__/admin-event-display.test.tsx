@@ -46,6 +46,7 @@ const props = (s: AdminSettings): AdminEventTabProps => ({
   doReset: noop,
   doSeed: noop,
   doClearDemo: noop,
+  doDeleteAllAccounts: noop,
   teamMaxMembersInput: "",
   setTeamMaxMembersInput: () => {},
   commitNumber: (async () => true) as unknown as AdminEventTabProps["commitNumber"],
@@ -79,5 +80,13 @@ describe("AdminEventTab — master reset copy", () => {
     const html = renderToStaticMarkup(<AdminEventTab {...props(settings)} />);
     expect(html).toMatch(/scored again after the reset/i);
     expect(html).not.toMatch(/come back when you unfreeze/i);
+  });
+});
+
+describe("AdminEventTab — delete all accounts", () => {
+  it("offers the control beside the master reset", () => {
+    const html = renderToStaticMarkup(<AdminEventTab {...props(settings)} />);
+    expect(html).toContain("Delete all accounts…");
+    expect(html).toContain("Reset event data…");
   });
 });

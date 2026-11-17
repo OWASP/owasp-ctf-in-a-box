@@ -26,7 +26,7 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
   };
 });
 
-import { resetEvent } from "@/lib/admin-store";
+import { RESET_BEGIN_SCRIPT, RESET_SCRIPT, resetEvent } from "@/lib/admin-store";
 import { ALICE, actor } from "./audit-actor";
 
 beforeEach(() => {
@@ -56,6 +56,9 @@ function pipelineImpl(scanKeys: (pattern: string) => string[][]) {
   };
 }
 
+/** The final freeze + audit eval's [script, keys, args]. */
+const finalEval = () => mocks.upstashEval.mock.calls.find((c) => c[0] === RESET_SCRIPT)!;
+
 describe("resetEvent", () => {
   // #553 review: the wipe lowers every score, and the hint gate reads gross
   // from the fold memo (~10 s). Without this a reset contestant could buy a
@@ -79,7 +82,7 @@ describe("resetEvent", () => {
 
   it("still closes the bracket when the freeze/audit eval throws — the prefix deletes already stand", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    mocks.upstashEval.mockRejectedValue(new Error("down"));
+    mocks.upstashEval.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error("down"));
     await expect(resetEvent(actor("alice"))).rejects.toThrow("down");
     expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
   });
@@ -108,6 +111,7 @@ describe("resetEvent", () => {
       users: 2,
       joinCodes: 2,
       sdHeld: 2,
+      relinkBlock: 2,
       hints: 2,
       quizAnswers: 2,
       quizAttempts: 2,
@@ -128,10 +132,10 @@ describe("resetEvent", () => {
     });
     expect(out.resetAt).toMatch(/^\d+$/);
 
-    // one SCAN + one DEL per prefix (22 prefixes) = 44 pipeline calls
+    // one SCAN + one DEL per prefix (23 prefixes) = 46 pipeline calls
     const verbs = mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0]);
-    expect(verbs.filter((v) => v === "SCAN").length).toBe(22);
-    expect(verbs.filter((v) => v === "DEL").length).toBe(22);
+    expect(verbs.filter((v) => v === "SCAN").length).toBe(23);
+    expect(verbs.filter((v) => v === "DEL").length).toBe(23);
     // every wiped prefix, and NOT settings/audit/sync
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
@@ -142,6 +146,7 @@ describe("resetEvent", () => {
       "ctf:user:*",
       "ctf:joincode:*",
       "ctf:sd:held:*",
+      "ctf:relink:*",
       "ctf:hints:*",
       "ctf:quiz:answers:*",
       "ctf:quiz:attempts:*",
@@ -162,8 +167,8 @@ describe("resetEvent", () => {
     ]);
 
     // the freeze + audit eval: settings + audit keys, and a reset audit line
-    expect(mocks.upstashEval).toHaveBeenCalledTimes(1);
-    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+    expect(mocks.upstashEval.mock.calls.map((c) => c[0])).toEqual([RESET_BEGIN_SCRIPT, RESET_SCRIPT]);
+    const [script, keys, args] = finalEval();
     expect(script).toContain("'paused', '1'");
     expect(keys).toEqual(["ctf:admin:settings", "ctf:admin:audit", "ctf:admin:pauses"]);
     expect(args[0]).toBe("alice"); // updatedBy: the actor's name
@@ -171,12 +176,44 @@ describe("resetEvent", () => {
     expect(auditLine).toMatchObject({ by: ALICE.id, name: "alice", action: "reset", cleared: { solves: 2, teams: 2 } });
   });
 
+  // The scorer's solve script refuses a score timed before the CURRENT
+  // `resetAt`, read in the same EVAL as its write. The epoch therefore lands
+  // before any solve is swept, or a score judged before the reset could be
+  // written after the sweep and survive it.
+  it("writes the reset epoch, the freeze and a start audit line before the first SCAN, and the same epoch in the final eval", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
+    const out = await resetEvent(actor("alice"));
+    const begin = mocks.upstashEval.mock.calls.findIndex((c) => c[0] === RESET_BEGIN_SCRIPT);
+    expect(begin).toBe(0);
+    const firstScan = mocks.upstashPipeline.mock.calls.findIndex((c) => c[0][0][0] === "SCAN");
+    expect(mocks.upstashEval.mock.invocationCallOrder[begin]).toBeLessThan(mocks.upstashPipeline.mock.invocationCallOrder[firstScan]);
+    const [script, keys, args] = mocks.upstashEval.mock.calls[begin];
+    expect(keys).toEqual(["ctf:admin:settings", "ctf:admin:audit"]);
+    expect(script).toContain("'paused', '1', 'pausedSince', ARGV[2], 'resetAt', ARGV[3]");
+    expect(script).toContain("redis.call('LPUSH', KEYS[2], ARGV[4])");
+    expect(args[0]).toBe("alice");
+    expect(args[2]).toBe(out.resetAt);
+    expect(JSON.parse(String(args[3]))).toMatchObject({ by: ALICE.id, name: "alice", action: "reset:start", at: args[1] });
+    const [, , finalArgs] = finalEval();
+    expect(finalArgs[1]).toBe(args[1]);
+    expect(finalArgs[2]).toBe(out.resetAt);
+  });
+
+  it("deletes nothing when the epoch write fails", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
+    mocks.upstashEval.mockRejectedValueOnce(new Error("READONLY"));
+    await expect(resetEvent(actor("alice"))).rejects.toThrow("READONLY");
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+    expect(mocks.upstashEval).toHaveBeenCalledTimes(1);
+    expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
+  });
+
   // #464: a master reset returns the event to NOT LAUNCHED — the scoring
   // start is cleared in the same atomic script that freezes and audits.
   it("relocks the event: clears scoringStartsAt in the same eval", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [[]]));
     await resetEvent(actor("alice"));
-    const [script] = mocks.upstashEval.mock.calls[0];
+    const [script] = finalEval();
     expect(script).toMatch(/redis\.call\('HDEL', KEYS\[1\], 'scoringStartsAt'\)/);
   });
 
@@ -185,7 +222,7 @@ describe("resetEvent", () => {
   it("clears the pause log and opens the reset's own freeze in the same eval", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [[]]));
     await resetEvent(actor("alice"));
-    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
+    const [script, keys, args] = finalEval();
     expect(keys[2]).toBe("ctf:admin:pauses");
     expect(script).toMatch(/redis\.call\('DEL', KEYS\[3\]\)/);
     expect(script).toContain("'pausedSince', ARGV[2]");

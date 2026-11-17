@@ -26,6 +26,7 @@ import { DEFAULT_EVENT_TIME_ZONE, instantToWall, resolveTimeZone, wallToInstant,
 import AdminEventControls from "@/components/admin-event-controls";
 import AdminNumberField, { FieldStatusLine, type FieldStatus } from "@/components/admin-number-field";
 import AdminSwitch from "@/components/admin-switch";
+import { deleteAllAccountsConfirm } from "./admin-danger-actions";
 import { FREEZE_HELP, freezeConfirm } from "./freeze-copy";
 import { IdentityField } from "./admin-module-identity";
 import AdminEventImages from "./admin-event-images";
@@ -212,6 +213,7 @@ export type AdminEventTabProps = {
   doReset: (confirmValue: string) => Promise<void>;
   doSeed: () => Promise<void>;
   doClearDemo: () => Promise<void>;
+  doDeleteAllAccounts: (confirmValue: string) => Promise<void>;
   teamMaxMembersInput: string;
   setTeamMaxMembersInput: (v: string) => void;
   commitNumber: CommitNumber;
@@ -245,6 +247,7 @@ export default function AdminEventTab({
   doReset,
   doSeed,
   doClearDemo,
+  doDeleteAllAccounts,
   teamMaxMembersInput,
   setTeamMaxMembersInput,
   commitNumber,
@@ -766,6 +769,29 @@ export default function AdminEventTab({
             Reset event data…
           </button>
           {resetInfo && <p className="text-sm text-[#22c55e]">{resetInfo}</p>}
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <div>
+            <span className="text-white">Delete all accounts</span>
+            <span className="block text-sm text-muted">
+              Removes every account, <strong>including yours</strong>, every admin
+              grant and all progress. Authored content and settings stay. This
+              panel is closed afterwards until someone claims it with a new claim
+              code.
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              const c = deleteAllAccountsConfirm();
+              setConfirm({ ...c, onConfirm: () => doDeleteAllAccounts(c.requireType) });
+            }}
+            className="self-start rounded-md border border-[#e53e3e]/40 px-3 py-1.5 text-sm font-medium text-[#e53e3e] hover:bg-[#e53e3e]/10 disabled:opacity-50"
+          >
+            Delete all accounts…
+          </button>
         </div>
       </div>
     </section>

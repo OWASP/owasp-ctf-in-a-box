@@ -400,6 +400,51 @@ test("a final refusal (422) is marked seen, logged with its reason, and not coun
   assert.equal(posts.length, 1, "a refused revision is never re-presented");
 });
 
+test("a deleted player's score (422 player-deleted) is logged with its reason, seen, not dropped, not retried", async () => {
+  const posts = [];
+  const f = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/issues/comments")) return new Response(JSON.stringify([ghComment(23)]), { status: 200, headers: { etag: 'W/"r"' } });
+    if (u.endsWith("/score")) {
+      posts.push(JSON.parse(opts.body));
+      return new Response(JSON.stringify({ error: "player deleted", refused: "player-deleted" }), { status: 422 });
+    }
+    throw new Error(`unexpected url ${u}`);
+  };
+  const state = { repos: {} };
+  const logs = [];
+  await tick(CFG, state, { fetchImpl: f, log: (m) => logs.push(m) });
+  assert.equal(state.dropped, 0);
+  assert.equal(state.lastDrop, undefined);
+  assert.ok(logs.some((l) => /DVWA#7: refused \(player-deleted\), not scored/.test(l)), logs.join("\n"));
+  assert.equal(state.repos.DVWA.seen.includes(seenKey(23, "2026-08-13T11:00:00Z")), true);
+  await tick(CFG, state, { fetchImpl: f, log: () => {} });
+  assert.equal(posts.length, 1, "a refused revision is never re-presented");
+});
+
+test("a 503 (player scores on hold) is retried next tick and not marked seen", async () => {
+  const posts = [];
+  let n = 0;
+  const f = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/issues/comments")) return new Response(JSON.stringify([ghComment(23)]), { status: 200, headers: { etag: 'W/"r"' } });
+    if (u.endsWith("/score")) {
+      posts.push(JSON.parse(opts.body));
+      return ++n === 1
+        ? new Response(JSON.stringify({ error: "player scores on hold" }), { status: 503 })
+        : new Response(null, { status: 202 });
+    }
+    throw new Error(`unexpected url ${u}`);
+  };
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {} });
+  assert.equal(state.dropped, 0);
+  assert.deepEqual(state.repos.DVWA.seen, []);
+  await tick(CFG, state, { fetchImpl: f, log: () => {} });
+  assert.equal(posts.length, 2, "re-presented on the next tick");
+  assert.equal(state.repos.DVWA.seen.includes(seenKey(23, "2026-08-13T11:00:00Z")), true);
+});
+
 // #742: a score is attributed to the player who claimed the PR author's GitHub
 // login (`ctf:link:github:<lowercased login>`), never to the login itself.
 test("a mixed-case author resolves through the lowercased link key", async () => {
@@ -411,7 +456,10 @@ test("a mixed-case author resolves through the lowercased link key", async () =>
   await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis });
   assert.equal(posts.length, 1);
   assert.equal(posts[0].player, LINKS.octocat);
-  assert.equal("author" in posts[0], false, "the login is not sent to the scorer");
+  assert.equal("author" in posts[0], false, "the score is keyed by the player, never the author");
+  // The login the player was resolved through, lowercased as the link key
+  // is: the scorer writes only while that link still names the player.
+  assert.equal(posts[0].login, "octocat");
 });
 
 test("an unlinked author's score is held, not dropped, without naming the login or comment id", async () => {

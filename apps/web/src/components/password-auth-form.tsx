@@ -6,13 +6,13 @@
 // an OAuth one.
 
 import { PROVIDER_DISABLED_COPY, SIGN_IN_SETTINGS_UNREADABLE_COPY } from "@/lib/sign-in-error-copy";
+import Link from "next/link";
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { oauthErrorCallbackURL, postSigninCallbackURL } from "@/lib/post-signin";
 import { PROVIDER_LABEL, type SignInProviderId } from "@/lib/sign-in-providers";
-import { usernameProblem } from "@/lib/username-rules";
+import { USERNAME_COPY, usernameProblem } from "@/lib/username-rules";
 
-const USERNAME_COPY = "Usernames are 3 to 30 letters, digits, dots or underscores.";
 export const PASSWORD_COPY = "Passwords are 12 to 128 characters.";
 export const GENERIC_COPY = "Something went wrong. Try again.";
 
@@ -187,6 +187,9 @@ export default function PasswordAuthForm({ next, providers }: { next: string; pr
         <button type="submit" disabled={pending} className={`${SUBMIT} self-start`}>
           {creating ? "Create account" : "Sign in"}
         </button>
+        <Link href="/reset" className="self-start text-xs text-zinc-400 underline-offset-4 hover:text-white hover:underline">
+          Have a reset code from an organizer?
+        </Link>
       </form>
 
       {providers.length > 0 && (

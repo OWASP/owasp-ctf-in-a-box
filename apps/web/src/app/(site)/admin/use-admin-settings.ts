@@ -140,10 +140,10 @@ export function useAdminSettingsDrafts({
     }
   };
 
-  // The three Danger zone writes — seed/clear carry no DEMO_MODE gate
+  // The four Danger zone writes — seed/clear carry no DEMO_MODE gate
   // (ADR 58); each reports through `error`/`resetInfo` here rather than
   // beside a field. See admin-danger-actions.ts for the fetches themselves.
-  const { doReset, doSeed, doClearDemo } = createDangerActions({
+  const { doReset, doSeed, doClearDemo, doDeleteAllAccounts } = createDangerActions({
     setError,
     setResetInfo,
     setSettings,
@@ -271,6 +271,7 @@ export function useAdminSettingsDrafts({
     doReset,
     doSeed,
     doClearDemo,
+    doDeleteAllAccounts,
     apply,
     applyField,
     commitNumber,

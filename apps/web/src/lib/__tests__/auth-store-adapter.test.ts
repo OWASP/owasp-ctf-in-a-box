@@ -16,6 +16,7 @@ vi.mock("@/lib/upstash", () => ({ upstashPipeline: (cmds: unknown) => pipeline(c
 
 const { redisAdapter } = await import("@/lib/auth-store/redis-adapter");
 const { DEL_ROW_SCRIPT, PUT_ROW_SCRIPT } = await import("@/lib/auth-store/scripts");
+const { withWriteFence } = await import("@/lib/auth-store/write-fence");
 
 type Cmd = (string | number)[];
 
@@ -111,6 +112,34 @@ describe("redisAdapter (mocked pipeline)", () => {
     await adapter.update({ model: "account", where: [w("id", "a1")], update: { accessToken: "gho_y" } });
     expect(JSON.parse(evalArgs()[4]).accessToken).toBeNull();
     expect(JSON.stringify(sent())).not.toMatch(/gho_y/);
+  });
+
+  it("hands a create and an update made inside a write fence the fence, and leaves a delete unfenced", async () => {
+    const account = { id: "a1", userId: "u", providerId: "credential", accountId: "u", password: "old" };
+    fakeRedis({ a1: JSON.stringify(account) });
+    const fence = { key: "fence:key", member: "tok" };
+    await withWriteFence(fence, () => adapter.update({ model: "account", where: [w("id", "a1")], update: { password: "new" } }));
+    expect(evalArgs().slice(7)).toEqual(["", "0", "fence:key", "tok"]);
+    await withWriteFence(fence, () => adapter.create({ model: "verification", data: { identifier: "i", value: "v", expiresAt: new Date() } }));
+    expect(evalArgs().slice(7)).toEqual(["", "0", "fence:key", "tok"]);
+    await withWriteFence(fence, () => adapter.delete({ model: "account", where: [w("id", "a1")] }));
+    const del = sent().filter((c) => c[0] === "EVAL").pop()!;
+    expect(del[1]).toBe(DEL_ROW_SCRIPT);
+    expect(JSON.stringify(del)).not.toContain("fence:key");
+    // Outside the fence nothing extra is sent.
+    await adapter.update({ model: "account", where: [w("id", "a1")], update: { password: "new" } });
+    expect(evalArgs()).toHaveLength(7);
+  });
+
+  it("throws, without retrying, when the fence is gone", async () => {
+    const account = { id: "a1", userId: "u", providerId: "credential", accountId: "u", password: "old" };
+    fakeRedis({ a1: JSON.stringify(account) }, [3]);
+    await expect(
+      withWriteFence({ key: "fence:key", member: "tok" }, () =>
+        adapter.update({ model: "account", where: [w("id", "a1")], update: { password: "new" } }),
+      ),
+    ).rejects.toThrow(/auth store: update account failed: write fence gone/);
+    expect(sent().filter((c) => c[0] === "EVAL")).toHaveLength(1);
   });
 
   it("uses the token index for a session lookup and HGETALL for an unindexed one", async () => {

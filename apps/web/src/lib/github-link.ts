@@ -66,18 +66,24 @@ return 'linked'
  * KEYS[1] reverse pointer, KEYS[2] link-time hash, KEYS[3] re-link blocklist;
  * ARGV[1] player id, ARGV[2] login-key prefix, ARGV[3] "1" to block the login.
  * Returns the released (lowercased) login, or nil when the player has no link.
- * The login key is deleted only while it still names this player, so a stale
- * pointer can never release someone else's link; the pointer and the link time
- * go either way. Sync resolves a released login to nobody and holds its scores.
+ * The login key is derived inside the script from KEYS[1]'s value, as
+ * LINK_SCRIPT does for the old login: reading the pointer outside the script
+ * and passing the key in would race a concurrent re-link. The login key is
+ * deleted, and the login blocked, only while that key names this player or is
+ * absent, so a stale pointer can never release or block a login another player
+ * now holds; the pointer and the link time go either way. Sync resolves a
+ * released login to nobody and holds its scores.
  */
 export const RELEASE_LINK_SCRIPT = `
 local login = redis.call('GET', KEYS[1])
 if not login then return false end
 local key = ARGV[2] .. login
-if redis.call('GET', key) == ARGV[1] then redis.call('DEL', key) end
+local holder = redis.call('GET', key)
+local ours = holder == ARGV[1]
+if ours then redis.call('DEL', key) end
 redis.call('DEL', KEYS[1])
 redis.call('HDEL', KEYS[2], ARGV[1])
-if ARGV[3] == '1' then redis.call('SADD', KEYS[3], login) end
+if ARGV[3] == '1' and (ours or not holder) then redis.call('SADD', KEYS[3], login) end
 return login
 `;
 

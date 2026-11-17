@@ -168,6 +168,26 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
     expect(await t.read("u3")).toBeNull();
   });
 
+  it("a blocked release through a stale pointer does not block a login another player holds", async () => {
+    const t = fresh();
+    await t.record("u1", "octocat");
+    await t.setPointer("u3", "octocat");
+    expect(await t.release("u3", true)).toBe("octocat");
+    expect(await t.isBlocked("octocat")).toBe(false);
+    expect(await t.resolve("octocat")).toBe("u1");
+    expect(await t.read("u3")).toBeNull();
+    // u1 keeps signing in as before.
+    expect(await t.record("u1", "octocat")).toBe("unchanged");
+  });
+
+  it("a blocked release through a pointer whose login nobody holds blocks it", async () => {
+    const t = fresh();
+    await t.setPointer("u3", "octocat");
+    expect(await t.release("u3", true)).toBe("octocat");
+    expect(await t.isBlocked("octocat")).toBe(true);
+    expect(await t.record("u4", "octocat")).toBe("blocked");
+  });
+
   it("a release with no link returns null and blocks nothing", async () => {
     const t = fresh();
     expect(await t.release("u1", true)).toBeNull();

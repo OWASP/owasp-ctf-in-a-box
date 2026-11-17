@@ -391,6 +391,9 @@ describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("deleteAllAcc
   // The reset inside freezes scoring and relocks the event in the real
   // settings hash and drops the real pause log; both are put back as they
   // were, or every later hint and grade suite on this Redis reads a frozen box.
+  // Set only once both snapshot reads succeeded: without it the cleanup
+  // leaves both keys alone rather than delete them with nothing to put back.
+  let snapshotted = false;
   let settings: string[] = [];
   let pauses: string[] = [];
 
@@ -399,9 +402,13 @@ describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("deleteAllAcc
     await pipeline([
       ["LREM", "ctf:admin:audit", 0, sentinel],
       ["SREM", "ctf:admin:claim:spent", spentHash],
-      ["DEL", "ctf:admin:settings", "ctf:admin:pauses"],
-      ...(settings.length ? [["HSET", "ctf:admin:settings", ...settings]] : []),
-      ...(pauses.length ? [["RPUSH", "ctf:admin:pauses", ...pauses]] : []),
+      ...(snapshotted
+        ? [
+            ["DEL", "ctf:admin:settings", "ctf:admin:pauses"],
+            ...(settings.length ? [["HSET", "ctf:admin:settings", ...settings]] : []),
+            ...(pauses.length ? [["RPUSH", "ctf:admin:pauses", ...pauses]] : []),
+          ]
+        : []),
     ]);
   });
 
@@ -428,8 +435,12 @@ describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("deleteAllAcc
       ["HGETALL", "ctf:admin:settings"],
       ["LRANGE", "ctf:admin:pauses", 0, -1],
     ]);
+    if (snapSettings.error || snapPauses.error) {
+      throw new Error(`settings snapshot failed: ${snapSettings.error ?? snapPauses.error}`);
+    }
     settings = (snapSettings.result as string[] | null) ?? [];
     pauses = (snapPauses.result as string[] | null) ?? [];
+    snapshotted = true;
 
     const ids: string[] = [];
     for (const n of [1, 2]) {

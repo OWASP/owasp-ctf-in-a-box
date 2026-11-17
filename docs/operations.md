@@ -1211,8 +1211,12 @@ and all progress; it keeps the settings, your authored content and the audit
 log. `/admin` is then closed until someone claims it with a fresh claim code
 at `/admin/claim`, so **rotate the claim code first** (`ctf-setup.sh
 admin-code`, or `deploy.sh --new-admin-code` on Fly and AWS) and keep the new
-code to hand. Run it with registration closed, or a player can sign up
-between the wipe and the claim.
+code to hand. When it finishes you are signed out and sent to sign in: create
+a new account, then claim at `/admin/claim`. Players who sign up between the wipe
+and the claim keep their accounts, and only the claim code opens `/admin`.
+If delete all accounts fails part way, run it again: it finishes the sweep.
+If `/admin` is already closed by then, claim it with a rotated code and run
+it again from there.
 
 ## Sponsors
 

@@ -301,6 +301,8 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
       const { cleared, resetAt } = await resetEvent(actor("alice"));
       expect(cleared.solves).toBeGreaterThanOrEqual(1);
       expect(await settingsField("resetAt")).toBe(resetAt);
+      const [audit] = await upstashPipeline([["LRANGE", "ctf:admin:audit", 0, 1]]);
+      expect((audit.result as string[]).map((l) => JSON.parse(l).action)).toEqual(["reset", "reset:start"]);
       expect(await scorerSolveWrite(target, player, judgedAt, "late", login)).toBe("pre-reset");
       expect(await scorerSolveWrite(target, player, judgedAt, "loginless")).toBe("pre-reset");
       const [solves] = await upstashPipeline([["EXISTS", `ctf:solves:${target}`]]);

@@ -832,6 +832,16 @@ redis.call('DEL', KEYS[3])
 redis.call('LPUSH', KEYS[2], ARGV[4])
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
 
+// The reset's first write, before its sweep: the freeze, the new `resetAt`
+// epoch and a `reset:start` audit line, in one atomic script, so the pause it
+// sets is never unaudited. Exported for the live suite only.
+// KEYS: [1]=settings [2]=audit
+// ARGV: [1]=actor [2]=at [3]=resetAt [4]=auditLine [5]=cap-1
+export const RESET_BEGIN_SCRIPT = `
+redis.call('HSET', KEYS[1], 'paused', '1', 'pausedSince', ARGV[2], 'resetAt', ARGV[3], 'updatedBy', ARGV[1], 'updatedAt', ARGV[2])
+redis.call('LPUSH', KEYS[2], ARGV[4])
+redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
+
 /**
  * Master reset: wipe all event data (solves, teams, users, join codes, hints),
  * freeze scoring, bump the sync reset epoch, and audit it. Keeps admin
@@ -863,13 +873,14 @@ export async function resetEvent(actor: AuditActor): Promise<{ cleared: Record<s
     // refuses a score timed before it, so a score judged before the reset and
     // written after the sweep cannot bring a solve back. RESET_SCRIPT below
     // writes the same values again with the relock, the pause-log reset and
-    // the audit line. A sweep that throws leaves the event frozen at the new
-    // epoch with no audit line; re-running the reset finishes it.
-    assertPipelineOk(
-      await upstashPipeline([
-        ["HSET", ADMIN_SETTINGS_KEY, "paused", "1", "pausedSince", at, "resetAt", resetAt, "updatedBy", actor.name, "updatedAt", at],
-      ]),
-      "reset epoch",
+    // the closing audit line. A sweep that throws leaves the event frozen at
+    // the new epoch with only the `reset:start` line; re-running the reset
+    // finishes it.
+    const start = JSON.stringify({ at, by: actor.id, name: actor.name, action: "reset:start" });
+    await upstashEval(
+      RESET_BEGIN_SCRIPT,
+      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY],
+      [actor.name, at, resetAt, start, String(AUDIT_CAP - 1)],
     );
     for (const [label, pattern] of RESET_PREFIXES) {
       cleared[label] = await scanDelByPrefix(pattern);

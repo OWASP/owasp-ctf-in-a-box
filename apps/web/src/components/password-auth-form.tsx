@@ -1,13 +1,14 @@
 "use client";
 
 // The sign-in page's form: username + password sign-in, username + password
-// account creation, and the GitHub button. Success navigates (full load) to
+// account creation, and one button per enabled OAuth provider. Success navigates (full load) to
 // the post-signin step, so a password sign-in meets the same team steering as
 // an OAuth one.
 
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { oauthErrorCallbackURL, postSigninCallbackURL } from "@/lib/post-signin";
+import { PROVIDER_LABEL, type SignInProviderId } from "@/lib/sign-in-providers";
 import { usernameProblem } from "@/lib/username-rules";
 
 const USERNAME_COPY = "Usernames are 3 to 30 letters, digits, dots or underscores.";
@@ -48,6 +49,10 @@ function errorCopy(error: AuthError): string {
       return PASSWORD_COPY;
     case "INVALID_USERNAME_OR_PASSWORD":
       return "Wrong username or password.";
+    case "PROVIDER_DISABLED":
+      return "That sign-in option is not available.";
+    case "SIGN_IN_SETTINGS_UNREADABLE":
+      return "Sign-in options could not be loaded. Try again.";
     default:
       return GENERIC_COPY;
   }
@@ -58,7 +63,7 @@ const INPUT =
 const SUBMIT =
   "rounded-md bg-[#2563eb] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#1d4ed8] disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]";
 
-export default function PasswordAuthForm({ next }: { next: string }) {
+export default function PasswordAuthForm({ next, providers }: { next: string; providers: readonly SignInProviderId[] }) {
   const [mode, setMode] = useState<"sign-in" | "create">("sign-in");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -183,36 +188,42 @@ export default function PasswordAuthForm({ next }: { next: string }) {
         </button>
       </form>
 
-      <div className="flex flex-col gap-2 border-t border-white/10 pt-4">
-        <button
-          type="button"
-          onClick={() => {
-            setError(null);
-            // errorCallbackURL points a failed callback at the landing
-            // page's banner, carrying `next` so the retry keeps the
-            // destination.
-            void authClient.signIn
-              .social({
-                provider: "github",
-                callbackURL: postSigninCallbackURL(next),
-                errorCallbackURL: oauthErrorCallbackURL(next),
-              })
-              .then((result) => {
-                if (result?.error) {
-                  console.error("sign-in failed to start:", result.error);
-                  setError(errorCopy(result.error));
-                }
-              })
-              .catch((err) => {
-                console.error("sign-in failed to start:", err);
-                setError(GENERIC_COPY);
-              });
-          }}
-          className="self-start rounded-md border border-white/10 bg-white/[0.03] px-4 py-2 font-mono text-sm text-zinc-200 transition-colors hover:border-[#2563eb]/45 hover:text-white"
-        >
-          <span className="text-[#22c55e]">$</span> sign-in --github
-        </button>
-      </div>
+      {providers.length > 0 && (
+        <div data-provider-divider className="flex flex-col gap-2 border-t border-white/10 pt-4">
+          {providers.map((provider) => (
+            <button
+              key={provider}
+              type="button"
+              aria-label={`Sign in with ${PROVIDER_LABEL[provider]}`}
+              onClick={() => {
+                setError(null);
+                // errorCallbackURL points a failed callback at the landing
+                // page's banner, carrying `next` so the retry keeps the
+                // destination.
+                void authClient.signIn
+                  .social({
+                    provider,
+                    callbackURL: postSigninCallbackURL(next),
+                    errorCallbackURL: oauthErrorCallbackURL(next),
+                  })
+                  .then((result) => {
+                    if (result?.error) {
+                      console.error("sign-in failed to start:", result.error);
+                      setError(errorCopy(result.error));
+                    }
+                  })
+                  .catch((err) => {
+                    console.error("sign-in failed to start:", err);
+                    setError(GENERIC_COPY);
+                  });
+              }}
+              className="self-start rounded-md border border-white/10 bg-white/[0.03] px-4 py-2 font-mono text-sm text-zinc-200 transition-colors hover:border-[#2563eb]/45 hover:text-white"
+            >
+              <span className="text-[#22c55e]">$</span> sign-in --{provider}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

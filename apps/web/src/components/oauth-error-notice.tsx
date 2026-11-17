@@ -1,11 +1,12 @@
 "use client";
 
-// The landing page's GitHub OAuth callback error banner (issue #380).
+// The landing page's OAuth callback error banner (issue #380).
 //
-// GitHub redirects an authorize failure straight back to the app with
+// The provider (GitHub, Google or Discord) redirects an authorize failure
+// straight back to the app with
 // `?error=<code>&error_description=<text>` — a suspended/deleted OAuth app,
-// a contestant who cancelled the GitHub prompt, or a redirect URI GitHub
-// doesn't recognize. Before this, the landing page read neither parameter:
+// a contestant who cancelled the provider prompt, or a redirect URI the
+// provider doesn't recognize; so does a callback the sign-in switches refuse. Before this, the landing page read neither parameter:
 // the sign-in button looked like it simply did nothing.
 //
 // Reuses the mock-data/hint notice's amber `ds-card` look (server-only
@@ -26,14 +27,14 @@ import { oauthErrorCallbackURL, postSigninCallbackURL } from "@/lib/post-signin"
  *  and only once it has been checked against a strict allowlist shape. */
 const FRIENDLY_COPY: Record<string, string> = {
   application_suspended:
-    "This event's GitHub sign-in app has been suspended, so sign-in can't complete right now. Let an organizer know.",
+    "This event's sign-in app has been suspended, so sign-in can't complete right now. Let an organizer know.",
   access_denied:
-    "Sign-in was cancelled before GitHub confirmed your identity — nothing was created or changed.",
+    "Sign-in was cancelled before the provider confirmed your identity — nothing was created or changed.",
   redirect_uri_mismatch:
-    "GitHub's sign-in configuration doesn't match this site yet, so it refused the request. Let an organizer know.",
+    "The sign-in configuration doesn't match this site yet, so the provider refused the request. Let an organizer know.",
 };
 
-const GENERIC_MESSAGE = "GitHub sign-in did not complete.";
+const GENERIC_MESSAGE = "Sign-in did not complete.";
 
 /** GitHub's own OAuth error codes are short machine identifiers
  *  (`access_denied`, `server_error`, …): letters, digits, underscore, hyphen,

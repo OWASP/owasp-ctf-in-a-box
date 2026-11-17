@@ -1168,7 +1168,13 @@ The audit line is the exception: it is written after the action has landed,
 so a failed audit write does not undo or fail the action. The action reports
 success and the app logs `audit write failed` (`[admin-ops]` for the Support
 actions, `[password-reset]` for a redeemed code); the code issue writes its
-audit line in the same script as the code, so it has no such gap.
+audit line in the same script as the code, so it has no such gap. Lifting
+the score hold at the end of a GitHub unlink is the other exception: the
+unlink has landed by then, so a failed lift is logged (`[admin-ops] unlink
+<player id>: lifting its score hold failed`) and the unlink reports its own
+outcome. The player's Secure Development scores then wait (`scorer 503`)
+until the hold is removed by hand; see
+[Troubleshooting](troubleshooting.md#a-scored-pr-isnt-landing-on-the-leaderboard).
 
 **Reset code (a forgotten password).** Search the player in Support and press
 **Reset password**, then **Issue reset code** to confirm. The code appears once, in the same eight groups of four
@@ -1215,8 +1221,13 @@ a score sync attributed just before the release either landed before the
 hold (the check finds it and the unlink is refused) or is retried once the
 hold lifts. On the retry sync looks the login up again: after an unlink it is
 unlinked and the score is held; after a refused unlink the link is back
-exactly as it was and the score lands. A player deleted while the unlink runs
-gets no link back, and the login is blocked as the delete would have done.
+exactly as it was and the score lands. A score sync resolved before the
+unlink but sent only after it finished is retried too: sync sends the login it
+resolved, and the scorer writes only while that login still links to the
+player. A player deleted while the unlink runs gets no link back, and the
+login is blocked as the delete would have done. A refused unlink whose login
+was blocked meanwhile (another account linked it and was deleted) gets no
+link back either, and the login stays blocked until the next master reset.
 
 **Delete contestant.** Removes the account, its sessions, progress, team
 membership and held scores. A team captain is refused, and so is an
@@ -1228,7 +1239,9 @@ A Secure Development score for that player still in flight is refused, so it
 cannot restore their solves: the delete puts the player's scores on hold
 (`ctf:score-hold:<player id>`) before it clears anything, and the scorer
 answers a held score with a retryable `503` while the account exists and a
-final `422` (`player-deleted`) once it is gone. A delete that fails partway
+final `422` (`player-deleted`) once it is gone. The account goes first, so
+a delete that fails before the account is gone leaves the player's progress
+and held scores in place. A delete that fails partway
 lifts its hold on the player's scores; run it again to finish it. If that
 cleanup itself failed, the scores stay held until the delete is run again.
 

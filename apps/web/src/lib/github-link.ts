@@ -120,13 +120,17 @@ return {login, at, ours and '1' or '0'}
  * finished after the take) it recreates nothing and returns 'deleted': it
  * blocks the login, as the delete's own release would have, unless another
  * account linked it in between (then the login is that account's, as a
- * delete's release leaves a login another player holds).
+ * delete's release leaves a login another player holds). A login blocked
+ * meanwhile (another account linked it and was deleted) is refused with
+ * nothing written and returns 'blocked': the block holds until a master reset,
+ * against the player who last held the login too, as LINK_SCRIPT's does.
  */
 export const RESTORE_LINK_SCRIPT = `
 if redis.call('HEXISTS', KEYS[4], ARGV[1]) == 0 then
   if not redis.call('GET', KEYS[1]) then redis.call('SADD', KEYS[5], ARGV[2]) end
   return 'deleted'
 end
+if redis.call('SISMEMBER', KEYS[5], ARGV[2]) == 1 then return 'blocked' end
 if redis.call('EXISTS', KEYS[2]) == 1 then return 'relinked' end
 if ARGV[4] == '1' then
   local holder = redis.call('GET', KEYS[1])
@@ -153,11 +157,16 @@ export async function takeGithubLink(playerId: string, keys: LinkKeys = {}): Pro
   return { login: res[0], at: res[1], ours: res[2] === "1" };
 }
 
-/** Puts a taken link back. Resolves 'restored', or 'deleted' when the
- *  player's account row is gone (no link written, the login blocked). Throws
- *  on a Redis error, and when the link could not be restored as it was (the
- *  player re-linked, or the login is held). */
-export async function restoreGithubLink(playerId: string, taken: TakenLink, keys: LinkKeys = {}): Promise<"restored" | "deleted"> {
+/** Puts a taken link back. Resolves 'restored', 'deleted' when the player's
+ *  account row is gone (no link written, the login blocked), or 'blocked'
+ *  when the login was blocked meanwhile (no link written). Throws on a Redis
+ *  error, and when the link could not be restored as it was (the player
+ *  re-linked, or the login is held). */
+export async function restoreGithubLink(
+  playerId: string,
+  taken: TakenLink,
+  keys: LinkKeys = {},
+): Promise<"restored" | "deleted" | "blocked"> {
   const {
     prefix = LINK_GITHUB_PREFIX,
     userPrefix = LINK_USER_PREFIX,
@@ -170,7 +179,9 @@ export async function restoreGithubLink(playerId: string, taken: TakenLink, keys
     [`${prefix}${taken.login}`, `${userPrefix}${playerId}`, atKey, userRows, blockKey],
     [playerId, taken.login, taken.at, taken.ours ? "1" : "0"],
   );
-  if (res !== "restored" && res !== "deleted") throw new Error(`github link: restore refused (${String(res)})`);
+  if (res !== "restored" && res !== "deleted" && res !== "blocked") {
+    throw new Error(`github link: restore refused (${String(res)})`);
+  }
   return res;
 }
 
@@ -215,6 +226,19 @@ export async function releaseGithubLink(playerId: string, opts: { block: boolean
   if (res === null) return null;
   if (typeof res !== "string" || res === "") throw new Error("github link: unexpected release reply");
   return res;
+}
+
+/** Whether `login` (lowercased) is on the re-link blocklist with no player
+ *  linked to it: what a delete's release leaves. Throws on a command error. */
+export async function isReleasedAndBlocked(login: string): Promise<boolean> {
+  const lower = login.toLowerCase();
+  const [blocked, owner] = await upstashPipeline([
+    ["SISMEMBER", RELINK_BLOCK_KEY, lower],
+    ["GET", linkKey(lower)],
+  ]);
+  if (!blocked || blocked.error) throw new Error(`github link: SISMEMBER failed: ${blocked?.error ?? "no reply"}`);
+  if (!owner || owner.error) throw new Error(`github link: GET failed: ${owner?.error ?? "no reply"}`);
+  return Number(blocked.result) === 1 && owner.result === null;
 }
 
 /** The player id a GitHub login is linked to, or null. Throws on a command error. */

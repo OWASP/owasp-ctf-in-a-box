@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { freshId, liveConfigured, liveKey } from "./live-redis";
+import { RUN, freshId, liveConfigured, liveKey } from "./live-redis";
 
 vi.mock("server-only", () => ({}));
 
 import {
   getGithubLink,
+  isReleasedAndBlocked,
   recordGithubSignIn,
   releaseGithubLink,
   resolveGithubLogin,
@@ -283,6 +284,37 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
     expect(await t.linkedAt("u1")).toBeNull();
     expect(await t.isBlocked("octocat")).toBe(true);
     expect(await t.record("u2", "octocat")).toBe("blocked");
+  });
+
+  it("a restore refuses a login blocked meanwhile, writing nothing", async () => {
+    const t = fresh();
+    await t.accounts("u1", "u2");
+    await t.record("u1", "octocat");
+    const time = await t.linkedAt("u1");
+    const taken = await t.take("u1");
+    // Another account links the free login and is deleted: its release blocks it.
+    expect(await t.record("u2", "octocat")).toBe("linked");
+    expect(await t.release("u2", true)).toBe("octocat");
+    expect(await t.isBlocked("octocat")).toBe(true);
+    expect(await t.restore("u1", taken!)).toBe("blocked");
+    expect(await t.loginKeyExists("octocat")).toBe(false);
+    expect(await t.read("u1")).toBeNull();
+    expect(await t.linkedAt("u1")).toBeNull();
+    expect(time).not.toBeNull();
+    expect(await t.isBlocked("octocat")).toBe(true);
+  });
+
+  it("isReleasedAndBlocked is true only for a blocked login nobody links", async () => {
+    const login = `vrb${RUN}`.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 39);
+    try {
+      expect(await isReleasedAndBlocked(login)).toBe(false);
+      await upstashPipeline([["SADD", "ctf:relink:blocked", login]]);
+      expect(await isReleasedAndBlocked(login.toUpperCase())).toBe(true);
+      await upstashPipeline([["SET", `ctf:link:github:${login}`, "someone"]]);
+      expect(await isReleasedAndBlocked(login)).toBe(false);
+    } finally {
+      await upstashPipeline([["SREM", "ctf:relink:blocked", login], ["DEL", `ctf:link:github:${login}`]]);
+    }
   });
 
   it("a restore for a deleted player leaves a login another account linked meanwhile unblocked", async () => {

@@ -290,8 +290,29 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     const { ctx, pipeline, ops } = await load();
     const gh = `vt2${tag}`.slice(0, 39);
     const id = await makePlayer(gh);
-    await pipeline([["HSET", `ctf:user:${id}`, "firstTeamAt", at]]);
+    const classic = freshId("c");
+    const seeded = await pipeline([
+      ["HSET", `ctf:user:${id}`, "firstTeamAt", at],
+      ["HSET", `ctf:solves:${target}`, `${id}:banked`, at],
+      ["HSET", `ctf:classic:solves:${id}`, classic, JSON.stringify({ points: 10, at })],
+      ["HSET", "ctf:classic:points", id, 10],
+      ["HSET", "ctf:classic:solved", id, 1],
+      ["HSET", `ctf:sd:held:by:${gh}`, "owasp/x#2", "{}"],
+      ["SADD", "ctf:sd:held:authors", gh],
+    ]);
+    expect(seeded.filter((r) => r.error)).toEqual([]);
     const actor = { id: crypto.randomUUID(), name: "organizer" };
+    const banked = async () =>
+      (
+        await pipeline([
+          ["EXISTS", `ctf:user:${id}`],
+          ["HEXISTS", `ctf:solves:${target}`, `${id}:banked`],
+          ["HEXISTS", `ctf:classic:solves:${id}`, classic],
+          ["HGET", "ctf:classic:points", id],
+          ["EXISTS", `ctf:sd:held:by:${gh}`],
+          ["SISMEMBER", "ctf:sd:held:authors", gh],
+        ])
+      ).map((r) => r.result);
 
     const spy = vi.spyOn(ctx.internalAdapter, "deleteAccounts").mockRejectedValueOnce(new Error("auth store: down"));
     try {
@@ -299,14 +320,17 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     } finally {
       spy.mockRestore();
     }
-    // The event record and the link went before the failure; the account did
-    // not, so the delete's own hold token is gone and later scores write.
-    const [record, hold] = await pipeline([["EXISTS", `ctf:user:${id}`], ["EXISTS", `ctf:score-hold:${id}`]]);
-    expect(record.result).toBe(0);
+    // The account goes before any progress: with the account row still in
+    // place the record, the Secure Development and classic solves and the
+    // held scores are all still there, and the delete's own hold token is
+    // gone, so later scores write.
+    expect(await banked()).toEqual([1, 1, 1, "10", 1, 1]);
+    const [hold] = await pipeline([["EXISTS", `ctf:score-hold:${id}`]]);
     expect(hold.result).toBe(0);
     expect((await authState(id)).user).toMatchObject({ id });
 
     await expect(ops.deleteUser(id, actor)).resolves.toMatchObject({ leftTeam: null });
+    expect(await banked()).toEqual([0, 0, 0, null, 0, 0]);
     const [heldAfter] = await pipeline([["SMEMBERS", `ctf:score-hold:${id}`]]);
     expect(heldAfter.result).toEqual([expect.stringMatching(/^[0-9a-f-]{36}$/)]);
     expect(await authState(id)).toEqual({ user: null, accounts: 0, sessions: 0 });
@@ -437,7 +461,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
       // removal above leaves nothing for a later claim to race.
       const claim = await upstashEval(
         CLAIM_SCRIPT,
-        ["ctf:admin:grants", "ctf:admin:claim:spent", codeKey, "ctf:admin:audit", "ctf:admin:grant-gen", "ctf:auth:user"],
+        ["ctf:admin:grants", "ctf:admin:claim:spent", codeKey, "ctf:admin:audit", "ctf:admin:grant-gen", "ctf:auth:user", `ctf:admin:reset-code:busy:${id}`],
         [id, gh, boot, boot, new Date().toISOString(), 499],
       );
       expect(claim).toEqual(["invalid"]);
@@ -505,14 +529,36 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     expect((await ctx.internalAdapter.findAccounts(id)).map((a) => a.providerId)).toEqual(["credential"]);
   });
 
-  /** The scorer's own solve script (scorer/src/store.js), run against this
-   *  Redis with the keys the scorer hands it. */
-  async function scorerWrite(id: string, challenge: string): Promise<unknown> {
-    const storeUrl = new URL("../../../../../scorer/src/store.js", import.meta.url).href;
-    const { RECORD_SOLVES_SCRIPT } = (await import(/* @vite-ignore */ storeUrl)) as { RECORD_SOLVES_SCRIPT: string };
-    const { upstashEval } = await import("@/lib/upstash");
-    return upstashEval(RECORD_SOLVES_SCRIPT, [`ctf:solves:${target}`, `ctf:score-hold:${id}`, "ctf:auth:user"], [id, at, challenge]);
-  }
+  const scorerWrite = (id: string, challenge: string, login = "") => scorerSolveWrite(target, id, at, challenge, login);
+
+  it("unlinkGithub: a score resolved before the unlink and sent after it finished answers unlinked and writes nothing", async () => {
+    const { pipeline, ops } = await load();
+    const gh = `vh5${tag}`.slice(0, 39);
+    const id = await makePlayer(gh, `vh5${tag}`.slice(0, 20));
+    // Sync resolves the author's login to this player, then stalls.
+    const [resolved] = await pipeline([["GET", `ctf:link:github:${gh}`]]);
+    expect(resolved.result).toBe(id);
+    await expect(ops.unlinkGithub(id, { id: crypto.randomUUID(), name: "organizer" })).resolves.toEqual({ login: gh });
+    const [hold] = await pipeline([["EXISTS", `ctf:score-hold:${id}`]]);
+    expect(hold.result).toBe(0);
+    // The stalled score arrives with the hold gone: the link check refuses it.
+    expect(await scorerWrite(id, "late1", gh)).toBe("unlinked");
+    const [field] = await pipeline([["HEXISTS", `ctf:solves:${target}`, `${id}:late1`]]);
+    expect(field.result).toBe(0);
+  });
+
+  it("the scorer's write lands while the login it was resolved through still names the player", async () => {
+    const { pipeline } = await load();
+    const gh = `vh6${tag}`.slice(0, 39);
+    const id = await makePlayer(gh, `vh6${tag}`.slice(0, 20));
+    try {
+      expect(await scorerWrite(id, "live1", gh.toUpperCase())).toBe("ok");
+      const [field] = await pipeline([["HEXISTS", `ctf:solves:${target}`, `${id}:live1`]]);
+      expect(field.result).toBe(1);
+    } finally {
+      await pipeline([["HDEL", `ctf:solves:${target}`, `${id}:live1`]]);
+    }
+  });
 
   it("unlinkGithub holds a score resolved before the take: the scorer answers pending mid-unlink and writes nothing", async () => {
     const { ctx, pipeline, ops } = await load();
@@ -527,7 +573,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     let midUnlink: unknown;
     const original = ctx.internalAdapter.deleteAccount.bind(ctx.internalAdapter);
     const spy = vi.spyOn(ctx.internalAdapter, "deleteAccount").mockImplementationOnce(async (accountId: string) => {
-      midUnlink = await scorerWrite(id, "held1");
+      midUnlink = await scorerWrite(id, "held1", gh);
       return original(accountId);
     });
     try {
@@ -561,7 +607,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
       const [hold, owner] = await pipeline([["EXISTS", `ctf:score-hold:${id}`], ["GET", `ctf:link:github:${gh}`]]);
       expect(hold.result).toBe(0);
       expect(owner.result).toBe(id);
-      expect(await scorerWrite(id, "api2")).toBe("ok");
+      expect(await scorerWrite(id, "api2", gh)).toBe("ok");
     } finally {
       await pipeline([["HDEL", `ctf:solves:${target}`, `${id}:api1`, `${id}:api2`]]);
     }
@@ -632,6 +678,20 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
   });
 });
 
+/** The scorer's own solve script (scorer/src/store.js), run against this
+ *  Redis with the keys and args the scorer's recordSolves hands it. */
+async function scorerSolveWrite(target: string, id: string, at: string, challenge: string, login = ""): Promise<unknown> {
+  const storeUrl = new URL("../../../../../scorer/src/store.js", import.meta.url).href;
+  const { RECORD_SOLVES_SCRIPT } = (await import(/* @vite-ignore */ storeUrl)) as { RECORD_SOLVES_SCRIPT: string };
+  const { upstashEval } = await import("@/lib/upstash");
+  const lower = login.toLowerCase();
+  return upstashEval(
+    RECORD_SOLVES_SCRIPT,
+    [`ctf:solves:${target}`, `ctf:score-hold:${id}`, "ctf:auth:user", `ctf:link:github:${lower}`],
+    [id, at, lower, challenge],
+  );
+}
+
 // deleteAllAccounts against the real keyspace. It runs the master reset and
 // wipes the account namespaces, so it is the LAST suite in this file and
 // every assertion is about what this run seeded: the live suites run
@@ -697,8 +757,10 @@ describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("deleteAllAcc
     snapshotted = true;
 
     const ids: string[] = [];
+    const ghs: string[] = [];
     for (const n of [1, 2]) {
       const gh = `vtall${n}${RUN.replace(/[^a-z0-9]/g, "")}`.slice(0, 39);
+      ghs.push(gh);
       const { user } = await ctx.internalAdapter.createOAuthUser(
         { name: gh, email: `${gh}@example.test`, emailVerified: true, image: null, login: gh } as never,
         { providerId: "github", accountId: `gh-${gh}` } as never,
@@ -750,5 +812,11 @@ describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("deleteAllAcc
     // reads the grant, and it is gone.
     expect(await isAdminGrantee(admin)).toBe(false);
     for (const id of ids) expect(await ctx.internalAdapter.findUserById(id)).toBeNull();
+    // A score sync resolved through a link before the sweep, written after it:
+    // no hold is set, and the link check refuses it with nothing written.
+    const target = `vtall-${RUN}`.toLowerCase().replace(/[^a-z0-9-]/g, "");
+    expect(await scorerSolveWrite(target, ids[1], new Date().toISOString(), "late", ghs[1])).toBe("unlinked");
+    const [late] = await pipeline([["EXISTS", `ctf:solves:${target}`]]);
+    expect(late.result).toBe(0);
   });
 });

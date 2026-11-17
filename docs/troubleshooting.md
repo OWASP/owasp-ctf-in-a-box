@@ -189,7 +189,11 @@ Work down this list — each item is a different subsystem:
    `player scores on hold`, and the app log names the failed lift). For a delete, run it again. With no delete or unlink of the
    player still running, `DEL ctf:score-hold:<player id>` releases their
    scores, but only while the player's account still exists; a deleted
-   player's hold is what refuses their PRs.
+   player's hold is what refuses their PRs. A `scorer 503` whose body reads
+   `the login no longer links to this player` is the link moving between
+   sync's lookup and the write (an unlink, a delete, delete all accounts);
+   the next tick looks the login up again and holds or scores the PR, so one
+   such line is not a fault.
 4. **Is the score comment authored by `github-actions[bot]`?** Only that
    author is trusted — a comment posted any other way (including by you) is
    dropped by design.

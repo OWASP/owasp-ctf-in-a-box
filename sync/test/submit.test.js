@@ -23,9 +23,10 @@ test("rejected on 4xx (do not retry)", async () => {
   assert.deepEqual(await submitScore(CFG, PAYLOAD, f), { outcome: "rejected" });
 });
 
-// 422 is the scorer's final verdict on WHEN the score was posted: outside the
-// scoring window, during a freeze, or before the last master reset. Not a
-// loss to investigate, so it is told apart from every other 4xx.
+// 422 is the scorer's final verdict on WHEN the score was posted (outside the
+// scoring window, during a freeze, before the last master reset) or WHO it
+// belongs to (a deleted player). Not a loss to investigate, so it is told apart
+// from every other 4xx.
 test("refused on 422, carrying the scorer's reason", async () => {
   const f = async () =>
     new Response(JSON.stringify({ error: "the score was posted while scoring was frozen", refused: "paused" }), { status: 422 });

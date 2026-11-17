@@ -438,8 +438,8 @@ test("a 503 (player delete in progress) is retried next tick and not marked seen
   };
   const state = { repos: {} };
   await tick(CFG, state, { fetchImpl: f, log: () => {} });
-  assert.equal(state.dropped ?? 0, 0);
-  assert.equal(state.repos.DVWA?.seen?.includes(seenKey(23, "2026-08-13T11:00:00Z")) ?? false, false);
+  assert.equal(state.dropped, 0);
+  assert.deepEqual(state.repos.DVWA.seen, []);
   await tick(CFG, state, { fetchImpl: f, log: () => {} });
   assert.equal(posts.length, 2, "re-presented on the next tick");
   assert.equal(state.repos.DVWA.seen.includes(seenKey(23, "2026-08-13T11:00:00Z")), true);

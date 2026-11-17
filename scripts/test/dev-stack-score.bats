@@ -13,7 +13,7 @@ setup() {
   mkdir -p "$SANDBOX/scripts/lib" "$BATS_TEST_TMPDIR/bin"
   cp "$REPO/scripts/dev-stack" "$SANDBOX/scripts/dev-stack"
   cp "$REPO/scripts/lib/dotenv.sh" "$REPO/scripts/lib/claim-code.sh" "$SANDBOX/scripts/lib/"
-  printf 'SCORE_IMAGE=x\n' > "$SANDBOX/.env"
+  printf 'SCORE_IMAGE=x\n' > "$SANDBOX/.env.dev-stack"
   export CALLS="$BATS_TEST_TMPDIR/calls"
   : > "$CALLS"
   cat > "$BATS_TEST_TMPDIR/bin/docker" <<STUB
@@ -84,7 +84,7 @@ STUB
   printf '%s\n' "$output" | grep -qF "could not write the demo account for 'alice-dev'"
 }
 
-# `up` on a box with no .env writes a throwaway one. It carries the hash of a
+# `up` on a box with no .env.dev-stack writes the throwaway one. It carries the hash of a
 # fresh admin claim code (ADR 72) and never ADMIN_LOGINS; the code itself is
 # printed once and not written. docker fails here, so `up` stops right after
 # the file is written, before any container work.

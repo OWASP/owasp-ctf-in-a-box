@@ -31,7 +31,7 @@ STUB
 }
 
 _env_with_hash() {
-  printf 'REDIS_PASSWORD=x\nSCORE_IMAGE=\nADMIN_CLAIM_CODE_HASH=%s\n' "$FILE_HASH" > "$SANDBOX/.env"
+  printf 'REDIS_PASSWORD=x\nSCORE_IMAGE=\nADMIN_CLAIM_CODE_HASH=%s\n' "$FILE_HASH" > "$SANDBOX/.env.dev-stack"
 }
 
 @test "an exported hash that differs from the env file's is refused before anything starts" {

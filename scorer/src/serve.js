@@ -1,7 +1,6 @@
 import { createServer } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { PLAYER_ID_RE } from "./player-id.js";
-import { loadRubric } from "./rubric.js";
 import { createMemoryStore, createRedisStore, outsideScoringWindow, pausedAt } from "./store.js";
 
 // Targets and challenge ids share the rubric charset (Redis key/field segments).
@@ -471,6 +470,10 @@ export async function serve(env = process.env, { log = console.error } = {}) {
   const token = env.CTF_SCORE_BEARER_TOKEN ?? env.SCORER_TOKEN;
   if (!token) throw new Error("refusing to start: set CTF_SCORE_BEARER_TOKEN or SCORER_TOKEN");
   const port = parsePort(env.PORT);
+  // Loaded here, not at module load: the rubric parser's YAML dependency is
+  // needed only by the process entry, so createHandler and judgeScoreTime
+  // import without the scorer's node_modules (the app's live suite does).
+  const { loadRubric } = await import("./rubric.js");
   const rubric = loadRubric(env.RUBRIC_DIR);
   const useRedis = Boolean(env.UPSTASH_REDIS_REST_URL);
   const store = useRedis ? createRedisStore({ log }) : createMemoryStore();

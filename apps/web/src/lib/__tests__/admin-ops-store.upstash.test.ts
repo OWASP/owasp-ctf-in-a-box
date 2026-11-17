@@ -6,7 +6,8 @@
 // See live-redis.ts for the harness.
 
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { RUN, destructiveLiveRedisAllowed, freshId, liveConfigured, liveKey } from "./live-redis";
+import { RUN, freshId, liveConfigured, liveKey } from "./live-redis";
+import { destructiveLiveRedisAllowed } from "./live-redis-guard";
 
 vi.mock("server-only", () => ({}));
 
@@ -331,7 +332,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
 // every assertion is about what this run seeded: the live suites run
 // serially (--no-file-parallelism) and each seeds its own state. It deletes
 // every account on the Redis it reaches, so it runs only against a throwaway
-// one (destructiveLiveRedisAllowed in live-redis.ts).
+// one (destructiveLiveRedisAllowed in live-redis-guard.ts).
 describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("deleteAllAccounts against a live Redis", () => {
   const sentinel = JSON.stringify({ at: "2026-01-01T00:00:00.000Z", action: `vt-sentinel-${RUN}` });
   const spentHash = `vt-spent-${RUN}`;

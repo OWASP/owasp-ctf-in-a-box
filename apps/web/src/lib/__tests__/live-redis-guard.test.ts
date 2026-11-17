@@ -3,7 +3,7 @@
 // that is plainly a throwaway: a local or CI srh, or CI's required run.
 
 import { describe, expect, it } from "vitest";
-import { destructiveLiveRedisAllowed } from "./live-redis";
+import { destructiveLiveRedisAllowed } from "./live-redis-guard";
 
 describe("destructiveLiveRedisAllowed", () => {
   it.each(["http://localhost:8079", "http://127.0.0.1:8079", "http://srh:80", "http://LOCALHOST:8079"])(

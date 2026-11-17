@@ -385,6 +385,7 @@ export default function AdminEventTab({
             );
           })
         )}
+      </section>
 
       {/* Discord announcements (#590) — also stored apart from the settings
           hash (its own keys, its own endpoints), so it self-contains like

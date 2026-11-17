@@ -1109,6 +1109,7 @@ export async function unlinkGithub(rawId: unknown, actor: AuditActor): Promise<{
         throw new OpsValidationError("id", "This GitHub link has scored and cannot be removed.");
       }
     }
+    await clearGithubIdentity(player);
     for (const account of github) await internalAdapter.deleteAccount(account.id);
     const login = taken?.login ?? null;
     await audit("ops:github-unlink", actor, { player, login });
@@ -1123,6 +1124,37 @@ export async function unlinkGithub(rawId: unknown, actor: AuditActor): Promise<{
       console.error(`[admin-ops] unlink ${player}: lifting its score hold failed; scores for this player wait until the token is removed`, errorLabel(err));
     }
   }
+}
+
+/** The only host a GitHub avatar URL on a user row can name. */
+const GITHUB_AVATAR_HOST = "avatars.githubusercontent.com";
+
+function isGithubAvatar(image: unknown): boolean {
+  if (typeof image !== "string") return false;
+  try {
+    return new URL(image).hostname === GITHUB_AVATAR_HOST;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Clears the GitHub identity an unlink leaves on the user row: `login`, and
+ * an avatar URL a GitHub sign-in stored. `login` must go, not just the link
+ * keys: the user-update hook (linkOnUserWrite) re-links whatever `login` a
+ * row carries on its next write, and admin search, the profile avatar and
+ * displayNameOf all read it. It runs before the account rows are deleted, so
+ * a failure here leaves the github rows for a retry to find. The write goes
+ * through the auth adapter, which keeps the row's indexes right; a row
+ * already gone (deleted mid-unlink) has nothing to clear.
+ */
+async function clearGithubIdentity(player: string): Promise<void> {
+  const { internalAdapter } = await auth.$context;
+  const user = (await internalAdapter.findUserById(player)) as { login?: unknown; image?: unknown } | null;
+  if (!user) return;
+  const avatar = isGithubAvatar(user.image);
+  if (user.login == null && !avatar) return;
+  await internalAdapter.updateUser(player, { login: null, ...(avatar ? { image: null } : {}) } as never);
 }
 
 /** Restores a link `unlinkGithub` took, logging (without the login or id) a

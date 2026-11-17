@@ -76,12 +76,14 @@ const holdDeps = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/score-hold", () => holdDeps);
 
-// unlinkGithub reads and deletes the player's better-auth account rows;
+// unlinkGithub reads and deletes the player's better-auth account rows and
+// clears the GitHub identity on the user row;
 // deleteUser removes the user row, its accounts and its sessions.
 const authDeps = vi.hoisted(() => ({
   findAccounts: vi.fn(),
   deleteAccount: vi.fn(),
   findUserById: vi.fn(),
+  updateUser: vi.fn(),
   deleteUserSessions: vi.fn(),
   deleteAccounts: vi.fn(),
   deleteUser: vi.fn(),
@@ -1461,6 +1463,7 @@ describe("unlinkGithub", () => {
   };
   const account = (id: string, providerId: string) => ({ id, providerId, userId: OCTO, accountId: id });
   const TAKEN = { login: "octocat", at: "1700000000000", ours: true };
+  const GH_AVATAR = "https://avatars.githubusercontent.com/u/583231?v=4";
   const switches = (on: Partial<Record<"github" | "google" | "discord", boolean>>) => ({
     signInProviders: { github: false, google: false, discord: false, ...on },
   });
@@ -1471,6 +1474,8 @@ describe("unlinkGithub", () => {
     linkDeps.restoreGithubLink.mockResolvedValue("restored");
     nameDeps.currentUsername.mockResolvedValue("octocat");
     authDeps.deleteAccount.mockReset().mockResolvedValue(undefined);
+    authDeps.findUserById.mockResolvedValue({ id: OCTO, login: "octocat", image: GH_AVATAR });
+    authDeps.updateUser.mockReset().mockResolvedValue(undefined);
     storeDeps.getAdminSettings.mockResolvedValue(switches({}));
     vi.stubEnv("GOOGLE_CLIENT_ID", "id");
     vi.stubEnv("GOOGLE_CLIENT_SECRET", "secret");
@@ -1483,8 +1488,54 @@ describe("unlinkGithub", () => {
     expect(holdDeps.holdScores).not.toHaveBeenCalled();
     expect(linkDeps.takeGithubLink).not.toHaveBeenCalled();
     expect(authDeps.deleteAccount).not.toHaveBeenCalled();
+    expect(authDeps.updateUser).not.toHaveBeenCalled();
     expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
   };
+
+  it("clears the row's login and GitHub avatar after the solve count and before any account row goes", async () => {
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
+    await unlinkGithub(OCTO, ADMIN);
+    expect(authDeps.updateUser).toHaveBeenCalledTimes(1);
+    expect(authDeps.updateUser).toHaveBeenCalledWith(OCTO, { login: null, image: null });
+    const clear = authDeps.updateUser.mock.invocationCallOrder[0];
+    expect(mocks.upstashPipeline.mock.invocationCallOrder[0]).toBeLessThan(clear);
+    expect(clear).toBeLessThan(authDeps.deleteAccount.mock.invocationCallOrder[0]);
+  });
+
+  it.each([
+    ["an uploaded image", "https://cdn.example.test/me.png"],
+    ["a lookalike host", "https://avatars.githubusercontent.com.evil.test/u/1"],
+    ["a non-URL string", "not a url"],
+  ])("keeps %s and clears only the login", async (_label, image) => {
+    authDeps.findUserById.mockResolvedValue({ id: OCTO, login: "octocat", image });
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
+    await unlinkGithub(OCTO, ADMIN);
+    expect(authDeps.updateUser).toHaveBeenCalledWith(OCTO, { login: null });
+  });
+
+  it("writes nothing to a row that carries no GitHub identity", async () => {
+    authDeps.findUserById.mockResolvedValue({ id: OCTO, login: null, image: null });
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mockNoSecureDevKeys();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
+    await unlinkGithub(OCTO, ADMIN);
+    expect(authDeps.updateUser).not.toHaveBeenCalled();
+    expect(authDeps.deleteAccount).toHaveBeenCalledWith("a1");
+  });
+
+  it("a failed row clear deletes no account row, writes no audit line and lifts the hold", async () => {
+    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a2", "credential")]);
+    mockNoSecureDevKeys();
+    authDeps.updateUser.mockRejectedValueOnce(new Error("auth store: update user failed"));
+    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow("update user failed");
+    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
+    expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
+    expect(holdDeps.releaseScoreHold).toHaveBeenCalledWith(OCTO, holdDeps.holdScores.mock.calls[0][1]);
+  });
 
   it("takes the link, finds no solve, then deletes only the github rows and audits", async () => {
     authDeps.findAccounts.mockResolvedValue([
@@ -1518,6 +1569,7 @@ describe("unlinkGithub", () => {
       linkDeps.takeGithubLink.mock.invocationCallOrder[0],
     );
     expect(authDeps.deleteAccount).not.toHaveBeenCalled();
+    expect(authDeps.updateUser).not.toHaveBeenCalled();
     expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
   });
 

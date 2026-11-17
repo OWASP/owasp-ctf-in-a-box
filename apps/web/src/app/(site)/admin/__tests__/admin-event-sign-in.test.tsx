@@ -32,6 +32,7 @@ const props = (over: Partial<AdminEventTabProps>): AdminEventTabProps => ({
   doReset: noop,
   doSeed: noop,
   doClearDemo: noop,
+  doDeleteAllAccounts: noop,
   teamMaxMembersInput: "",
   setTeamMaxMembersInput: () => {},
   commitNumber: (async () => true) as unknown as AdminEventTabProps["commitNumber"],

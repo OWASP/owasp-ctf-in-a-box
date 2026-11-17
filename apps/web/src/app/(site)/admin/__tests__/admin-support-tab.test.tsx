@@ -15,6 +15,10 @@ import AdminSupportTab, {
   contestantStats,
   deleteContestantConfirm,
   latestOnly,
+  ResetCodeDialog,
+  resetCodeConfirm,
+  unlinkGithubConfirm,
+  githubLoginLine,
   lookupUrl,
   PlayerIdentity,
   PlayerResultLabel,
@@ -38,6 +42,7 @@ const detail: UserDetail = {
   secureDev: { solves: 6 },
   hints: { bought: 2, spent: 20 },
   known: true,
+  github: null,
 };
 
 describe("AdminSupportTab", () => {
@@ -222,5 +227,47 @@ describe("the player id tells same-named players apart", () => {
     const remove = removeFromTeamConfirm(member);
     expect(remove.idLine).toContain(OCTO);
     expect(remove.title).toBe("Remove octocat from E2E Crew?");
+  });
+});
+
+// Issue #740: the account tools on the player card.
+describe("delete confirm copy", () => {
+  it("says the account goes and the GitHub login stays blocked", () => {
+    const { body } = deleteContestantConfirm(detail);
+    expect(body).toBe(
+      "This deletes their account, progress and team membership. Their GitHub login cannot be linked to another account until the next master reset.",
+    );
+    expect(body).not.toContain("stay");
+  });
+});
+
+describe("reset password", () => {
+  it("confirms before issuing", () => {
+    const c = resetCodeConfirm(detail);
+    expect(c.title).toBe("Reset octocat's password?");
+    expect(c.confirmLabel).toBe("Issue reset code");
+    expect(c.body).toContain(OCTO);
+  });
+
+  it("shows the code once with its expiry, the hand-over line and a copy button", () => {
+    const html = renderToStaticMarkup(
+      <ResetCodeDialog code="aaaa-bbbb-cccc" expiresAt="2026-11-16T10:15:00.000Z" onClose={() => {}} />,
+    );
+    expect(html).toContain("aaaa-bbbb-cccc");
+    expect(html).toContain("Expires at");
+    expect(html).toContain("Hand this to the player in person. It works once, for 15 minutes.");
+    expect(html).toContain("Copy");
+  });
+});
+
+describe("unlink GitHub", () => {
+  it("names the login and says they can link again", () => {
+    const c = unlinkGithubConfirm({ ...detail, github: { login: "octo", linkedAt: 1 } });
+    expect(c.body).toContain("They can link a GitHub account again from their profile.");
+    expect(c.confirmLabel).toBe("Unlink GitHub");
+  });
+  it("shows the GitHub login only when the lookup carries one", () => {
+    expect(githubLoginLine(detail)).toBeNull();
+    expect(githubLoginLine({ ...detail, github: { login: "octo", linkedAt: 1 } })).toBe("GitHub login octo");
   });
 });

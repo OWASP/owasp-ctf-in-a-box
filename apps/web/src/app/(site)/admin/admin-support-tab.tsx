@@ -35,6 +35,8 @@ export type UserDetail = {
   classic: { solved: number; points: number; attempts: number };
   secureDev: { solves: number };
   hints: { bought: number; spent: number };
+  /** Null when the player has no link, and when Secure Development is off. */
+  github: { login: string; linkedAt: number | null } | null;
   known: boolean;
 };
 
@@ -143,8 +145,87 @@ export function deleteContestantConfirm(detail: Pick<UserDetail, "id" | "name">)
   title: string;
   requireType: string;
   idLine: string;
+  body: string;
 } {
-  return { title: `Delete ${detail.name}?`, requireType: detail.name, idLine: playerIdLine(detail.id) };
+  return {
+    title: `Delete ${detail.name}?`,
+    requireType: detail.name,
+    idLine: playerIdLine(detail.id),
+    body: "This deletes their account, progress and team membership. Their GitHub login cannot be linked to another account until the next master reset.",
+  };
+}
+
+/** The reset-password confirmation, shown before a code is issued. */
+export function resetCodeConfirm(detail: Pick<UserDetail, "id" | "name">): {
+  title: string;
+  confirmLabel: string;
+  body: string;
+} {
+  return {
+    title: `Reset ${detail.name}'s password?`,
+    confirmLabel: "Issue reset code",
+    body: `${playerIdLine(detail.id)} This issues a one-time code. Issuing another code replaces it.`,
+  };
+}
+
+/** The unlink-GitHub confirmation. */
+export function unlinkGithubConfirm(detail: Pick<UserDetail, "id" | "name" | "github">): {
+  title: string;
+  confirmLabel: string;
+  body: string;
+} {
+  return {
+    title: `Unlink GitHub from ${detail.name}?`,
+    confirmLabel: "Unlink GitHub",
+    body: `${playerIdLine(detail.id)} Removes the link to ${detail.github?.login ?? "their GitHub account"}. They can link a GitHub account again from their profile.`,
+  };
+}
+
+/** The card's GitHub line, or null when there is no link to show. */
+export function githubLoginLine(detail: Pick<UserDetail, "github">): string | null {
+  return detail.github ? `GitHub login ${detail.github.login}` : null;
+}
+
+/** The one place a reset code is shown. It is held in component state only
+ *  and is not requested again: closing the dialog loses it. */
+export function ResetCodeDialog({
+  code,
+  expiresAt,
+  onClose,
+}: {
+  code: string;
+  expiresAt: string;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div
+      role="dialog"
+      aria-label="Password reset code"
+      className="flex flex-col gap-2 rounded-md border border-[#d4a017]/40 bg-[#d4a017]/10 p-3"
+    >
+      <p className="font-mono text-lg tracking-wider text-white">{code}</p>
+      <p className="text-sm text-zinc-300">Expires at {adminTime(expiresAt, "UTC", { year: true })} UTC</p>
+      <p className="text-sm text-zinc-300">Hand this to the player in person. It works once, for 15 minutes.</p>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          className={BTN}
+          onClick={() => {
+            void navigator.clipboard
+              ?.writeText(code)
+              .then(() => setCopied(true))
+              .catch(() => setCopied(false));
+          }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+        <button type="button" className={DANGER} onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /** The remove-from-team confirmation's title and id line. Exported for
@@ -265,6 +346,9 @@ export default function AdminSupportTab({
   const teamSlugRef = useRef<HTMLInputElement>(null);
   const [addSlug, setAddSlug] = useState("");
   const [addOverride, setAddOverride] = useState(false);
+  const [renameTo, setRenameTo] = useState("");
+  const [renameStatus, setRenameStatus] = useState<string | null>(null);
+  const [resetCode, setResetCode] = useState<{ code: string; expiresAt: string } | null>(null);
 
   /** Runs a request and folds the outcome into the shared notice/error state.
    *  `after` re-reads the contestant when one is on screen, so the panel never
@@ -316,6 +400,8 @@ export default function AdminSupportTab({
   }
 
   async function lookup(id: string) {
+    setResetCode(null);
+    setRenameStatus(null);
     setPending(true);
     setError(null);
     setNotice(null);
@@ -331,6 +417,7 @@ export default function AdminSupportTab({
       setDetail(null);
     } else {
       setDetail(out.value.data);
+      setRenameTo(out.value.data.name);
     }
     setPending(false);
   }
@@ -456,6 +543,128 @@ export default function AdminSupportTab({
             ))}
           </div>
 
+          {githubLoginLine(detail) && (
+            <p className="text-sm text-zinc-400">
+              GitHub login <bdi className="font-mono text-white">{detail.github?.login}</bdi>
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-white/[0.06] pt-3">
+            <label htmlFor="support-rename" className="text-sm text-zinc-400">
+              Username
+            </label>
+            <input
+              id="support-rename"
+              value={renameTo}
+              onChange={(e) => setRenameTo(e.target.value)}
+              className="w-48 rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 font-mono text-sm text-white focus-visible:border-[#d4a017]/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
+            />
+            <button
+              type="button"
+              disabled={pending || !renameTo.trim()}
+              className={BTN}
+              onClick={() => {
+                void (async () => {
+                  setPending(true);
+                  setRenameStatus(null);
+                  try {
+                    const res = await fetch("/api/admin/ops/user", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: playerActionBody(detail, { action: "rename", username: renameTo }),
+                    });
+                    const data = (await res.json().catch(() => ({}))) as { error?: string; to?: string };
+                    if (!res.ok) {
+                      setRenameStatus(data.error ?? "Rename failed");
+                      return;
+                    }
+                    setRenameStatus(`Renamed to ${data.to ?? renameTo.trim()}.`);
+                    await refresh();
+                  } catch {
+                    setRenameStatus("Rename failed");
+                  } finally {
+                    setPending(false);
+                  }
+                })();
+              }}
+            >
+              Save
+            </button>
+            {renameStatus && (
+              <span role="status" className="text-sm text-zinc-300">
+                {renameStatus}
+              </span>
+            )}
+          </div>
+
+          {resetCode && (
+            <ResetCodeDialog code={resetCode.code} expiresAt={resetCode.expiresAt} onClose={() => setResetCode(null)} />
+          )}
+
+          <div className="flex flex-wrap gap-2 border-t border-white/[0.06] pt-3">
+            <button
+              type="button"
+              disabled={pending}
+              className={DANGER}
+              onClick={() => {
+                const c = resetCodeConfirm(detail);
+                setConfirm({
+                  title: c.title,
+                  danger: true,
+                  confirmLabel: c.confirmLabel,
+                  body: c.body,
+                  onConfirm: () =>
+                    run(
+                      () =>
+                        fetch("/api/admin/ops/user", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: playerActionBody(detail, { action: "reset-code" }),
+                        }),
+                      (data) => {
+                        if (typeof data.code === "string" && typeof data.expiresAt === "string") {
+                          setResetCode({ code: data.code, expiresAt: data.expiresAt });
+                        }
+                        return `Issued a reset code for ${detail.name}.`;
+                      },
+                    ),
+                });
+              }}
+            >
+              Reset password
+            </button>
+
+            {detail.github && (
+              <button
+                type="button"
+                disabled={pending}
+                className={DANGER}
+                onClick={() => {
+                  const c = unlinkGithubConfirm(detail);
+                  setConfirm({
+                    title: c.title,
+                    danger: true,
+                    confirmLabel: c.confirmLabel,
+                    body: c.body,
+                    onConfirm: () =>
+                      run(
+                        () =>
+                          fetch("/api/admin/ops/user", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: playerActionBody(detail, { action: "unlink-github" }),
+                          }),
+                        () => `Unlinked GitHub from ${detail.name}.`,
+                        refresh,
+                      ),
+                  });
+                }}
+              >
+                Unlink GitHub
+              </button>
+            )}
+          </div>
+
           <div className="flex flex-wrap gap-2 border-t border-white/[0.06] pt-3">
             <button
               type="button"
@@ -509,7 +718,7 @@ export default function AdminSupportTab({
                   confirmLabel: "Delete contestant",
                   body: (
                     <>
-                      {c.idLine} Removes their progress, hints, team membership and event record. Their sign-in account and GitHub link stay. This cannot be undone.
+                      {c.idLine} {c.body}
                       {detail.team?.isCaptain && (
                         <>
                           {" "}

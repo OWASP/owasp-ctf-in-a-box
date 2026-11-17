@@ -176,6 +176,7 @@ export default function AdminControls({
     doReset,
     doSeed,
     doClearDemo,
+    doDeleteAllAccounts,
     apply,
     applyField,
     commitNumber,
@@ -287,6 +288,7 @@ export default function AdminControls({
                   doReset={doReset}
                   doSeed={doSeed}
                   doClearDemo={doClearDemo}
+                  doDeleteAllAccounts={doDeleteAllAccounts}
                   teamMaxMembersInput={teamMaxMembersInput}
                   setTeamMaxMembersInput={setTeamMaxMembersInput}
                   commitNumber={commitNumber}

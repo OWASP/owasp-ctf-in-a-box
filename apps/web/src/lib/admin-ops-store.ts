@@ -129,6 +129,9 @@ export type UserDetail = {
   /** Secure Development solves, counted from `ctf:solves:<target>`. */
   secureDev: { solves: number };
   hints: { bought: number; spent: number };
+  /** The GitHub account linked to this player (`ctf:link:user:<id>`), or null.
+   *  `linkedAt` is epoch ms, null for a link written without a time. */
+  github: { login: string; linkedAt: number | null } | null;
   /** True when no key anywhere mentions this player — a signed-in player
    *  with nothing yet, worth saying so plainly instead of rendering a page of
    *  zeroes. */
@@ -235,6 +238,7 @@ export async function lookupUser(rawId: unknown): Promise<UserDetail> {
   }
 
   const secureDevSolves = await countSecureDevSolves(player);
+  const github = await getGithubLink(player);
   const profile = (await getPlayerProfiles([player])).get(player);
   const quizAnsweredCount = hashLen(quizAnswers.result);
   const classicSolvedCount = hashLen(classicSolves.result);
@@ -259,6 +263,7 @@ export async function lookupUser(rawId: unknown): Promise<UserDetail> {
     },
     secureDev: { solves: secureDevSolves },
     hints: { bought: hintsBoughtCount, spent: Number(hintsSpent.result) || 0 },
+    github,
     // "Known" means the box holds ANY record of this player — attempts
     // included, so a contestant who has tried and never solved is not
     // reported as having no data.
@@ -546,8 +551,9 @@ export async function deleteUser(
     throw new OpsValidationError("id", "No such player.");
   }
 
-  // Read before the bracket: a failed read aborts with nothing written.
-  const heldLogin = (await getGithubLink(player))?.login.toLowerCase() ?? null;
+  // The lookup above already read the link, before the bracket: a failed
+  // read aborted with nothing written.
+  const heldLogin = detail.github?.login.toLowerCase() ?? null;
 
   // One score-lowering bracket around the WHOLE delete: the inner
   // reset nests its own — the marker is a counter — so the in-progress flag

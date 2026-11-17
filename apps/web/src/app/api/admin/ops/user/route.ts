@@ -6,14 +6,22 @@ import {
   OpsValidationError,
   deleteUser,
   lookupUser,
+  renameUser,
   resetUserProgress,
+  unlinkGithub,
 } from "@/lib/admin-ops-store";
+import { NotAdminError } from "@/lib/admin-claim";
+import { getEnabledModuleIds } from "@/lib/enabled-modules";
+import { issuePasswordResetCode } from "@/lib/password-reset";
 
 /**
  * Per-contestant support operations (issue #168).
  *
  *   GET    ?id=<player id>   look one up — read-only
  *   POST   {id, action:"reset"}   clear their progress
+ *   POST   {id, action:"reset-code"}   issue a one-time password reset code
+ *   POST   {id, action:"rename", username}   change their username
+ *   POST   {id, action:"unlink-github"}   release their GitHub link (SD on)
  *   DELETE {id}    remove them entirely
  *
  * Every method is behind `requireAdmin`. GET is gated as hard as the writes
@@ -31,7 +39,10 @@ import {
  * form or a stray fetch that forgot its body.
  */
 
-function fail(err: unknown, label: "lookup" | "reset" | "delete") {
+function fail(err: unknown, label: "lookup" | "reset" | "delete" | "reset-code" | "rename" | "unlink") {
+  if (err instanceof NotAdminError) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
   if (err instanceof OpsValidationError) {
     return NextResponse.json({ error: err.message, field: err.field }, { status: 400 });
   }
@@ -49,7 +60,11 @@ export async function GET(request: Request) {
 
   const id = new URL(request.url).searchParams.get("id") ?? "";
   try {
-    return NextResponse.json(await lookupUser(id));
+    const detail = await lookupUser(id);
+    // The login is a Secure Development fact; with the module off it is not
+    // shown and nothing on the card offers to act on it.
+    const sdOn = (await getEnabledModuleIds()).has("secure-development");
+    return NextResponse.json(sdOn ? detail : { ...detail, github: null });
   } catch (err) {
     return fail(err, "lookup");
   }
@@ -59,7 +74,7 @@ export async function POST(request: Request) {
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });
 
-  let body: { id?: unknown; action?: unknown };
+  let body: { id?: unknown; action?: unknown; username?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -68,12 +83,41 @@ export async function POST(request: Request) {
   if (typeof body.id !== "string") {
     return NextResponse.json({ error: "id must be a string" }, { status: 400 });
   }
+  const actor = auditActor(gate.player);
+
+  if (body.action === "reset-code") {
+    try {
+      return NextResponse.json(await issuePasswordResetCode(body.id, actor));
+    } catch (err) {
+      return fail(err, "reset-code");
+    }
+  }
+  if (body.action === "rename") {
+    if (typeof body.username !== "string") {
+      return NextResponse.json({ error: "username must be a string" }, { status: 400 });
+    }
+    try {
+      return NextResponse.json(await renameUser(body.id, body.username, actor));
+    } catch (err) {
+      return fail(err, "rename");
+    }
+  }
+  if (body.action === "unlink-github") {
+    try {
+      if (!(await getEnabledModuleIds()).has("secure-development")) {
+        return NextResponse.json({ error: "Secure Development is off." }, { status: 400 });
+      }
+      return NextResponse.json(await unlinkGithub(body.id, actor));
+    } catch (err) {
+      return fail(err, "unlink");
+    }
+  }
   if (body.action !== "reset") {
     return NextResponse.json({ error: "unknown action" }, { status: 400 });
   }
 
   try {
-    return NextResponse.json(await resetUserProgress(body.id, auditActor(gate.player)));
+    return NextResponse.json(await resetUserProgress(body.id, actor));
   } catch (err) {
     return fail(err, "reset");
   }

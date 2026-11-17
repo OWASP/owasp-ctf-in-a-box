@@ -1,5 +1,5 @@
-// The Event tab's Danger zone writes: master reset, demo seed and demo
-// clear. Three fetches that report through the shell's `error`/`resetInfo`
+// The Event tab's Danger zone writes: master reset, demo seed, demo clear and
+// delete-all-accounts. Four fetches that report through the shell's `error`/`resetInfo`
 // state rather than the per-field write path — they have no field to report
 // beside.
 //
@@ -10,6 +10,21 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import type { AdminSettings } from "@/lib/admin-store";
+import type { ConfirmState } from "./types";
+
+/** The Delete all accounts confirmation. The server re-checks the phrase. */
+export function deleteAllAccountsConfirm(): Pick<ConfirmState, "title" | "danger" | "confirmLabel"> & {
+  requireType: string;
+  body: string;
+} {
+  return {
+    title: "Delete all accounts?",
+    danger: true,
+    confirmLabel: "Delete all accounts",
+    requireType: "delete all accounts",
+    body: "Deletes every account, including yours, every admin grant, and all progress. /admin stays closed until someone claims it with a new claim code: rotate it first (ctf-setup.sh admin-code, or deploy.sh --new-admin-code).",
+  };
+}
 
 export function createDangerActions({
   setError,
@@ -26,6 +41,7 @@ export function createDangerActions({
   doReset: (confirmValue: string) => Promise<void>;
   doSeed: () => Promise<void>;
   doClearDemo: () => Promise<void>;
+  doDeleteAllAccounts: (confirmValue: string) => Promise<void>;
 } {
   // Master reset: wipes all event data. Type-to-confirm gated in the modal;
   // the server re-checks the phrase and requires admin. On success the box is
@@ -106,5 +122,24 @@ export function createDangerActions({
     );
   };
 
-  return { doReset, doSeed, doClearDemo };
+  // Delete all accounts removes the acting admin's own grant, so the next
+  // /admin request is a 403: a full navigation to the claim page, never a
+  // client-side state update that would render a dead panel.
+  const doDeleteAllAccounts = async (confirmValue: string): Promise<void> => {
+    setError(null);
+    setResetInfo(null);
+    const res = await fetch("/api/admin/ops/accounts", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: confirmValue }),
+    });
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    if (!res.ok) {
+      setError(data.error ?? "Delete all accounts failed");
+      return;
+    }
+    window.location.assign("/admin/claim");
+  };
+
+  return { doReset, doSeed, doClearDemo, doDeleteAllAccounts };
 }

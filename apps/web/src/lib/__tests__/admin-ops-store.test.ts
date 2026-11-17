@@ -1024,6 +1024,20 @@ describe("lookupUser — known", () => {
   });
 });
 
+describe("lookupUser — github", () => {
+  it("carries the player's GitHub link, or null", async () => {
+    const id = "0c7aca70-0000-4000-8000-00000000000a";
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null));
+    mockNoSecureDevKeys();
+    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 7 });
+    expect((await lookupUser(id)).github).toEqual({ login: "octocat", linkedAt: 7 });
+
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null));
+    mockNoSecureDevKeys();
+    expect((await lookupUser(id)).github).toBeNull();
+  });
+});
+
 // #597: after registration closes a player who left can't rejoin on their
 // own; an organizer puts them on a team (or moves them) from Support. The
 // write is one atomic script, keyed by the player id the search handed over.

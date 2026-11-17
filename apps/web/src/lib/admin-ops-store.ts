@@ -526,8 +526,8 @@ export const ORPHAN_GRANT_REMOVED = "An admin grant left by an earlier failed de
 // KEYS: [1]=ctf:sd:held:by:<login> [2]=ctf:sd:held:authors  ARGV: [1]=login.
 // The hash first: a DEL that errors stops the script, so the author stays
 // indexed and sync can still find the entries.
-/** Set by `deleteUser` before it deletes the account and removed with the
- *  player's record, the delete's last write: a re-run finds the player by it
+/** Set by `deleteUser` before it deletes the account and removed only after
+ *  the cleanup of the player's record is confirmed: a re-run finds the player by it
  *  once the account and every visible trace of their progress are gone. Under
  *  `ctf:admin:`, so a master reset keeps it; delete all accounts sweeps it. */
 export const DELETING_PREFIX = "ctf:admin:deleting:";
@@ -567,7 +567,8 @@ return 1`;
  * while the account row stands. Re-runnable: every step tolerates what an
  * earlier, failed run already removed, so a delete that threw part way
  * completes on the next call. A marker (`ctf:admin:deleting:<id>`) set
- * before the account delete and removed with the record lets a re-run find a
+ * before the account delete and removed once the record's cleanup has landed
+ * lets a re-run find a
  * player whose account and counted progress are already gone. A re-run that
  * finds the account row clears
  * the held scores of the login the row carries once that login is blocked
@@ -682,10 +683,14 @@ export async function deleteUser(
       if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), player]);
       cmds.push(["DEL", userKey(player)]);
       for (const key of rateLimitKeysFor(player)) cmds.push(["DEL", key]);
-      cmds.push(["DEL", deletingKey(player)]);
       // Checked: a refused DEL reported as a delete leaves the player on the
-      // team with their record in place, and the marker for a re-run.
+      // team with their record in place.
       assertPipelineOk(await upstashPipeline(cmds), "delete user");
+      // Its own request, after the batch is confirmed: commands in one
+      // pipeline run independently, so a marker DEL in the batch would land
+      // even when an earlier cleanup command failed, and the re-run that must
+      // finish it would find nothing.
+      assertPipelineOk(await upstashPipeline([["DEL", deletingKey(player)]]), "delete user marker");
 
       const warnings = [...reset.warnings];
       const grantWarning = orphanGrant ? ORPHAN_GRANT_REMOVED : GRANT_CLAIMED_DURING_DELETE;

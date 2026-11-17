@@ -439,8 +439,8 @@ not be loaded") means the switch could not be read from Redis; retry, and see
 **Symptom.** A player cannot sign in by username and has no other sign-in on
 the account.
 
-**Fix.** In `/admin`, open the Support tab, find the player and press **Issue
-reset code**. Hand the code over in person; the player enters it at `/reset`
+**Fix.** In `/admin`, open the Support tab, find the player and press **Reset
+password**, then **Issue reset code** to confirm. Hand the code over in person; the player enters it at `/reset`
 and chooses a new password. A code works once and expires after 15 minutes,
 and a new code voids the old one. If `/reset` says the code is invalid, it was
 used, expired, replaced, or its issuer lost admin access: issue another. See

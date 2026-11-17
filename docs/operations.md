@@ -1166,7 +1166,7 @@ log, naming the player and never a code or a password. A failed Redis write
 is reported as a failure (HTTP 503), never as success.
 
 **Reset code (a forgotten password).** Search the player in Support and press
-**Issue reset code**. The code appears once, in the same eight groups of four
+**Reset password**, then **Issue reset code** to confirm. The code appears once, in the same eight groups of four
 hex as a claim code, with a copy button; it is never stored in the clear and
 the audit log names only a short code id. Hand it over in person. The player
 opens `/reset` (no sign-in needed), enters the code and chooses a new
@@ -1188,7 +1188,7 @@ password. Then:
 - If redeeming fails with a server error, the code may already be spent:
   issue a new one.
 
-**Rename.** In Support, type the new username and press **Rename**. The
+**Rename.** In Support, type the new username in the **Username** box and press **Save**. The
 username rules of sign-up apply, and a username another player holds is
 refused in any letter case. Scores, team and GitHub link are untouched. The
 renamed player's header can keep showing the old name for up to 5 minutes.

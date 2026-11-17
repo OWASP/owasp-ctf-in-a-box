@@ -1186,6 +1186,12 @@ cmd_secrets() {
     echo "REDIS_PASSWORD=$(openssl rand -hex 24)"
     echo "GITHUB_CLIENT_ID="
     echo "GITHUB_CLIENT_SECRET="
+    echo "# Optional sign-in providers: a provider is offered only when both its id and"
+    echo "# secret are set. Callback URL: <EVENT_URL>/api/auth/callback/<google|discord>"
+    echo "GOOGLE_CLIENT_ID="
+    echo "GOOGLE_CLIENT_SECRET="
+    echo "DISCORD_CLIENT_ID="
+    echo "DISCORD_CLIENT_SECRET="
     echo "GITHUB_APP_ID="
     echo "GITHUB_APP_PRIVATE_KEY="
     echo "GITHUB_APP_INSTALLATION_ID="
@@ -1209,7 +1215,7 @@ cmd_secrets() {
     echo "# SCORE_IMAGE=ghcr.io/<your-event-org>/score:latest"
   } > "$out"
   )
-  echo "wrote $out — fill in GITHUB_ORG, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY; add SCORE_IMAGE to run Secure Development"
+  echo "wrote $out — fill in GITHUB_ORG, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY (the GitHub keys are needed only with SCORE_IMAGE, which runs Secure Development); GOOGLE_CLIENT_ID/SECRET and DISCORD_CLIENT_ID/SECRET are optional extra sign-in providers"
   claim_code_announce "$code" "<EVENT_URL>" "$recover"
 }
 
@@ -2399,18 +2405,19 @@ wiz_sync_app() {
 
 # Step 6 of the wizard: sign-in OAuth app.
 wiz_oauth_app() {
-  local org="$1"
+  local org="$1" secdev="${2:-0}"
   wiz_step "6/9  Sign-in OAuth app"
-  if [ -n "$(env_val GITHUB_CLIENT_ID)" ] && [ -n "$(env_val GITHUB_CLIENT_SECRET)" ]; then
+  if [ "$secdev" -ne 1 ]; then
+    echo "  ⏭  GitHub sign-in is optional without Secure Development — skipped"
+  elif [ -n "$(env_val GITHUB_CLIENT_ID)" ] && [ -n "$(env_val GITHUB_CLIENT_SECRET)" ]; then
     echo "  ✅ OAuth app configured"
   elif [ "$DRY_RUN" -eq 1 ]; then
     echo "  DRY-RUN: would open the OAuth-app page, then prompt Client ID + hidden secret"
   else
-    # Every event needs sign-in, Secure Development or not — but `oauth-app`
-    # opens the ORG's registration page, and an app-only event has no org. It
-    # would exit 1 naming GITHUB_ORG and take the wizard down with it, so
-    # point at the personal-account page instead (registering it there is
-    # already a documented option).
+    # `oauth-app` opens the ORG's registration page, and a Secure Development
+    # event with no org would exit 1 naming GITHUB_ORG and take the wizard
+    # down with it, so point at the personal-account page instead
+    # (registering it there is already a documented option).
     if [ -z "$org" ]; then
       echo "  No event org, so register the OAuth app on your own account:"
       echo "    https://github.com/settings/applications/new"
@@ -2604,7 +2611,7 @@ cmd_wizard() {
 
   wiz_scorer_image "$secdev"
   wiz_sync_app "$secdev"
-  wiz_oauth_app "$org"
+  wiz_oauth_app "$org" "$secdev"
   wiz_org "$org" "$secdev"
   wiz_ui_only_steps "$org" "$secdev" "$provisioned"
   wiz_bring_up "$secdev"
@@ -2626,7 +2633,8 @@ cmd_wizard() {
 # subshell, and a caller such as `[ -n "$(env_val X)" ]` would read it as
 # empty. `check` reads no env file, so a broken one does not block it.
 ENV_KEYS="SCORE_IMAGE GITHUB_ORG ADMIN_CLAIM_CODE_HASH EVENT_URL GITHUB_APP_ID
-GITHUB_APP_PRIVATE_KEY GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET"
+GITHUB_APP_PRIVATE_KEY GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
+DISCORD_CLIENT_ID DISCORD_CLIENT_SECRET"
 if [ "$CMD" != "__selftest" ]; then
   if [ "$CMD" != check ]; then
     # shellcheck disable=SC2086 # the key list is split into words on purpose

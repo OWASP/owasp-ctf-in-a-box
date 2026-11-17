@@ -1191,6 +1191,44 @@ _stub_prereqs() {
   echo "$output" | grep -qF "8/9  Bring the containers up"
 }
 
+@test "wizard: without SCORE_IMAGE step 6 skips GitHub sign-in and never prompts" {
+  _stub_prereqs
+  printf '#!/bin/sh\n[ "$1" = auth ] && exit 0\nexit 1\n' > "$BATS_TEST_TMPDIR/stubbin/gh"
+  chmod +x "$BATS_TEST_TMPDIR/stubbin/gh"
+  printf 'GITHUB_ORG=\nGITHUB_CLIENT_ID=\nGITHUB_CLIENT_SECRET=\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\n' > .env
+  run env CTF_NO_BROWSER=1 PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" wizard
+  [ "$status" -eq 0 ]
+  [ -z "$(echo "$output" | grep -F "OAuth Client ID")" ]
+  echo "$output" | grep -qF "GitHub sign-in is optional without Secure Development — skipped"
+}
+
+@test "wizard --dry-run: without SCORE_IMAGE step 6 prints the same skip" {
+  _stub_prereqs
+  printf 'GITHUB_CLIENT_ID=\nGITHUB_CLIENT_SECRET=\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\n' > .env
+  run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" wizard --dry-run
+  [ "$status" -eq 0 ]
+  [ -z "$(echo "$output" | grep -F "would open the OAuth-app page")" ]
+  echo "$output" | grep -qF "GitHub sign-in is optional without Secure Development — skipped"
+}
+
+@test "wizard --dry-run: with SCORE_IMAGE step 6 still requires the GitHub keys" {
+  _stub_prereqs
+  printf 'GITHUB_ORG=fixture\nGITHUB_CLIENT_ID=\nGITHUB_CLIENT_SECRET=\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > .env
+  run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" wizard --dry-run
+  [ "$status" -eq 0 ]
+  [ -z "$(echo "$output" | grep -F "sign-in is optional")" ]
+  echo "$output" | grep -qF "would open the OAuth-app page, then prompt Client ID"
+}
+
+@test "secrets template carries blank optional Google and Discord keys" {
+  run bash "$SCRIPT" secrets --out .env.providers.test
+  [ "$status" -eq 0 ]
+  grep -q '^GOOGLE_CLIENT_ID=$' .env.providers.test
+  grep -q '^GOOGLE_CLIENT_SECRET=$' .env.providers.test
+  grep -q '^DISCORD_CLIENT_ID=$' .env.providers.test
+  grep -q '^DISCORD_CLIENT_SECRET=$' .env.providers.test
+}
+
 # A fresh box has no claim code yet: the rehearsal names the write it would
 # make, and makes none.
 @test "wizard --dry-run on a fresh box narrates the claim code and writes nothing" {

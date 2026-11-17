@@ -417,7 +417,9 @@ linking is not set up.
 
 **Cause and fix.** Secure Development needs the GitHub OAuth app. Set both
 `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (see
-[Sign-in providers](hosting.md#sign-in-providers)) and restart the app. A
+[Sign-in providers](hosting.md#sign-in-providers)), then recreate the app
+container (`docker compose up -d --no-deps --force-recreate app`, or
+redeploy on Fly or AWS); a plain restart keeps the old environment. A
 provider counts only with both keys non-blank.
 
 ## Sign-in says "That sign-in option is not available."

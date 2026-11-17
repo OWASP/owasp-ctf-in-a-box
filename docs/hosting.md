@@ -629,7 +629,9 @@ are non-blank:
 The GitHub keys are required only with Secure Development (`SCORE_IMAGE`
 non-empty), because players link GitHub to have their pull requests scored.
 Google and Discord are optional on every event. The app reads the keys at
-start-up, so restart it after changing them. A configured provider appears
+start-up, and `docker compose restart` keeps a container's old environment,
+so recreate the app after changing them: `docker compose up -d --no-deps
+--force-recreate app`, or redeploy on Fly or AWS. A configured provider appears
 as a switch in the `/admin` Event tab (see
 [the admin panel](operations.md#organizer-admin-panel)).
 

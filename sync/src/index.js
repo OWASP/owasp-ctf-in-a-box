@@ -166,10 +166,11 @@ export async function releaseHeldScores({ cfg, redis, fetchImpl = fetch, log = c
       for (let i = 0; i < ready.length; i++) {
         const { field, entry } = ready[i];
         // Exactly the scorer's contract: `repo` is a display name for the
-        // admin list and is not sent.
+        // admin list and is not sent. `login` is the link just resolved: the
+        // scorer writes only while it still names this player.
         const { target, solved, pr, sha, at } = entry;
         try {
-          const verdict = await submitScore(cfg, { player: link.player, target, solved, pr, sha, at }, fetchImpl);
+          const verdict = await submitScore(cfg, { player: link.player, login, target, solved, pr, sha, at }, fetchImpl);
           await redis.releaseHeld(login, field);
           counts.released++;
           counts[verdict.outcome]++;
@@ -379,8 +380,11 @@ export async function tick(cfg, state, deps = {}) {
           continue;
         }
         const player = link.player;
+        // The login goes as the one `player` was resolved from: the scorer
+        // writes only while that link still names this player, and answers
+        // 503 (retried here, re-resolved next tick) once it moved.
         const { author: _login, ...rest } = payload;
-        const verdict = await submitScore(cfg, { player, ...rest, at: c.updated_at }, fetchImpl);
+        const verdict = await submitScore(cfg, { player, login: authorKey, ...rest, at: c.updated_at }, fetchImpl);
         if (verdict.outcome === "accepted") {
           state.ingested++;
           tally.ingested++;

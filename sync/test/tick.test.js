@@ -456,7 +456,10 @@ test("a mixed-case author resolves through the lowercased link key", async () =>
   await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis });
   assert.equal(posts.length, 1);
   assert.equal(posts[0].player, LINKS.octocat);
-  assert.equal("author" in posts[0], false, "the login is not sent to the scorer");
+  assert.equal("author" in posts[0], false, "the score is keyed by the player, never the author");
+  // The login the player was resolved through, lowercased as the link key
+  // is: the scorer writes only while that link still names the player.
+  assert.equal(posts[0].login, "octocat");
 });
 
 test("an unlinked author's score is held, not dropped, without naming the login or comment id", async () => {

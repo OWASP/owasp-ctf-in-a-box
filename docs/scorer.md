@@ -35,7 +35,12 @@ One image (`scorer/Dockerfile`), two modes:
   retryable `503` instead). It also refuses a deleted player's score: a final
   `422` with `refused: "player-deleted"` once the delete has finished, and a
   retryable `503` (`player scores on hold`) while a delete or a GitHub unlink
-  of that player is still running
+  of that player is still running. A payload may carry `login`, the GitHub
+  login sync resolved `player` from: the solve is then written only while
+  `ctf:link:github:<login>` still names `player`, checked in the same script
+  as the write, and a link that moved or went since sync read it answers a
+  retryable `503` (`the login no longer links to this player`) so sync
+  resolves the login again. Sync always sends it; a malformed one is a `400`
   ([ADR 67](decisions.md#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)). Backed by Redis via the Upstash-REST
   proxy when `UPSTASH_REDIS_REST_URL` is set, an in-memory store otherwise.
 

@@ -203,7 +203,9 @@ state; everything else that touches scores goes through it.
    A freeze with no recorded start answers `503`, which the poller retries,
    and so does a player whose scores are on hold while a delete or a GitHub
    unlink runs (`player scores on hold`: `ctf:score-hold:<id>` is set and the
-   account row is present). A payload with no `at` (an
+   account row is present), or whose link changed after sync resolved it
+   (sync sends the `login` it resolved, and the scorer writes only while
+   `ctf:link:github:<login>` still names the player). A payload with no `at` (an
    older sync) keeps the arrival-time rule. The
    scorer then writes the score
    to Redis (via `srh`), timed `at`, as a monotonic, idempotent-on-replay

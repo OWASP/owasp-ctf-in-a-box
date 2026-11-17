@@ -47,23 +47,40 @@ test("redis store: one EVAL of the solve script via SRH pipeline, bearer token",
     [
       "EVAL",
       RECORD_SOLVES_SCRIPT,
-      3,
+      4,
       "ctf:solves:dvwa",
       "ctf:score-hold:octocat",
       "ctf:auth:user",
+      "ctf:link:github:",
       "octocat",
       T0,
+      "",
       "sqli-low",
       "xss-dom",
     ],
   ]);
 
+  // With the login sync resolved the player from: its link key, lowercased.
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0, "OctoCat"), "ok");
+  const [withLogin] = JSON.parse(calls[1].opts.body);
+  assert.deepEqual(withLogin.slice(0, 7), [
+    "EVAL",
+    RECORD_SOLVES_SCRIPT,
+    4,
+    "ctf:solves:dvwa",
+    "ctf:score-hold:octocat",
+    "ctf:auth:user",
+    "ctf:link:github:octocat",
+  ]);
+  assert.deepEqual(withLogin.slice(7), ["octocat", T0, "octocat", "sqli-low"]);
+  calls.length = 1;
+
   assert.equal(await store.recordSolves("dvwa", "octocat", [], T1), "ok");
   assert.equal(calls.length, 1); // nothing to write, no round-trip
 });
 
-test("redis store: recordSolves passes the script's pending/deleted verdict through", async () => {
-  for (const verdict of ["pending", "deleted"]) {
+test("redis store: recordSolves passes the script's pending/deleted/unlinked verdict through", async () => {
+  for (const verdict of ["pending", "deleted", "unlinked"]) {
     const store = createRedisStore({
       url: "http://srh:80",
       token: "redis-token",
@@ -94,6 +111,17 @@ test("score-hold keys match the app's: ctf:score-hold:<id> and the ctf:auth:user
   assert.equal(scoreHoldKey("octocat"), "ctf:score-hold:octocat");
   // apps/web auth-store/keys.ts rowsKey(AUTH_PREFIX, "user"); the app pins the same literal.
   assert.equal(AUTH_USER_ROWS_KEY, "ctf:auth:user");
+});
+
+test("memory store: with a login, the write lands only while that login links to the player", async () => {
+  const store = createMemoryStore();
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0, "octo"), "unlinked");
+  store.links.set("octo", "hubot");
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0, "octo"), "unlinked");
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+  store.links.set("octo", "octocat");
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0, "Octo"), "ok");
+  assert.deepEqual(await store.getSolves("dvwa"), { "octocat:sqli-low": T0 });
 });
 
 test("memory store: a score hold refuses the write — pending while the row exists, deleted after", async () => {

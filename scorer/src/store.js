@@ -20,26 +20,36 @@ export const scoreHoldKey = (player) => `ctf:score-hold:${player}`;
 // auth-store/keys.ts rowsKey(AUTH_PREFIX, "user"). Both sides pin this literal.
 export const AUTH_USER_ROWS_KEY = "ctf:auth:user";
 
+// A GitHub login's link to a player: apps/web github-link.ts LINK_GITHUB_PREFIX
+// and sync/src/redis.js resolve the same key, the login lowercased.
+export const LINK_GITHUB_PREFIX = "ctf:link:github:";
+
 // The solve write, judged against the score hold in the same EVAL so no
 // delete or unlink can land between the check and the HSETNX. A hold with the
 // account row still present is a delete or unlink in progress ('pending':
 // write nothing, the caller retries and re-resolves the link); a hold with the
-// row gone is a deleted player ('deleted': refused for good). No hold writes
-// each `<player>:<id>` with HSETNX, so the first solve time wins and a replay
-// is a no-op.
-// KEYS: [1] ctf:solves:<target>, [2] ctf:score-hold:<player>, [3] ctf:auth:user
-// ARGV: [1] player, [2] at, [3..] challenge ids
+// row gone is a deleted player ('deleted': refused for good). Then, when the
+// caller names the login it resolved the player from (ARGV[3] non-empty), the
+// link must still name this player: one that moved or went since the
+// resolution (an unlink or delete that finished, a master reset's link
+// sweep) is 'unlinked', nothing written, and the caller retries and
+// re-resolves. Otherwise each `<player>:<id>` is written with HSETNX, so the
+// first solve time wins and a replay is a no-op.
+// KEYS: [1] ctf:solves:<target>, [2] ctf:score-hold:<player>, [3] ctf:auth:user,
+// [4] ctf:link:github:<login> (any key when ARGV[3] is empty)
+// ARGV: [1] player, [2] at, [3] lowercased login or '', [4..] challenge ids
 export const RECORD_SOLVES_SCRIPT = `
 if redis.call('EXISTS', KEYS[2]) == 1 then
   if redis.call('HEXISTS', KEYS[3], ARGV[1]) == 1 then return 'pending' end
   return 'deleted'
 end
-for i = 3, #ARGV do
+if ARGV[3] ~= '' and redis.call('GET', KEYS[4]) ~= ARGV[1] then return 'unlinked' end
+for i = 4, #ARGV do
   redis.call('HSETNX', KEYS[1], ARGV[1] .. ':' .. ARGV[i], ARGV[2])
 end
 return 'ok'
 `;
-const SOLVE_VERDICTS = new Set(["ok", "pending", "deleted"]);
+const SOLVE_VERDICTS = new Set(["ok", "pending", "deleted", "unlinked"]);
 
 // Generic scheduled window: true when `now` is before start / after end.
 // Absent or unparseable bounds are ignored (no bound) — the registration
@@ -98,15 +108,20 @@ export function createMemoryStore({ teams = [] } = {}) {
   // No event settings to judge a score's time against until a test sets
   // some — the same answer the Redis store gives when it cannot read them.
   let policy = null;
-  // Test seams mirroring ctf:score-hold:<player> and the ctf:auth:user rows.
+  // Test seams mirroring ctf:score-hold:<player>, the ctf:auth:user rows and
+  // the ctf:link:github:<login> keys (lowercased login -> player id).
   const holds = new Set();
   const users = new Set();
+  const links = new Map();
   return {
     holds,
     users,
-    async recordSolves(target, player, ids, at) {
+    links,
+    async recordSolves(target, player, ids, at, login = "") {
       if (ids.length === 0) return "ok";
       if (holds.has(player)) return users.has(player) ? "pending" : "deleted";
+      const lower = String(login).toLowerCase();
+      if (lower !== "" && links.get(lower) !== player) return "unlinked";
       let hash = hashes.get(solvesKey(target));
       if (!hash) hashes.set(solvesKey(target), (hash = new Map()));
       for (const id of ids) {
@@ -195,14 +210,17 @@ export function createRedisStore({
   }
 
   return {
-    /** "ok" | "pending" | "deleted" — see RECORD_SOLVES_SCRIPT. A script error
-     *  or any other reply throws, so the caller answers 5xx and sync retries. */
-    async recordSolves(target, player, ids, at) {
+    /** "ok" | "pending" | "deleted" | "unlinked" — see RECORD_SOLVES_SCRIPT.
+     *  `login` is the GitHub login the player was resolved from, or "" for a
+     *  caller that resolved none. A script error or any other reply throws,
+     *  so the caller answers 5xx and sync retries. */
+    async recordSolves(target, player, ids, at, login = "") {
       if (ids.length === 0) return "ok";
+      const lower = String(login).toLowerCase();
       const verdict = await evalScript(
         RECORD_SOLVES_SCRIPT,
-        [solvesKey(target), scoreHoldKey(player), AUTH_USER_ROWS_KEY],
-        [player, at, ...ids],
+        [solvesKey(target), scoreHoldKey(player), AUTH_USER_ROWS_KEY, `${LINK_GITHUB_PREFIX}${lower}`],
+        [player, at, lower, ...ids],
       );
       if (!SOLVE_VERDICTS.has(verdict)) {
         throw new Error(`recordSolves: unexpected script reply ${JSON.stringify(verdict)}`);

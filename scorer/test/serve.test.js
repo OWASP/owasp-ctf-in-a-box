@@ -744,6 +744,31 @@ test("a score for a player on hold (delete or unlink in progress) answers 503 an
   assert.deepEqual(await store.getSolves("dvwa"), {});
 });
 
+// The link check: sync sends the login it resolved the player from, and the
+// write lands only while that login still links to the player.
+
+test("a score whose login no longer links to the player answers 503 and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t);
+  const res = await post({ ...timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"), login: "octocat" });
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: "the login no longer links to this player" });
+  store.links.set("octocat", pid("hubot"));
+  assert.equal((await post({ ...timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"), login: "octocat" })).status, 503);
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+  store.links.set("octocat", pid("octocat"));
+  assert.equal((await post({ ...timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"), login: "OctoCat" })).status, 202);
+  assert.deepEqual(await store.getSolves("dvwa"), { [pid("octocat") + ":sqli-low"]: "2026-08-14T10:00:00.000Z" });
+});
+
+test("a malformed login is a 400 and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t);
+  for (const login of ["", "-x", "a b", 7, "ctf:link:github:x"]) {
+    const res = await post({ ...timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"), login });
+    assert.equal(res.status, 400, String(login));
+  }
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+});
+
 test("a score for a deleted player answers 422 player-deleted and writes nothing", async (t) => {
   const { store, post } = await bootWith(t);
   store.holds.add(pid("octocat"));

@@ -7,6 +7,10 @@ import { createMemoryStore, createRedisStore, outsideScoringWindow, pausedAt } f
 // Targets and challenge ids share the rubric charset (Redis key/field segments).
 const SEGMENT = /^[a-z0-9][a-z0-9-]*$/;
 
+// A GitHub login: the grammar judge.js and sync/src/parse.js accept for a
+// score's author. It becomes a Redis key segment (the link key) here.
+const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$/;
+
 // A legitimate score payload is well under 1 KiB; 64 KiB is generous headroom.
 // Callers are bearer-authed only, so this is defense-in-depth — a leaked token
 // or a misbehaving CI job must not be able to buffer unbounded bytes in memory.
@@ -139,8 +143,15 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
       return json(res, 400, { error: "body must be JSON" });
     }
     // The player id becomes a Redis field segment (`<player>:<challengeId>`).
-    const { player, target, solved, at } = data ?? {};
+    const { player, target, solved, at, login } = data ?? {};
     if (typeof player !== "string" || !PLAYER_ID_RE.test(player)) return json(res, 400, { error: "invalid player" });
+    // The login sync resolved `player` from. Optional on the wire for a caller
+    // that resolves no link (the acceptance and dev-stack seeds); sync always
+    // sends it, and with it the write lands only while that link still names
+    // the player.
+    if (login !== undefined && (typeof login !== "string" || !GITHUB_LOGIN.test(login))) {
+      return json(res, 400, { error: "invalid login" });
+    }
     if (typeof target !== "string" || !SEGMENT.test(target)) return json(res, 400, { error: "invalid target" });
     if (rubric && !rubric.targets.has(target)) return json(res, 400, { error: `unknown target: ${target}` });
     if (!Array.isArray(solved) || solved.some((s) => typeof s !== "string")) {
@@ -153,11 +164,14 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     );
     const solvedAt = await solveTime(at);
     if (solvedAt.status) return json(res, solvedAt.status, solvedAt.body);
-    // The hold check and the write are one script: a delete or unlink in
-    // progress answers 503 (sync retries), a deleted player 422 (final, ADR 67). A
-    // store error throws to the 500 below, so sync retries and nothing is lost.
-    const written = await store.recordSolves(target, player, ids, solvedAt.iso);
+    // The hold check, the link check and the write are one script: a delete
+    // or unlink in progress, or a link that changed since sync resolved it,
+    // answers 503 (sync retries and resolves the login again), a deleted
+    // player 422 (final, ADR 67). A store error throws to the 500 below, so
+    // sync retries and nothing is lost.
+    const written = await store.recordSolves(target, player, ids, solvedAt.iso, login ?? "");
     if (written === "pending") return json(res, 503, { error: "player scores on hold" });
+    if (written === "unlinked") return json(res, 503, { error: "the login no longer links to this player" });
     if (written === "deleted") return json(res, 422, { error: "player deleted", refused: "player-deleted" });
     if (!rubric) seenTargets.add(target);
     res.writeHead(202).end();

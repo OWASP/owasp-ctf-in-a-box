@@ -83,9 +83,9 @@ test("a link made before the close releases every held score at its own time, ol
   const { posts, fetchImpl } = scorer();
   const r = await releaseHeldScores({ cfg: CFG, redis, fetchImpl, log: () => {} });
   assert.deepEqual(posts, [
-    { player: PLAYER, ...strip(entryA) },
-    { player: PLAYER, ...strip(entryB) },
-  ], "exactly {player,target,solved,pr,sha,at}, the original comment time, no repo");
+    { player: PLAYER, login: "octocat", ...strip(entryA) },
+    { player: PLAYER, login: "octocat", ...strip(entryB) },
+  ], "exactly {player,login,target,solved,pr,sha,at}, the original comment time, no repo");
   assert.deepEqual(redis.deleted, [["octocat", "1@2026-11-13T10:00:00Z"], ["octocat", "2@2026-11-13T11:00:00Z"]]);
   assert.deepEqual(redis.held, {});
   assert.equal(r.released, 2);
@@ -198,7 +198,7 @@ for (const [name, status] of [["5xx", () => 503], ["network error", () => "throw
     const { posts, fetchImpl } = scorer(status);
     const r = await releaseHeldScores({ cfg: CFG, redis, fetchImpl, log: () => {} });
     assert.equal(posts.length, 1);
-    assert.deepEqual(posts[0], { player: PLAYER, ...strip(entryA) }, "the oldest is tried first");
+    assert.deepEqual(posts[0], { player: PLAYER, login: "octocat", ...strip(entryA) }, "the oldest is tried first");
     assert.deepEqual(redis.deleted, []);
     assert.equal(Object.keys(redis.held.octocat).length, 2);
     assert.equal(r.released, 0);

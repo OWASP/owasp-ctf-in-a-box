@@ -212,6 +212,54 @@ describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("password res
     await expect(claim.claimAdmin(adminCode, { id: who, name: "p" }, "")).resolves.toEqual({ ok: true, via: "code" });
   });
 
+  // The guard expires (RESET_BUSY_TTL_SECONDS) so a crashed redeem cannot
+  // lock a player out of claiming for good. A credential write delayed past
+  // that expiry must not land after a grant the expiry let through: the write
+  // is fenced on the guard's token in its own EVAL, so it is refused.
+  it("a password write delayed past the guard's expiry is refused, after a claim the expiry let through", async () => {
+    const { reset, ctx, claim, ADMIN_GRANTS_KEY } = await load();
+    const [by, who] = [await admin(), await player("password")];
+    const before = await passwordOf(who);
+    const { code } = await reset.issuePasswordResetCode(who, by);
+    const { code: adminCode } = await claim.issueAdminCode(by);
+    const original = ctx.internalAdapter.updateAccount.bind(ctx.internalAdapter);
+    let claimed: unknown;
+    const spy = vi.spyOn(ctx.internalAdapter, "updateAccount").mockImplementationOnce(async (...args: Parameters<typeof original>) => {
+      // The write stalls until the guard has expired on Redis's clock.
+      await redis(["PEXPIRE", claim.resetBusyKey(who), 1]);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(await redis(["EXISTS", claim.resetBusyKey(who)])).toBe(0);
+      admins.push(who);
+      claimed = await claim.claimAdmin(adminCode, { id: who, name: "p" }, "");
+      return original(...args);
+    });
+    try {
+      await expect(reset.redeemPasswordResetCode(code, PW)).rejects.toThrow(/write fence gone/);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(claimed).toEqual({ ok: true, via: "code" });
+    expect(await redis(["SISMEMBER", ADMIN_GRANTS_KEY, who])).toBe(1);
+    expect(await passwordOf(who)).toBe(before);
+  });
+
+  it("a credential account created after the guard is gone is refused too", async () => {
+    const { reset, ctx, claim } = await load();
+    const [by, who] = [await admin(), await player("github")];
+    const { code } = await reset.issuePasswordResetCode(who, by);
+    const original = ctx.internalAdapter.linkAccount.bind(ctx.internalAdapter);
+    const spy = vi.spyOn(ctx.internalAdapter, "linkAccount").mockImplementationOnce(async (...args: Parameters<typeof original>) => {
+      await redis(["DEL", claim.resetBusyKey(who)]);
+      return original(...args);
+    });
+    try {
+      await expect(reset.redeemPasswordResetCode(code, PW)).rejects.toThrow(/write fence gone/);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await passwordOf(who)).toBeNull();
+  });
+
   it("overlapping redeems each keep the claim guard until their own release", async () => {
     const { reset, claim, ADMIN_GRANTS_KEY } = await load();
     const { upstashEval } = await import("@/lib/upstash");

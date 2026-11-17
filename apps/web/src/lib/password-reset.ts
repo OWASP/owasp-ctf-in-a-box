@@ -13,6 +13,7 @@ import {
 import { ADMIN_GRANTS_KEY } from "@/lib/admin-grants";
 import { auth } from "@/lib/auth";
 import { AUTH_PREFIX, rowsKey } from "@/lib/auth-store/keys";
+import { withWriteFence } from "@/lib/auth-store/write-fence";
 import { errorLabel } from "@/lib/error-label";
 import { OpsValidationError } from "@/lib/ops-errors";
 import { PLAYER_ID_RE } from "@/lib/player";
@@ -108,8 +109,9 @@ if issuer == '' or not gen or redis.call('SISMEMBER', KEYS[3], issuer) == 0 then
 if gen ~= tonumber(redis.call('HGET', KEYS[4], issuer) or '0') then return {'invalid'} end
 return {'ok', v.player}`;
 
-/** How long the guard below keeps a player's claims refused: far longer than
- *  the account write it covers takes. */
+/** How long the guard below keeps a player's claims refused, and so the
+ *  latest a credential write it covers can land: far longer than that write
+ *  takes. */
 export const RESET_BUSY_TTL_SECONDS = 120;
 
 /**
@@ -121,6 +123,13 @@ export const RESET_BUSY_TTL_SECONDS = 120;
  * reads, so no grant can land while any redeem of the player is writing. One
  * token per redeem, so overlapping redeems each keep the guard until their
  * own RELEASE_RESET_GUARD_SCRIPT, or the set expires.
+ *
+ * The set's expiry is safe because the credential write is fenced on the
+ * same token (auth-store/write-fence.ts): each account create or update
+ * checks, in the EVAL that writes it, that the busy set still holds this
+ * redeem's token. A write delayed past the expiry, or past the release, is
+ * refused with nothing written, so a grant CLAIM_SCRIPT lets through once the
+ * set is gone can never be followed by this redeem's password.
  */
 export const RESET_GUARD_SCRIPT = `
 if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1 then return 0 end
@@ -202,6 +211,9 @@ export type RedeemResult = { ok: true; player: string } | { ok: false; reason: "
  * before the write, which also refuses the player's admin claims until the
  * write is done: a grant claimed after the consume either lands before the
  * guard (and the redeem is `invalid`, nothing written) or waits for the write.
+ * A write still in flight when the guard expires is refused by its fence
+ * (the redeem throws, the code is spent), so a grant after the expiry never
+ * precedes this password.
  */
 export async function redeemPasswordResetCode(rawCode: string, newPassword: string): Promise<RedeemResult> {
   if (typeof newPassword !== "string" || newPassword.length < PASSWORD_MIN || newPassword.length > PASSWORD_MAX) {
@@ -240,14 +252,19 @@ export async function redeemPasswordResetCode(rawCode: string, newPassword: stri
   if (guard === 0) return { ok: false, reason: "invalid" };
   if (guard !== 1) throw new Error("password reset: unexpected guard reply");
   try {
-    // Any credential row, whatever its accountId: better-auth's updatePassword
-    // matches only accountId = userId and would silently update nothing else.
-    const credentials = (await internalAdapter.findAccounts(player)).filter((a) => a.providerId === "credential");
-    if (credentials.length === 0) {
-      await internalAdapter.linkAccount({ userId: player, providerId: "credential", accountId: player, password: passwordHash });
-    } else {
-      for (const account of credentials) await internalAdapter.updateAccount(account.id, { password: passwordHash });
-    }
+    // Fenced on this redeem's guard token: a write that reaches Redis once
+    // the token is gone (expired or released) is refused and throws.
+    await withWriteFence({ key: busy, member: token }, async () => {
+      // Any credential row, whatever its accountId: better-auth's
+      // updatePassword matches only accountId = userId and would silently
+      // update nothing else.
+      const credentials = (await internalAdapter.findAccounts(player)).filter((a) => a.providerId === "credential");
+      if (credentials.length === 0) {
+        await internalAdapter.linkAccount({ userId: player, providerId: "credential", accountId: player, password: passwordHash });
+      } else {
+        for (const account of credentials) await internalAdapter.updateAccount(account.id, { password: passwordHash });
+      }
+    });
     await internalAdapter.deleteUserSessions(player);
   } finally {
     // A failed release leaves the token to expire: the player's claims answer

@@ -186,6 +186,27 @@ describe.skipIf(!liveConfigured)("auth-store row scripts against a live SRH prox
     expect(await smembers(indexKey(P, "session", "userId", "u1"))).toEqual(["s1"]);
   });
 
+  it("a fenced write lands only while the fence set holds its member, and writes nothing otherwise", async () => {
+    const { P, hget, raw } = ctx("account");
+    const fence = `${P}:fence`;
+    const row = { id: "a1", userId: "u1", accountId: "x", providerId: "credential", password: "old" };
+    const fencedPut = (expected: string, next: Row, owner = "", ttl = 0) =>
+      upstashEval(PUT_ROW_SCRIPT, [rowsKey(P, "account")], [P, "account", "a1", expected, json(next), csvFor("account"), uniqueFor("account"), owner, ttl, fence, "tok"]);
+    await raw(["SADD", fence, "tok"]);
+    expect(await fencedPut("", row, "owner-1", 60_000)).toBe(1);
+    expect(await raw(["GET", ownerKey(P, "account", "a1")])).toBe("owner-1");
+    const updated = { ...row, password: "new" };
+    await raw(["SREM", fence, "tok"]);
+    expect(await fencedPut(json(row), updated)).toBe(3);
+    expect(await hget("a1")).toBe(json(row));
+    await raw(["SADD", fence, "other"]);
+    expect(await fencedPut(json(row), updated)).toBe(3);
+    await raw(["SADD", fence, "tok"]);
+    expect(await fencedPut(json(row), updated)).toBe(1);
+    expect(await hget("a1")).toBe(json(updated));
+    await raw(["DEL", fence]);
+  });
+
   describe("owner keys and UNDO_CREATE_SCRIPT", () => {
     it("sets the owner key with a TTL only on a create that writes, and keeps it across an update", async () => {
       const { P, putOwned, put, raw } = ctx("session");

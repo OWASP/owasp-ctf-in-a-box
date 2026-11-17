@@ -41,6 +41,7 @@ import {
   resetCodeKey,
   resetPointerKey,
 } from "@/lib/password-reset";
+import { currentWriteFence } from "@/lib/auth-store/write-fence";
 import { ALICE, actor } from "./audit-actor";
 
 const BOB = actor("bob");
@@ -263,6 +264,39 @@ describe("redeemPasswordResetCode", () => {
     expect(guardOrder).toBeGreaterThan(m.hash.mock.invocationCallOrder[0]);
     expect(guardOrder).toBeLessThan(m.ia.updateAccount.mock.invocationCallOrder[0]);
     expect(m.upstashEval.mock.invocationCallOrder[releaseAt]).toBeGreaterThan(m.ia.deleteUserSessions.mock.invocationCallOrder[0]);
+  });
+
+  it("writes the credential under a fence on the guard's own token, and revokes sessions outside it", async () => {
+    codeFor(BOB.id);
+    const seen: Record<string, unknown> = {};
+    m.ia.findAccounts.mockImplementation(async () => {
+      seen.find = currentWriteFence();
+      return [{ id: "acc-1", providerId: "credential" }];
+    });
+    m.ia.updateAccount.mockImplementation(async () => {
+      seen.update = currentWriteFence();
+      return {};
+    });
+    m.ia.deleteUserSessions.mockImplementation(async () => {
+      seen.sessions = currentWriteFence();
+    });
+    await expect(redeemPasswordResetCode(CODE, PW)).resolves.toEqual({ ok: true, player: BOB.id });
+    const guard = m.upstashEval.mock.calls.find((c) => c[0] === RESET_GUARD_SCRIPT)!;
+    const fence = { key: resetBusyKey(BOB.id), member: guard[2][1] };
+    expect(seen).toEqual({ find: fence, update: fence, sessions: null });
+  });
+
+  it("fences a created credential account on the guard token too", async () => {
+    codeFor(BOB.id);
+    m.ia.findAccounts.mockResolvedValue([]);
+    let fence: unknown;
+    m.ia.linkAccount.mockImplementation(async () => {
+      fence = currentWriteFence();
+      return {};
+    });
+    await expect(redeemPasswordResetCode(CODE, PW)).resolves.toEqual({ ok: true, player: BOB.id });
+    const guard = m.upstashEval.mock.calls.find((c) => c[0] === RESET_GUARD_SCRIPT)!;
+    expect(fence).toEqual({ key: resetBusyKey(BOB.id), member: guard[2][1] });
   });
 
   it("a player granted admin after the consume is invalid at the guard, and no password is written", async () => {

@@ -43,6 +43,7 @@ import { createAdapterFactory, type CleanedWhere } from "better-auth/adapters";
 import { upstashPipeline } from "@/lib/upstash";
 import { AUTH_PREFIX, INDEXED_FIELDS, UNIQUE_FIELDS, indexKey, rowsKey } from "./keys";
 import { DEL_ROW_SCRIPT, PUT_ROW_SCRIPT, UNDO_CREATE_SCRIPT } from "./scripts";
+import { currentWriteFence } from "./write-fence";
 import { idLookup, indexLookup, matchesWhere, sortAndPage } from "./where";
 
 type Row = Record<string, unknown>;
@@ -373,6 +374,7 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
        * stops holding it.
        */
       async function cas(op: string, model: string, snap: Snapshot | null, id: string, next: Row | null, owner?: string): Promise<boolean> {
+        const fence = next === null ? null : currentWriteFence();
         const command =
           next === null
             ? ["EVAL", DEL_ROW_SCRIPT, 1, rowsKey(prefix, model), prefix, model, id, snap?.json ?? "", csv(model)]
@@ -388,11 +390,13 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
                 JSON.stringify(next),
                 csv(model),
                 uniques(model).join(","),
-                ...(owner ? [owner, OWNER_TTL_MS] : []),
+                ...(owner ? [owner, OWNER_TTL_MS] : fence ? ["", 0] : []),
+                ...(fence ? [fence.key, fence.member] : []),
               ];
         const [result] = await run(op, model, [command]);
         if (result === 1) return true;
         if (result === 0) return false;
+        if (result === 3 && fence) throw fail(op, model, "write fence gone");
         if (result === 2 && next !== null) throw fail(op, model, `unique ${uniques(model).join(", ")} taken`);
         throw fail(op, model, `unexpected script reply ${JSON.stringify(result)}`);
       }

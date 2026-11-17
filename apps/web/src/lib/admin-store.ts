@@ -35,6 +35,7 @@ import {
 import { ACTIVITY_LOG_KEY } from "@/lib/activity-keys";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP, type AuditActor } from "@/lib/admin-audit-keys";
 import { SPONSORS_KEY, SPONSORS_LOGO_KEY, isSponsorLogoSize, type SponsorLogoSize } from "@/lib/sponsors-keys";
+import { PROVIDER_SWITCH_FIELD, SIGN_IN_PROVIDERS, type SignInProviderId } from "@/lib/sign-in-providers";
 
 // The audit trail's key and cap live in a dependency-free leaf so
 // lib/demo-seed.ts can append to the same trail without importing this module
@@ -149,6 +150,10 @@ export type AdminSettings = {
   /** The projector board's QR code of the event URL. On unless an
    *  organizer turns it off: absent is on, a stored "0" is off. */
   displayQr: boolean;
+  /** Per-provider sign-in switches. On unless an organizer turns one off:
+   *  absent is on, a stored "0" is off. Keys being present is a separate
+   *  gate (see sign-in-providers). */
+  signInProviders: Record<SignInProviderId, boolean>;
   // Scheduled "auto dates" — nullable ISO instants. scoring* gates the freeze
   // through outsideScoringWindow (before start / after end = paused, and an
   // absent start = not launched, so paused); registration* gates
@@ -256,6 +261,9 @@ export type SettingsPatch = {
 } & { [K in NumericKnob]?: number | null | "" } & {
   teamRegistrationOpen?: boolean;
   displayQr?: boolean;
+  signInGithub?: boolean;
+  signInGoogle?: boolean;
+  signInDiscord?: boolean;
   /** The modules this event serves. Replaces the set wholesale;
    *  see updateAdminSettings for the two things it refuses. */
   enabledModules?: ModuleId[];
@@ -345,6 +353,9 @@ function decodeSettings(h: Record<string, string>): AdminSettings {
     scoreCooldownMin: h.scoreCooldownMin === undefined ? null : Number(h.scoreCooldownMin),
     teamRegistrationOpen: h.teamRegistrationOpen !== "0",
     displayQr: h.displayQr !== "0",
+    signInProviders: Object.fromEntries(
+      SIGN_IN_PROVIDERS.map((p) => [p, h[PROVIDER_SWITCH_FIELD[p]] !== "0"]),
+    ) as Record<SignInProviderId, boolean>,
     scoringStartsAt: h.scoringStartsAt ?? null,
     scoringEndsAt: h.scoringEndsAt ?? null,
     registrationStartsAt: h.registrationStartsAt ?? null,
@@ -470,6 +481,8 @@ function windowRefusal(start: string, end: string): AdminValidationError {
   );
 }
 
+const SWITCH_FIELDS: ReadonlySet<string> = new Set(Object.values(PROVIDER_SWITCH_FIELD));
+
 export async function updateAdminSettings(patch: SettingsPatch, actor: AuditActor): Promise<AdminSettings> {
   const keys = Object.keys(patch);
   if (keys.length === 0) throw new AdminValidationError("patch", "empty patch");
@@ -501,6 +514,12 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: AuditActo
     } else if (k === "displayQr") {
       if (typeof v !== "boolean") throw new AdminValidationError(k, `${k} must be a boolean`);
       // On by default, like registration: on HDELs, off writes "0".
+      if (v) dels.push(k);
+      else fields.push(k, "0");
+      changed[k] = v;
+    } else if (SWITCH_FIELDS.has(k)) {
+      if (typeof v !== "boolean") throw new AdminValidationError(k, `${k} must be a boolean`);
+      // On by default, like displayQr: on HDELs, off writes "0".
       if (v) dels.push(k);
       else fields.push(k, "0");
       changed[k] = v;

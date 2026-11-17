@@ -12,6 +12,7 @@ const settings: AdminSettings = {
   paused: false,
   teamRegistrationOpen: true,
   displayQr: true,
+  signInProviders: { github: true, google: true, discord: true },
   hintsEnabled: null,
   hintCost: null,
   hintsMinSolves: null,

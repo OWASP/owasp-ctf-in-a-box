@@ -3,10 +3,12 @@
 // a destructive request goes out only from the confirmation's onConfirm, and
 // a replacement reset code clears the one on screen before it is requested.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import AdminSupportTab, { type UserDetail } from "@/app/(site)/admin/admin-support-tab";
 import type { ConfirmState } from "@/app/(site)/admin/types";
+import ConfirmModal from "@/components/confirm-modal";
 
 const OCTO = "0c7aca70-0000-4000-8000-00000000000a";
 const detail: UserDetail = {
@@ -62,23 +64,52 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** The tab under the real confirmation dialog, wired as admin-controls.tsx
+ *  wires it: Confirm runs the action then closes, Cancel drops the state. */
+function WithConfirm() {
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  return (
+    <>
+      <AdminSupportTab setConfirm={setConfirm} />
+      {confirm && (
+        <ConfirmModal
+          title={confirm.title}
+          body={confirm.body}
+          confirmLabel={confirm.confirmLabel}
+          requireType={confirm.requireType}
+          danger={confirm.danger}
+          onConfirm={() => void Promise.resolve(confirm.onConfirm()).finally(() => setConfirm(null))}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
+    </>
+  );
+}
+
 describe("Unlink GitHub", () => {
   it("sends nothing when the confirmation opens or is cancelled, and one request on confirm", async () => {
     const posts = stubFetch(async () => json({ login: "octocat" }));
-    const confirms = await pickOcto();
+    render(<WithConfirm />);
+    fireEvent.change(screen.getByLabelText("Name or GitHub login"), { target: { value: "octo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(await screen.findByRole("button", { name: /octocat/ }));
+    const control = await screen.findByRole("button", { name: "Unlink GitHub" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Unlink GitHub" }));
-    const opened = confirms.at(-1);
-    expect(opened?.confirmLabel).toBe("Unlink GitHub");
+    fireEvent.click(control);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: "Unlink GitHub" })).toBeTruthy();
     expect(posts).toEqual([]);
 
-    // Cancelling is the modal dropping the state: onConfirm never runs.
-    fireEvent.click(screen.getByRole("button", { name: "Unlink GitHub" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(posts).toEqual([]);
 
+    fireEvent.click(screen.getByRole("button", { name: "Unlink GitHub" }));
+    const reopened = await screen.findByRole("dialog");
     await act(async () => {
-      await opened!.onConfirm();
+      fireEvent.click(within(reopened).getByRole("button", { name: "Unlink GitHub" }));
     });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(posts).toEqual([{ id: OCTO, action: "unlink-github" }]);
   });
 });

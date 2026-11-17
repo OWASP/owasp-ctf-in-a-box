@@ -391,7 +391,9 @@ suggestions.
   per kit account; a player cannot unlink, and an organizer can unlink only
   a link that has not scored), sync resolves the score marker's `author`
   through the first, and an unlinked author's score is held
-  (`ctf:sd:held:*`) until they link. GitHub logins are unique only
+  (`ctf:sd:held:*`) until they link; only a link made before scoring closes
+  releases it, though the release itself may land after the close. GitHub
+  logins are unique only
   case-insensitively, so the link key lowercases both sides. Admin-ness is
   the player id too, never a login. Never key a record on a
   login, and never join across the two keyings (#216 was a verbatim login

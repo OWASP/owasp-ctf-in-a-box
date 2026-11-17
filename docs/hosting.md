@@ -703,13 +703,18 @@ events, not during one.
    **Export**. Keep the file as the record of that event. It is the event's
    settings and content, with no player data; v2 does not migrate it.
 2. **Update `.env`.** Delete the `ADMIN_LOGINS` line (nothing reads it).
-   Generate the admin claim code: `./setup/ctf-setup.sh admin-code` on a
-   Compose box, or `deploy.sh --new-admin-code` on Fly or AWS. Each prints
-   the code once and stores only its hash in `ADMIN_CLAIM_CODE_HASH`. The
-   `GITHUB_CLIENT_*` keys stay required with Secure Development; without it
-   they are optional, like the Google and Discord keys
+   The `GITHUB_CLIENT_*` keys stay required with Secure Development; without
+   it they are optional, like the Google and Discord keys
    ([Sign-in providers](#sign-in-providers)).
-3. **Deploy v2** the same way you deployed v1.
+3. **Deploy v2 and generate the admin claim code.** Each command below prints
+   the code once and stores only its hash in `ADMIN_CLAIM_CODE_HASH`.
+   - Compose: `./setup/ctf-setup.sh admin-code`, then bring the box up as
+     for v1.
+   - Fly: `deploy.sh --new-admin-code`, which deploys and sets the code.
+   - AWS: the code lives in an SSM parameter that only `terraform apply`
+     creates, so follow [the AWS upgrade order](aws.md#deploy): remove
+     `admin_logins`, run `deploy.sh` to build and push, `terraform apply`,
+     then `deploy.sh --skip-build --new-admin-code`.
 4. **Claim `/admin`**: create an account at `/sign-in`, then enter the code
    at `/admin/claim`.
 5. **Run the master reset** (`/admin` → Event → danger zone). It wipes the

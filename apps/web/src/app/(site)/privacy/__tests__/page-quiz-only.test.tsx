@@ -47,6 +47,13 @@ describe("/privacy in a quiz-only event", () => {
     expect(findSecureDevLeaks(html)).toEqual([]);
   });
 
+  it("keys everything by the player id, with no held-score exception", () => {
+    const flat = html.replace(/\s+/g, " ");
+    expect(flat).toContain("never against your name or a GitHub login.");
+    expect(flat).not.toContain("held under that GitHub login");
+    expect(flat).not.toContain("apart from a held score");
+  });
+
   it.each(SECURE_DEV_TERMS)("does not leak %j", (term) => {
     expect(normalizeHtml(html)).not.toContain(term);
   });

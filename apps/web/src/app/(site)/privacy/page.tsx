@@ -182,11 +182,15 @@ export default async function PrivacyPage() {
           items={[
             <>
               A random <span className="text-white">player id</span>. Everything you do here is
-              recorded against it, never against your name or a GitHub login.
+              recorded against it, never against your name or a GitHub login
+              {secureDev
+                ? ", with one exception: a Secure Development score from a GitHub account that is not linked yet is held under that GitHub login until its author links it."
+                : "."}
             </>,
             <>
               Your <span className="text-white">username</span>, which is the name everyone else
-              sees.
+              sees. An account made by signing in with GitHub has no username until you set
+              one, and until then its GitHub login is the name everyone sees.
             </>,
             <>
               A <span className="text-white">hash of your password</span> (scrypt), never the
@@ -304,7 +308,9 @@ export default async function PrivacyPage() {
           ]}
         />
         <p className="mt-4 text-sm leading-relaxed text-zinc-400">
-          All of it is keyed to your random player id and nothing more: no email, no real
+          All of it is keyed to your random player id
+          {secureDev ? " (apart from a held score, keyed by its GitHub login until that login is linked)" : ""} and
+          nothing more: no email, no real
           name, no device or location data. It lives in the Redis database that runs alongside
           this site for this event, next to your account. Being straight with you: apart from the activity
           log&apos;s rolling cap, this competition data has no automatic expiry today, so treat
@@ -391,6 +397,8 @@ export default async function PrivacyPage() {
               : classic
                 ? " how you sign in, any linked GitHub login, and which classic challenges you have solved or attempted."
                 : " how you sign in and any linked GitHub login."}
+          {" "}The one exception is an account made with GitHub that has no username yet: its
+          GitHub login is its public name until you set one.
           {" "}Organizers can look up your account (its username and any linked GitHub login) in the admin panel
           to help you with it.
         </p>

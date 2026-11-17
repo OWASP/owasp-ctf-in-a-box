@@ -296,7 +296,7 @@ describe("GitHub OAuth callback error banner", () => {
       searchParams: Promise.resolve({ error: "server_error" }),
     }).then(renderToStaticMarkup);
     expect(withError).toContain('role="alert"');
-    expect(withError).toContain("GitHub sign-in did not complete.");
+    expect(withError).toContain("Sign-in did not complete.");
     expect(withError).toContain("server_error");
   });
 
@@ -305,7 +305,7 @@ describe("GitHub OAuth callback error banner", () => {
       searchParams: Promise.resolve({ error: "weird.code!" }),
     }).then(renderToStaticMarkup);
     expect(withError).toContain('role="alert"');
-    expect(withError).toContain("GitHub sign-in did not complete.");
+    expect(withError).toContain("Sign-in did not complete.");
     expect(withError).not.toContain("weird.code!");
   });
 
@@ -324,7 +324,7 @@ describe("GitHub OAuth callback error banner", () => {
       searchParams: Promise.resolve({ error: "constructor" }),
     }).then(renderToStaticMarkup);
     expect(withError).toContain('role="alert"');
-    expect(withError).toContain("GitHub sign-in did not complete.");
+    expect(withError).toContain("Sign-in did not complete.");
     expect(withError).toContain("constructor");
   });
 
@@ -333,7 +333,7 @@ describe("GitHub OAuth callback error banner", () => {
       searchParams: Promise.resolve({ error: "__proto__" }),
     }).then(renderToStaticMarkup);
     expect(withError).toContain('role="alert"');
-    expect(withError).toContain("GitHub sign-in did not complete.");
+    expect(withError).toContain("Sign-in did not complete.");
     expect(withError).toContain("__proto__");
   });
 

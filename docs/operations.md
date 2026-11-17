@@ -461,6 +461,15 @@ The panel offers:
   guessed from the request. It is encoded on the server into an inline SVG,
   with no third-party service and no request from the viewer's browser. The
   regular `/leaderboard` never shows it.
+- **Sign-in** (Event tab) — a switch per configured sign-in provider
+  (GitHub, Google, Discord), on by default; a provider without both keys in
+  `.env` has no switch. Turning one off stops new sign-ins through it: the
+  button leaves `/sign-in`, and an OAuth sign-in already started is refused at
+  the callback too. It does not sign out existing sessions. Username and
+  password is always on. Switching a provider off also stops players whose
+  only way in is that provider; they can add a password from their profile
+  first, or an organizer can help. With Secure Development on, players can still link
+  GitHub from their profile while GitHub sign-in is off.
 - **Modules** (Event tab) — which modules this event serves, switchable
   **during the event without a rebuild**. Switching one off removes its nav
   link and stops its board resolving on everyone's next page load; switching it

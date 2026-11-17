@@ -66,6 +66,8 @@ const NOT_FINISHED = "Linking GitHub didn&#x27;t finish. Press Link GitHub accou
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("GITHUB_CLIENT_ID", "gh-id");
+  vi.stubEnv("GITHUB_CLIENT_SECRET", "gh-secret");
   moduleLive.mockImplementation((id: string) => id === "secure-development");
   getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
   getUser.mockResolvedValue(profile);
@@ -88,6 +90,14 @@ describe("profile GitHub link block", () => {
     expect(html).toContain(NOT_LINKED);
     expect(html).toContain("Link GitHub account");
     expect(html).not.toContain(NOT_FINISHED);
+  });
+
+  it("says GitHub linking is not set up, with no button, when the box has no GitHub keys", async () => {
+    vi.stubEnv("GITHUB_CLIENT_ID", "");
+    vi.stubEnv("GITHUB_CLIENT_SECRET", "");
+    const html = await render();
+    expect(html).toContain("GitHub linking is not set up on this box. Ask the organizer.");
+    expect(html).not.toContain("Link GitHub account");
   });
 
   it("renders none of it, and reads no link, when Secure Development is off", async () => {

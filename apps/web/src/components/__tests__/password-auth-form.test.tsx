@@ -50,7 +50,7 @@ afterEach(() => {
 
 describe("PasswordAuthForm tabs", () => {
   it("wires each tab to the panel and names the panel by the selected tab", () => {
-    render(<PasswordAuthForm next="/flags" />);
+    render(<PasswordAuthForm next="/flags" providers={["github"]} />);
     const panel = screen.getByRole("tabpanel");
     for (const tab of screen.getAllByRole("tab")) expect(tab.getAttribute("aria-controls")).toBe(panel.id);
     expect(panel.getAttribute("aria-labelledby")).toBe(screen.getByRole("tab", { name: "Sign in" }).id);
@@ -62,7 +62,7 @@ describe("PasswordAuthForm tabs", () => {
 describe("PasswordAuthForm sign-in", () => {
   it("signs in and navigates through the post-signin step", async () => {
     const href = setHref();
-    render(<PasswordAuthForm next="/flags" />);
+    render(<PasswordAuthForm next="/flags" providers={["github"]} />);
     type("Username", "alice");
     type("Password", PW);
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
@@ -75,7 +75,7 @@ describe("PasswordAuthForm sign-in", () => {
       data: null,
       error: { status: 401, code: "INVALID_USERNAME_OR_PASSWORD" },
     });
-    render(<PasswordAuthForm next="/profile" />);
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
     type("Username", "alice");
     type("Password", PW);
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
@@ -87,7 +87,7 @@ describe("PasswordAuthForm sign-in", () => {
       data: null,
       error: { status: 429, code: "RATE_LIMITED", retryAfterSeconds: 42 },
     });
-    render(<PasswordAuthForm next="/profile" />);
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
     type("Username", "alice");
     type("Password", PW);
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
@@ -99,7 +99,7 @@ describe("PasswordAuthForm sign-in", () => {
       data: null,
       error: { status: 429, code: "RATE_LIMITED", retryAfterSeconds: 0.4 },
     });
-    render(<PasswordAuthForm next="/profile" />);
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
     type("Username", "alice");
     type("Password", PW);
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
@@ -108,7 +108,7 @@ describe("PasswordAuthForm sign-in", () => {
 
   it("falls back to the generic copy for anything else, including a thrown fetch", async () => {
     signInUsername.mockRejectedValue(new Error("network"));
-    render(<PasswordAuthForm next="/profile" />);
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
     type("Username", "alice");
     type("Password", PW);
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
@@ -116,7 +116,7 @@ describe("PasswordAuthForm sign-in", () => {
   });
 
   it("labels the inputs with the right autocomplete hints and a polite error region", () => {
-    const { container } = render(<PasswordAuthForm next="/profile" />);
+    const { container } = render(<PasswordAuthForm next="/profile" providers={["github"]} />);
     expect(screen.getByLabelText("Username").getAttribute("autocomplete")).toBe("username");
     expect(screen.getByLabelText("Password").getAttribute("autocomplete")).toBe("current-password");
     expect(container.querySelector('[aria-live="polite"]')).not.toBeNull();
@@ -126,7 +126,7 @@ describe("PasswordAuthForm sign-in", () => {
 describe("PasswordAuthForm sign-up", () => {
   it("posts only username and password, then navigates through the post-signin step", async () => {
     const href = setHref();
-    render(<PasswordAuthForm next="/profile#team" />);
+    render(<PasswordAuthForm next="/profile#team" providers={[]} />);
     openCreate();
     type("Username", "alice");
     type("Password", PW);
@@ -143,14 +143,14 @@ describe("PasswordAuthForm sign-up", () => {
   });
 
   it("uses new-password autocomplete on both password fields", () => {
-    render(<PasswordAuthForm next="/profile" />);
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
     openCreate();
     expect(screen.getByLabelText("Password").getAttribute("autocomplete")).toBe("new-password");
     expect(screen.getByLabelText("Confirm password").getAttribute("autocomplete")).toBe("new-password");
   });
 
   it("never calls the API when the passwords differ", () => {
-    render(<PasswordAuthForm next="/profile" />);
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
     openCreate();
     type("Username", "alice");
     type("Password", PW);
@@ -161,7 +161,7 @@ describe("PasswordAuthForm sign-up", () => {
   });
 
   it.each([11, 129])("refuses a %i-character password locally, making no request", (n) => {
-    render(<PasswordAuthForm next="/profile" />);
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
     openCreate();
     type("Username", "alice");
     type("Password", "p".repeat(n));
@@ -172,7 +172,7 @@ describe("PasswordAuthForm sign-up", () => {
   });
 
   it.each([12, 128])("posts a %i-character password", async (n) => {
-    render(<PasswordAuthForm next="/profile" />);
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
     openCreate();
     type("Username", "alice");
     type("Password", "p".repeat(n));
@@ -182,7 +182,7 @@ describe("PasswordAuthForm sign-up", () => {
   });
 
   it("checks the username locally before posting", () => {
-    render(<PasswordAuthForm next="/profile" />);
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
     openCreate();
     type("Username", "a b");
     type("Password", PW);
@@ -203,7 +203,7 @@ describe("PasswordAuthForm sign-up", () => {
     ["SOMETHING_ELSE", "Something went wrong. Try again."],
   ])("renders the exact copy for %s", async (code, copy) => {
     $fetch.mockResolvedValue({ data: null, error: { status: 400, code } });
-    render(<PasswordAuthForm next="/profile" />);
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
     openCreate();
     type("Username", "alice");
     type("Password", PW);
@@ -217,7 +217,7 @@ describe("PasswordAuthForm sign-up", () => {
       data: null,
       error: { status: 429, code: "RATE_LIMITED", retryAfterSeconds: 7 },
     });
-    render(<PasswordAuthForm next="/profile" />);
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
     openCreate();
     type("Username", "alice");
     type("Password", PW);
@@ -231,19 +231,62 @@ describe("PasswordAuthForm GitHub", () => {
   it("shows the retry wait when GitHub sign-in is rate limited", async () => {
     signInSocial.mockResolvedValue({ error: { status: 429, code: "RATE_LIMITED", retryAfterSeconds: 30 } });
     vi.spyOn(console, "error").mockImplementation(() => {});
-    render(<PasswordAuthForm next="/profile" />);
-    fireEvent.click(screen.getByRole("button", { name: /github/i }));
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with GitHub" }));
     expect(await screen.findByText("Too many attempts. Try again in 30 seconds.")).toBeTruthy();
   });
 
   it("starts GitHub with the post-signin and error callbacks", () => {
     signInSocial.mockResolvedValue({});
-    render(<PasswordAuthForm next="/flags" />);
-    fireEvent.click(screen.getByRole("button", { name: /github/i }));
+    render(<PasswordAuthForm next="/flags" providers={["github"]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with GitHub" }));
     expect(signInSocial).toHaveBeenCalledWith({
       provider: "github",
       callbackURL: "/api/post-signin?next=%2Fflags",
       errorCallbackURL: "/?next=%2Fflags",
     });
+  });
+});
+
+describe("PasswordAuthForm providers", () => {
+  it("renders no provider button or divider when none are enabled", () => {
+    const { container } = render(<PasswordAuthForm next="/profile" providers={[]} />);
+    expect(screen.queryAllByRole("button", { name: /Sign in with/ })).toHaveLength(0);
+    expect(container.querySelector("[data-provider-divider]")).toBeNull();
+  });
+
+  it("renders one button per enabled provider, in order, with the terminal label", () => {
+    render(<PasswordAuthForm next="/profile" providers={["google", "discord"]} />);
+    const names = screen.getAllByRole("button", { name: /Sign in with/ }).map((b) => b.getAttribute("aria-label"));
+    expect(names).toEqual(["Sign in with Google", "Sign in with Discord"]);
+    expect(screen.getByText(/sign-in --google/)).toBeTruthy();
+    expect(screen.getByText(/sign-in --discord/)).toBeTruthy();
+  });
+
+  it("starts the clicked provider", () => {
+    signInSocial.mockResolvedValue({});
+    render(<PasswordAuthForm next="/flags" providers={["google", "discord"]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
+    expect(signInSocial).toHaveBeenCalledWith({
+      provider: "google",
+      callbackURL: "/api/post-signin?next=%2Fflags",
+      errorCallbackURL: "/?next=%2Fflags",
+    });
+  });
+
+  it("shows copy for a PROVIDER_DISABLED refusal", async () => {
+    signInSocial.mockResolvedValue({ error: { status: 403, code: "PROVIDER_DISABLED" } });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<PasswordAuthForm next="/profile" providers={["google"]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
+    expect(await screen.findByText("That sign-in option is not available.")).toBeTruthy();
+  });
+
+  it("shows copy when the sign-in settings cannot be read", async () => {
+    signInSocial.mockResolvedValue({ error: { status: 503, code: "SIGN_IN_SETTINGS_UNREADABLE" } });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<PasswordAuthForm next="/profile" providers={["google"]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
+    expect(await screen.findByText("Sign-in options could not be loaded. Try again.")).toBeTruthy();
   });
 });

@@ -120,17 +120,30 @@ variable "github_org" {
 }
 
 variable "github_client_id" {
-  description = "The GitHub OAuth app's client id (public; its secret goes in SSM as GITHUB_CLIENT_SECRET). REQUIRED: the app signs every contestant in with it (apps/web/src/lib/auth.ts)."
+  description = "The GitHub OAuth app's client id (public; its secret goes in SSM as GITHUB_CLIENT_SECRET). Required whenever enable_secure_development is true: Secure Development links a contestant's GitHub account to their pull requests. Optional otherwise, where Google or Discord can be the sign-in instead."
   type        = string
   default     = ""
 
   // A client id is not a secret (GitHub shows it on every authorize URL), so
-  // it travels as a plain environment value like github_org. Without it the
-  // stack applies cleanly and then no one can sign in.
+  // it travels as a plain environment value like github_org. A stack with no
+  // GitHub app is legal only when Secure Development is off: sign-in then
+  // rests on google_client_id or discord_client_id.
   validation {
-    condition     = trimspace(var.github_client_id) != ""
-    error_message = "github_client_id must be the GitHub OAuth app's client id: without it no one can sign in."
+    condition     = !var.enable_secure_development || trimspace(var.github_client_id) != ""
+    error_message = "github_client_id must be the GitHub OAuth app's client id when Secure Development is enabled: contestants link GitHub to have their pull requests scored."
   }
+}
+
+variable "google_client_id" {
+  description = "The Google OAuth client id (public; its secret goes in SSM as GOOGLE_CLIENT_SECRET). Optional: empty leaves Google sign-in off, and the secret parameter is neither read nor required."
+  type        = string
+  default     = ""
+}
+
+variable "discord_client_id" {
+  description = "The Discord OAuth client id (public; its secret goes in SSM as DISCORD_CLIENT_SECRET). Optional: empty leaves Discord sign-in off, and the secret parameter is neither read nor required."
+  type        = string
+  default     = ""
 }
 
 variable "github_app_id" {

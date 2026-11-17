@@ -34,6 +34,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import type { AdminSettings } from "@/lib/admin-store";
+import type { SignInProviderId } from "@/lib/sign-in-providers";
 import { phaseFromSettings } from "@/components/phase";
 import {
   ALL_MODULE_IDS,
@@ -114,6 +115,7 @@ export default function AdminControls({
   viewerId,
   sync = null,
   eventName,
+  configuredSignInProviders = [],
 }: {
   initial: AdminSettings;
   /** The module set this deployment starts with, when nothing is stored in
@@ -153,6 +155,9 @@ export default function AdminControls({
    *  getSite(); a client bundle cannot read settings. Threaded through to the
    *  Event tab, which uses it for the master-reset confirmation phrase. */
   eventName: string;
+  /** The OAuth providers whose client id and secret are in .env, computed
+   *  server-side: a client bundle cannot read env. */
+  configuredSignInProviders?: readonly SignInProviderId[];
 }) {
   // The whole settings state machine in one call: stored settings, the nine
   // numeric drafts, pending/error/confirm/resetInfo, and the write path
@@ -275,6 +280,7 @@ export default function AdminControls({
                   pending={pending}
                   resetInfo={resetInfo}
                   eventName={currentEventName}
+                  configuredSignInProviders={configuredSignInProviders}
                   applyField={applyField}
                   statusOf={statusOf}
                   setConfirm={setConfirm}

@@ -115,6 +115,9 @@ that can replace a task without dropping the event.
    aws ssm put-parameter --type SecureString --key-id $K --name $P/BETTER_AUTH_SECRET   --value "$(openssl rand -base64 32)"
    aws ssm put-parameter --type SecureString --key-id $K --name $P/SRH_TOKEN            --value "$(openssl rand -hex 24)"
    aws ssm put-parameter --type SecureString --key-id $K --name $P/GITHUB_CLIENT_SECRET --value "..."
+   # Only for a provider whose client id you set in terraform.tfvars:
+   aws ssm put-parameter --type SecureString --key-id $K --name $P/GOOGLE_CLIENT_SECRET  --value "..."
+   aws ssm put-parameter --type SecureString --key-id $K --name $P/DISCORD_CLIENT_SECRET --value "..."
    # Secure Development only: the GitHub App's key (base64 of the .pem, as
    # sync/src/config.js decodes it) and the scorer's bearer token.
    aws ssm put-parameter --type SecureString --key-id $K --name $P/GITHUB_APP_PRIVATE_KEY --value "$(base64 < app.private-key.pem | tr -d '\n')"
@@ -325,7 +328,8 @@ Every input is in `variables.tf` with its own description;
 | `domain` | The session cookie is `Secure`. There is no working HTTP mode. |
 | `app_image` | What ECS runs. `deploy.sh` writes it into `image.auto.tfvars`; the example carries a placeholder for the bootstrap apply. |
 | `scorer_image`, `sync_image` | Secure Development only. `deploy.sh` writes both into `image.auto.tfvars` (see The images). Each must be this stack's ECR repository in this account and region, or digest-pinned. |
-| `github_client_id` | The GitHub OAuth app's client id (public; the secret is `GITHUB_CLIENT_SECRET` in SSM). Without it no one can sign in. |
+| `github_client_id` | The GitHub OAuth app's client id (public; the secret is `GITHUB_CLIENT_SECRET` in SSM). Required when `enable_secure_development` is true; optional otherwise. |
+| `google_client_id`, `discord_client_id` | Optional sign-in providers: the public client id. Set one only once its secret (`GOOGLE_CLIENT_SECRET` / `DISCORD_CLIENT_SECRET`) is in SSM under the same key: the task lists the secret only when its id is set. |
 
 `github_org` is read at runtime, not baked into the image. It defaults to `""` and is legal empty only for an event that does
 not run Secure Development — the app then falls back to bare repo names. With

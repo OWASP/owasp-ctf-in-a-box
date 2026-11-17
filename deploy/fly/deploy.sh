@@ -182,6 +182,7 @@ count_key_lines() {
 # nothing useful to say about a key nobody here looks at, and listing them is
 # what lets it name the offender instead of printing a diff.
 READ_KEYS="EVENT_URL BETTER_AUTH_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET
+GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET DISCORD_CLIENT_ID DISCORD_CLIENT_SECRET
 SCORER_TOKEN SRH_TOKEN REDIS_PASSWORD SCORE_IMAGE GITHUB_ORG
 ADMIN_CLAIM_CODE_HASH GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY GITHUB_APP_INSTALLATION_ID
 FLY_REGION FLY_AUTO_STOP FLY_VM_SIZE FLY_VM_MEMORY REDIS_DIR STATE_PATH"
@@ -373,7 +374,8 @@ if [ "$CMD" = "init" ]; then
     # presence check below a `.env` that simply has no
     # GITHUB_APP_INSTALLATION_ID line would unpin a working id nobody asked to
     # unpin — and the docs promise only an explicit blank assignment clears.
-    for key in GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET GITHUB_APP_ID \
+    for key in GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET GOOGLE_CLIENT_ID \
+               GOOGLE_CLIENT_SECRET DISCORD_CLIENT_ID DISCORD_CLIENT_SECRET GITHUB_APP_ID \
                GITHUB_APP_PRIVATE_KEY GITHUB_APP_INSTALLATION_ID SCORE_IMAGE \
                GITHUB_ORG; do
       src="$(dotenv_file_value "$FROM_ENV" "$key")"
@@ -685,6 +687,9 @@ esac
 # Poll is the score transport everywhere (#377, ADR 56) and this module has
 # always been poll-only, so sync always runs here and the org is never
 # optional.
+# GITHUB_CLIENT_ID/SECRET stay required because Fly always runs Secure
+# Development (SCORE_IMAGE is required below). GOOGLE_* and DISCORD_* are
+# optional sign-in providers and are deliberately not in this list.
 for name in BETTER_AUTH_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET SCORER_TOKEN \
             GITHUB_ORG; do
   require "$name" "$(env_value "$name")"
@@ -728,7 +733,8 @@ fi
 # once here, before the multi-minute build, so it is actionable, and again in
 # the closing summary, so it cannot scroll away behind the build log.
 # ---------------------------------------------------------------------------
-DRIFT_KEYS="GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET GITHUB_APP_ID
+DRIFT_KEYS="GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET DISCORD_CLIENT_ID DISCORD_CLIENT_SECRET GITHUB_APP_ID
 GITHUB_APP_PRIVATE_KEY GITHUB_APP_INSTALLATION_ID SCORE_IMAGE GITHUB_ORG"
 DRIFTED=""
 
@@ -1107,6 +1113,8 @@ fly_run secrets set --detach --app "$APP" \
   "BETTER_AUTH_SECRET=$(env_value BETTER_AUTH_SECRET)" \
   "BETTER_AUTH_URL=$EVENT_URL" \
   "GITHUB_CLIENT_SECRET=$(env_value GITHUB_CLIENT_SECRET)" \
+  "GOOGLE_CLIENT_SECRET=$(env_value GOOGLE_CLIENT_SECRET)" \
+  "DISCORD_CLIENT_SECRET=$(env_value DISCORD_CLIENT_SECRET)" \
   "SRH_TOKEN=$SRH_TOKEN" \
   "SRH_CONNECTION_STRING=$SRH_CONNECTION_STRING" \
   "UPSTASH_REDIS_REST_TOKEN=$SRH_TOKEN" \

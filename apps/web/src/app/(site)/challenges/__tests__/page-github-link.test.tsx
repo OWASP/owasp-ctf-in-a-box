@@ -62,6 +62,8 @@ const render = async (sp?: Record<string, string>) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("GITHUB_CLIENT_ID", "gh-id");
+  vi.stubEnv("GITHUB_CLIENT_SECRET", "gh-secret");
   buttonProps.length = 0;
   const dvwa = apps.find((a) => a.id === "dvwa")!;
   getEnabledApps.mockResolvedValue([dvwa]);
@@ -87,6 +89,16 @@ describe("/challenges fork links and GitHub linking", () => {
     // A link started here returns here, marked so the page can tell an
     // unfinished link from a finished one.
     expect(buttonProps).toEqual([{ callbackURL: "/challenges?linked=github" }]);
+  });
+
+  it("unlinked with no GitHub keys: says linking is not set up and renders no button", async () => {
+    vi.stubEnv("GITHUB_CLIENT_ID", "");
+    vi.stubEnv("GITHUB_CLIENT_SECRET", "");
+    getGithubLink.mockResolvedValue(null);
+    const html = await render();
+    expect(html).toContain("GitHub linking is not set up on this box. Ask the organizer.");
+    expect(html).not.toContain("Link GitHub account");
+    expect(buttonProps).toEqual([]);
   });
 
   it("unlinked: a failed link's error code shows the shared copy, never the raw code", async () => {

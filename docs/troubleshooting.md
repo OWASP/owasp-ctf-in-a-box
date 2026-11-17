@@ -408,6 +408,32 @@ the `NOAUTH` entry above and `/health/deep`).
 `apps/web/src/lib/rate-limit-store.ts`, not an admin setting; raise them there
 only for an event that needs it.
 
+## Players cannot link GitHub: the startup log says the GitHub keys are missing
+
+**Symptom.** The app logs `[startup] Secure Development is on (SCORE_IMAGE is
+set) but GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET are missing: players cannot
+link GitHub, so no PR will score.` and `/profile` and `/challenges` say GitHub
+linking is not set up.
+
+**Cause and fix.** Secure Development needs the GitHub OAuth app. Set both
+`GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (see
+[Sign-in providers](hosting.md#sign-in-providers)), then recreate the app
+container (`docker compose up -d --no-deps --force-recreate app`, or
+redeploy on Fly or AWS); a plain restart keeps the old environment. A
+provider counts only with both keys non-blank.
+
+## Sign-in says "That sign-in option is not available."
+
+**Symptom.** A player is refused with `PROVIDER_DISABLED` when starting or
+finishing a Google, Discord or GitHub sign-in.
+
+**Cause and fix.** An organizer switched that provider off in the `/admin`
+Event tab's Sign-in section; the callback is gated too, so a sign-in started
+before the switch fails at the end. Switch it back on, or have the player use
+username and password. `SIGN_IN_SETTINGS_UNREADABLE` ("Sign-in options could
+not be loaded") means the switch could not be read from Redis; retry, and see
+[`/health/deep`](#the-monitor-says-healthdeep-is-503-but-the-site-loads-fine).
+
 ## Still stuck
 
 `./setup/ctf-setup.sh doctor` (the org, fork by fork) ·

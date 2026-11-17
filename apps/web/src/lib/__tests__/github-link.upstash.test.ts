@@ -21,7 +21,18 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
     const us = `${base}:user:`;
     const at = `${base}:at`;
     const blocked = `${base}:blocked`;
+    // Stands in for the better-auth user rows hash: a restore checks it.
+    const rows = `${base}:rows`;
     return {
+      // An account row for each id, as a live player has.
+      accounts: async (...ids: string[]) => {
+        const [r] = await upstashPipeline([["HSET", rows, ...ids.flatMap((id) => [id, "{}"])]]);
+        if (r?.error) throw new Error(r.error);
+      },
+      dropAccount: async (id: string) => {
+        const [r] = await upstashPipeline([["HDEL", rows, id]]);
+        if (r?.error) throw new Error(r.error);
+      },
       record: (id: string, login: string) => recordGithubSignIn(id, login, gh, us, at, blocked),
       release: (id: string, block: boolean) => releaseGithubLink(id, { block }, { prefix: gh, userPrefix: us, atKey: at, blockKey: blocked }),
       isBlocked: async (login: string) => {
@@ -51,7 +62,8 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
       },
       read: (id: string) => getGithubLink(id, us, at),
       take: (id: string) => takeGithubLink(id, { prefix: gh, userPrefix: us, atKey: at }),
-      restore: (id: string, taken: TakenLink) => restoreGithubLink(id, taken, { prefix: gh, userPrefix: us, atKey: at }),
+      restore: (id: string, taken: TakenLink) =>
+        restoreGithubLink(id, taken, { prefix: gh, userPrefix: us, atKey: at, rowsKey: rows, blockKey: blocked }),
     };
   }
 
@@ -206,19 +218,21 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
 
   it("a take releases the link and a restore puts it back with its original time", async () => {
     const t = fresh();
+    await t.accounts("u1", "u2", "u3");
     await t.record("u1", "OctoCat");
     const time = await t.linkedAt("u1");
     const taken = await t.take("u1");
     expect(taken).toEqual({ login: "octocat", at: time, ours: true });
     expect(await t.resolve("octocat")).toBeNull();
     expect(await t.read("u1")).toBeNull();
-    await t.restore("u1", taken!);
+    expect(await t.restore("u1", taken!)).toBe("restored");
     expect(await t.resolve("octocat")).toBe("u1");
     expect(await t.read("u1")).toEqual({ login: "octocat", linkedAt: Number(time) });
   });
 
   it("a restore refuses, writing nothing, once another player holds the login", async () => {
     const t = fresh();
+    await t.accounts("u1", "u2", "u3");
     await t.record("u1", "octocat");
     const taken = await t.take("u1");
     expect(await t.record("u2", "octocat")).toBe("linked");
@@ -229,6 +243,7 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
 
   it("a restore leaves a newer link of the player's own alone", async () => {
     const t = fresh();
+    await t.accounts("u1", "u2", "u3");
     await t.record("u1", "octocat");
     const taken = await t.take("u1");
     await t.record("u1", "octo-new");
@@ -239,6 +254,7 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
 
   it("a take through a stale pointer leaves the other player's login key, and the restore does not claim it", async () => {
     const t = fresh();
+    await t.accounts("u1", "u2", "u3");
     await t.record("u1", "octocat");
     await t.setPointer("u3", "octocat");
     const taken = await t.take("u3");
@@ -251,5 +267,34 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
   it("a take with no link returns null", async () => {
     const t = fresh();
     expect(await t.take("u1")).toBeNull();
+  });
+
+  it("a restore after the player's account row is gone recreates no link and blocks the login", async () => {
+    const t = fresh();
+    await t.accounts("u1");
+    await t.record("u1", "octocat");
+    const taken = await t.take("u1");
+    // A delete finished between the take and the restore: its own release
+    // found no link to block.
+    await t.dropAccount("u1");
+    expect(await t.restore("u1", taken!)).toBe("deleted");
+    expect(await t.loginKeyExists("octocat")).toBe(false);
+    expect(await t.read("u1")).toBeNull();
+    expect(await t.linkedAt("u1")).toBeNull();
+    expect(await t.isBlocked("octocat")).toBe(true);
+    expect(await t.record("u2", "octocat")).toBe("blocked");
+  });
+
+  it("a restore for a deleted player leaves a login another account linked meanwhile unblocked", async () => {
+    const t = fresh();
+    await t.accounts("u1", "u2");
+    await t.record("u1", "octocat");
+    const taken = await t.take("u1");
+    expect(await t.record("u2", "octocat")).toBe("linked");
+    await t.dropAccount("u1");
+    expect(await t.restore("u1", taken!)).toBe("deleted");
+    expect(await t.resolve("octocat")).toBe("u2");
+    expect(await t.isBlocked("octocat")).toBe(false);
+    expect(await t.read("u1")).toBeNull();
   });
 });

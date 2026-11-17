@@ -1,5 +1,6 @@
 import "server-only";
 
+import { AUTH_PREFIX, rowsKey } from "@/lib/auth-store/keys";
 import { errorLabel } from "@/lib/error-label";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
 
@@ -17,6 +18,8 @@ export const LINK_AT_KEY = "ctf:link:at";
 // `ctf:link:*` on purpose: a master reset wipes it (RESET_PREFIXES) and keeps
 // every link.
 export const RELINK_BLOCK_KEY = "ctf:relink:blocked";
+// The better-auth user rows hash: a restore checks the account row is still there.
+const AUTH_USER_ROWS = rowsKey(AUTH_PREFIX, "user");
 
 /** A stored link time, or null for anything but a safe decimal integer.
  *  Same rule as `resolveGithubLink` in sync/src/redis.js: a null time counts
@@ -106,15 +109,24 @@ return {login, at, ours and '1' or '0'}
 `;
 
 /**
- * KEYS[1] login key, KEYS[2] reverse pointer, KEYS[3] link-time hash; ARGV[1]
- * player id, ARGV[2] lowercased login, ARGV[3] link time or '', ARGV[4] '1'
- * when the login key named this player when it was taken.
+ * KEYS[1] login key, KEYS[2] reverse pointer, KEYS[3] link-time hash, KEYS[4]
+ * better-auth user rows hash, KEYS[5] re-link blocklist; ARGV[1] player id,
+ * ARGV[2] lowercased login, ARGV[3] link time or '', ARGV[4] '1' when the login
+ * key named this player when it was taken.
  * Puts back what TAKE_LINK_SCRIPT removed, with the original link time, so a
- * restored link reads exactly as it did. Writes nothing and returns
+ * restored link reads exactly as it did. Writes no link and returns
  * 'relinked' when the player has a link again, or 'taken' when another player
- * now holds the login key.
+ * now holds the login key. With the player's account row gone (a delete
+ * finished after the take) it recreates nothing and returns 'deleted': it
+ * blocks the login, as the delete's own release would have, unless another
+ * account linked it in between (then the login is that account's, as a
+ * delete's release leaves a login another player holds).
  */
 export const RESTORE_LINK_SCRIPT = `
+if redis.call('HEXISTS', KEYS[4], ARGV[1]) == 0 then
+  if not redis.call('GET', KEYS[1]) then redis.call('SADD', KEYS[5], ARGV[2]) end
+  return 'deleted'
+end
 if redis.call('EXISTS', KEYS[2]) == 1 then return 'relinked' end
 if ARGV[4] == '1' then
   local holder = redis.call('GET', KEYS[1])
@@ -141,16 +153,25 @@ export async function takeGithubLink(playerId: string, keys: LinkKeys = {}): Pro
   return { login: res[0], at: res[1], ours: res[2] === "1" };
 }
 
-/** Puts a taken link back. Throws on a Redis error, and when the link could
- *  not be restored as it was (the player re-linked, or the login is held). */
-export async function restoreGithubLink(playerId: string, taken: TakenLink, keys: LinkKeys = {}): Promise<void> {
-  const { prefix = LINK_GITHUB_PREFIX, userPrefix = LINK_USER_PREFIX, atKey = LINK_AT_KEY } = keys;
+/** Puts a taken link back. Resolves 'restored', or 'deleted' when the
+ *  player's account row is gone (no link written, the login blocked). Throws
+ *  on a Redis error, and when the link could not be restored as it was (the
+ *  player re-linked, or the login is held). */
+export async function restoreGithubLink(playerId: string, taken: TakenLink, keys: LinkKeys = {}): Promise<"restored" | "deleted"> {
+  const {
+    prefix = LINK_GITHUB_PREFIX,
+    userPrefix = LINK_USER_PREFIX,
+    atKey = LINK_AT_KEY,
+    rowsKey: userRows = AUTH_USER_ROWS,
+    blockKey = RELINK_BLOCK_KEY,
+  } = keys;
   const res = await upstashEval(
     RESTORE_LINK_SCRIPT,
-    [`${prefix}${taken.login}`, `${userPrefix}${playerId}`, atKey],
+    [`${prefix}${taken.login}`, `${userPrefix}${playerId}`, atKey, userRows, blockKey],
     [playerId, taken.login, taken.at, taken.ours ? "1" : "0"],
   );
-  if (res !== "restored") throw new Error(`github link: restore refused (${String(res)})`);
+  if (res !== "restored" && res !== "deleted") throw new Error(`github link: restore refused (${String(res)})`);
+  return res;
 }
 
 export type LinkOutcome = "linked" | "unchanged" | "taken" | "blocked";
@@ -177,7 +198,7 @@ export async function recordGithubSignIn(
 }
 
 /** Key overrides for the live suite; production uses the defaults. */
-export type LinkKeys = { prefix?: string; userPrefix?: string; atKey?: string; blockKey?: string };
+export type LinkKeys = { prefix?: string; userPrefix?: string; atKey?: string; blockKey?: string; rowsKey?: string };
 
 /**
  * Releases a player's GitHub link, and with `block` adds the login to the

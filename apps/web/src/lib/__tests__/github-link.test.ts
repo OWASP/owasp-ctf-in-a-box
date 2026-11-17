@@ -143,12 +143,14 @@ describe("github link", () => {
       await expect(takeGithubLink("id-1")).rejects.toThrow(/unexpected/);
     });
 
-    it("restores the exact login, time and ownership, and throws unless restored", async () => {
+    it("restores the exact login, time and ownership, and throws unless restored or deleted", async () => {
       upstash.upstashEval.mockResolvedValueOnce("restored");
-      await restoreGithubLink("id-1", { login: "octocat", at: "17", ours: true });
+      expect(await restoreGithubLink("id-1", { login: "octocat", at: "17", ours: true })).toBe("restored");
       const [, keys, args] = upstash.upstashEval.mock.calls[0];
-      expect(keys).toEqual(["ctf:link:github:octocat", "ctf:link:user:id-1", "ctf:link:at"]);
+      expect(keys).toEqual(["ctf:link:github:octocat", "ctf:link:user:id-1", "ctf:link:at", "ctf:auth:user", "ctf:relink:blocked"]);
       expect(args).toEqual(["id-1", "octocat", "17", "1"]);
+      upstash.upstashEval.mockResolvedValueOnce("deleted");
+      expect(await restoreGithubLink("id-1", { login: "octocat", at: "17", ours: true })).toBe("deleted");
       upstash.upstashEval.mockResolvedValueOnce("taken");
       await expect(restoreGithubLink("id-1", { login: "octocat", at: "", ours: false })).rejects.toThrow(/taken/);
     });

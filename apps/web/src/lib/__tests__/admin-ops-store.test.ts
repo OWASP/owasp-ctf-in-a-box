@@ -761,7 +761,7 @@ describe("deleteUser: the account and its GitHub login", () => {
     nothingDeleted();
   });
 
-  it("releases the link with a block, then deletes sessions, accounts and the user, then audits", async () => {
+  it("releases the link with a block before any progress write, then deletes sessions, accounts and the user, then audits", async () => {
     linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
     linkDeps.releaseGithubLink.mockResolvedValueOnce("octocat");
     queueDelete();
@@ -773,8 +773,9 @@ describe("deleteUser: the account and its GitHub login", () => {
     expect(authDeps.deleteAccounts).toHaveBeenCalledWith(OCTO);
     expect(authDeps.deleteUser).toHaveBeenCalledWith(OCTO);
     const order = [
-      mocks.upstashEval.mock.invocationCallOrder.at(-1)!, // held clear
       linkDeps.releaseGithubLink.mock.invocationCallOrder[0],
+      mocks.upstashEval.mock.invocationCallOrder[0], // first progress write (the classic reset)
+      mocks.upstashEval.mock.invocationCallOrder.at(-1)!, // held clear
       authDeps.deleteUserSessions.mock.invocationCallOrder[0],
       authDeps.deleteAccounts.mock.invocationCallOrder[0],
       authDeps.deleteUser.mock.invocationCallOrder[0],
@@ -879,15 +880,19 @@ describe("deleteAllAccounts", () => {
     const { cleared } = await deleteAllAccounts("delete all accounts", ADMIN);
 
     expect(storeDeps.resetEvent).toHaveBeenCalledWith(ADMIN);
+    // The links go first, so sync holds a linked login's scores instead of
+    // scoring them into the reset; master reset clears ctf:relink:* itself.
     expect(storeDeps.scanDelByPrefix.mock.calls.map((c) => c[0])).toEqual([
-      "ctf:auth:*",
       "ctf:link:*",
-      "ctf:relink:*",
+      "ctf:auth:*",
       "ctf:admin:code:*",
       "ctf:admin:reset-code:*",
     ]);
+    expect(storeDeps.scanDelByPrefix.mock.invocationCallOrder[0]).toBeLessThan(
+      storeDeps.resetEvent.mock.invocationCallOrder[0],
+    );
     expect(storeDeps.resetEvent.mock.invocationCallOrder[0]).toBeLessThan(
-      storeDeps.scanDelByPrefix.mock.invocationCallOrder[0],
+      storeDeps.scanDelByPrefix.mock.invocationCallOrder[1],
     );
     expect(allCommands()).toContainEqual(["DEL", "ctf:admin:grants", "ctf:admin:grant-gen"]);
     // The spent bootstrap code stays spent.
@@ -898,7 +903,6 @@ describe("deleteAllAccounts", () => {
       users: 2,
       auth: "ctf:auth:*".length,
       links: "ctf:link:*".length,
-      relink: "ctf:relink:*".length,
       adminCodes: "ctf:admin:code:*".length,
       resetCodes: "ctf:admin:reset-code:*".length,
       adminGrantKeys: 2,
@@ -908,7 +912,7 @@ describe("deleteAllAccounts", () => {
 
   it("a failed sweep rejects with no audit line and no grant delete", async () => {
     storeDeps.resetEvent.mockResolvedValueOnce({ cleared: {}, resetAt: "1" });
-    storeDeps.scanDelByPrefix.mockRejectedValueOnce(new Error("command failed (reset ctf:auth:*): READONLY"));
+    storeDeps.scanDelByPrefix.mockResolvedValueOnce(0).mockRejectedValueOnce(new Error("command failed (reset ctf:auth:*): READONLY"));
     await expect(deleteAllAccounts("delete all accounts", ADMIN)).rejects.toThrow(/READONLY/);
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
@@ -921,10 +925,11 @@ describe("deleteAllAccounts", () => {
     expect(auditLine()).toBeNull();
   });
 
-  it("a failed reset stops before any account is touched", async () => {
+  it("a failed reset stops after the links, before any account is touched", async () => {
     storeDeps.resetEvent.mockRejectedValueOnce(new Error("reset failed"));
+    storeDeps.scanDelByPrefix.mockResolvedValue(0);
     await expect(deleteAllAccounts("delete all accounts", ADMIN)).rejects.toThrow("reset failed");
-    expect(storeDeps.scanDelByPrefix).not.toHaveBeenCalled();
+    expect(storeDeps.scanDelByPrefix.mock.calls.map((c) => c[0])).toEqual(["ctf:link:*"]);
     expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 });

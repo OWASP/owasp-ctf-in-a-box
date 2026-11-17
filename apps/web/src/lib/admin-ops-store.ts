@@ -527,8 +527,11 @@ return 1`;
  * nor event state, come before any write.
  *
  * Re-runnable: every step tolerates what an earlier, failed run already
- * removed, so a delete that threw part way completes on the next call. A
- * cached session can keep working for up to the cookie cache's lifetime.
+ * removed, so a delete that threw part way completes on the next call. One
+ * gap: a retry no longer sees the released login, so held scores a failed run
+ * left behind stay until the next master reset; the login is blocked, so no
+ * account can collect them. A cached session can keep working for up to the
+ * cookie cache's lifetime.
  */
 export async function deleteUser(
   rawId: unknown,
@@ -555,6 +558,12 @@ export async function deleteUser(
   // read aborted with nothing written.
   const heldLogin = detail.github?.login.toLowerCase() ?? null;
 
+  // The link goes, blocked, before any other write: from here sync reads the
+  // login as unlinked and holds its scores instead of scoring them into the
+  // reset below, and a failure later leaves an account a retry deletes, never
+  // an account whose login re-links.
+  const blockedLogin = await releaseGithubLink(player, { block: true });
+
   // One score-lowering bracket around the WHOLE delete: the inner
   // reset nests its own — the marker is a counter — so the in-progress flag
   // stays up through the tail writes (membership, account record), and the
@@ -578,9 +587,6 @@ export async function deleteUser(
       await upstashEval(CLEAR_HELD_SCRIPT, [`ctf:sd:held:by:${heldLogin}`, "ctf:sd:held:authors"], [heldLogin]);
     }
 
-    // The link goes, blocked, before the account: a failure after it leaves
-    // an account a retry deletes, never an account whose login re-links.
-    const blockedLogin = await releaseGithubLink(player, { block: true });
     await internalAdapter.deleteUserSessions(player);
     await internalAdapter.deleteAccounts(player);
     await internalAdapter.deleteUser(player);
@@ -604,19 +610,20 @@ export const DELETE_ALL_ACCOUNTS_CONFIRM = "delete all accounts";
 
 /** Account namespaces `deleteAllAccounts` sweeps after the master reset, as
  *  [label, SCAN pattern]. None of them matches `ctf:admin:claim:spent` (the
- *  spent bootstrap code stays spent), the audit list or the settings. */
+ *  spent bootstrap code stays spent), the audit list or the settings. The
+ *  GitHub links go before the reset (`LINK_PATTERN`), and the re-link
+ *  blocklist goes with the reset itself (RESET_PREFIXES). */
+const LINK_PATTERN = "ctf:link:*";
 const ACCOUNT_PREFIXES: readonly [string, string][] = [
   ["auth", `${AUTH_PREFIX}:*`],
-  ["links", "ctf:link:*"],
-  ["relink", "ctf:relink:*"],
   ["adminCodes", `${ADMIN_CODE_PREFIX}*`],
   ["resetCodes", `${RESET_CODE_PREFIX}*`],
 ];
 
 /**
- * Empties the box of people: the master reset, then every account, session,
- * GitHub link, re-link block, outstanding admin or reset code, and every admin
- * grant, the acting admin's included. Content, settings, the audit list and
+ * Empties the box of people: every GitHub link, the master reset (which
+ * takes the re-link blocklist too), then every account, session, outstanding
+ * admin or reset code, and every admin grant, the acting admin's included. Content, settings, the audit list and
  * the spent bootstrap code stay. Afterwards `/admin` is closed until someone
  * claims it with a fresh claim code: `requireAdmin` reads the grants, so a
  * cached session that survives the sweep is still refused.
@@ -631,8 +638,11 @@ export async function deleteAllAccounts(
   if (confirm !== DELETE_ALL_ACCOUNTS_CONFIRM) {
     throw new OpsValidationError("confirm", `Type ${DELETE_ALL_ACCOUNTS_CONFIRM} to confirm.`);
   }
+  // Links first: sync then holds every linked login's scores rather than
+  // scoring them into the freshly reset event.
+  const links = await scanDelByPrefix(LINK_PATTERN);
   const { cleared: resetCleared } = await resetEvent(actor);
-  const cleared: Record<string, number> = { ...resetCleared };
+  const cleared: Record<string, number> = { ...resetCleared, links };
   for (const [label, pattern] of ACCOUNT_PREFIXES) {
     cleared[label] = await scanDelByPrefix(pattern);
   }

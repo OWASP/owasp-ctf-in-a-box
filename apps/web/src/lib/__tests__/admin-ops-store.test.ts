@@ -27,7 +27,13 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
     upstashPipeline: mocks.upstashPipeline,
   };
 });
-vi.mock("@/lib/admin-store", () => ({ ADMIN_AUDIT_KEY: "ctf:admin:audit", AUDIT_CAP: 500 }));
+// deleteAllAccounts runs the master reset and sweeps the account namespaces
+// through the reset's own SCAN+DEL walk.
+const storeDeps = vi.hoisted(() => ({ resetEvent: vi.fn(), scanDelByPrefix: vi.fn() }));
+vi.mock("@/lib/admin-store", () => ({ ADMIN_AUDIT_KEY: "ctf:admin:audit", AUDIT_CAP: 500, ...storeDeps }));
+// deleteUser refuses an organizer before anything is written.
+const grantDeps = vi.hoisted(() => ({ isAdminGrantee: vi.fn() }));
+vi.mock("@/lib/admin-grants", () => ({ ADMIN_GRANTS_KEY: "ctf:admin:grants", ...grantDeps }));
 // #553: a per-player reset lowers that player's score; the store brackets
 // its writes with the leaf's begin/end (shared in-progress marker + revision
 // bump) so no app task charges a hint against a gross the reset is removing.
@@ -51,8 +57,16 @@ vi.mock("@/lib/player", () => ({
 const linkDeps = vi.hoisted(() => ({ getGithubLink: vi.fn(), releaseGithubLink: vi.fn() }));
 vi.mock("@/lib/github-link", () => linkDeps);
 
-// unlinkGithub reads and deletes the player's better-auth account rows.
-const authDeps = vi.hoisted(() => ({ findAccounts: vi.fn(), deleteAccount: vi.fn() }));
+// unlinkGithub reads and deletes the player's better-auth account rows;
+// deleteUser removes the user row, its accounts and its sessions.
+const authDeps = vi.hoisted(() => ({
+  findAccounts: vi.fn(),
+  deleteAccount: vi.fn(),
+  findUserById: vi.fn(),
+  deleteUserSessions: vi.fn(),
+  deleteAccounts: vi.fn(),
+  deleteUser: vi.fn(),
+}));
 vi.mock("@/lib/auth", () => ({ auth: { $context: Promise.resolve({ internalAdapter: authDeps }) } }));
 
 // renameUser reads the old username and writes the new one through the
@@ -63,6 +77,7 @@ vi.mock("@/lib/username-store", () => nameDeps);
 import {
   CLEAR_HELD_SCRIPT,
   OpsValidationError,
+  deleteAllAccounts,
   deleteUser,
   forceAddToTeam,
   forceDisbandTeam,
@@ -130,6 +145,16 @@ function mockQuizAndHintsPipeline() {
 beforeEach(() => {
   vi.clearAllMocks();
   linkDeps.getGithubLink.mockResolvedValue(null);
+  linkDeps.releaseGithubLink.mockResolvedValue(null);
+  grantDeps.isAdminGrantee.mockResolvedValue(false);
+  // The auth row exists until deleteUser removes it.
+  let authRow = true;
+  authDeps.findUserById.mockReset().mockImplementation(async (id: string) => (authRow ? { id } : null));
+  authDeps.deleteUserSessions.mockReset().mockResolvedValue(undefined);
+  authDeps.deleteAccounts.mockReset().mockResolvedValue(undefined);
+  authDeps.deleteUser.mockReset().mockImplementation(async () => {
+    authRow = false;
+  });
   playerDeps.getPlayerProfiles.mockImplementation(async (ids: string[]) => new Map(ids.map((id) => [id, profile(id, "octocat")])));
 });
 
@@ -564,8 +589,8 @@ describe("deleteUser", () => {
     for (const bucket of ["team-join", "hint-reveal"]) {
       expect(cmds).toContainEqual(["DEL", `ctf:rl:${bucket}:${OCTO}`]);
     }
-    // The account and its GitHub link are the account store's, not this
-    // tool's: nothing here names a ctf:auth:* or ctf:link:* key.
+    // The account goes through better-auth's adapter and the link through
+    // github-link's script: no pipeline here names a ctf:auth:* or ctf:link:* key.
     expect(cmds.some((c) => c.slice(1).some((a) => /^ctf:(auth|link):/.test(String(a))))).toBe(false);
     // #553: the delete brackets the WHOLE thing (the inner reset nests its
     // own bracket — the marker is a counter), so the in-progress flag stays
@@ -669,6 +694,238 @@ describe("deleteUser: a failed tail write is not a delete", () => {
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]);
     await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/READONLY/);
     expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("deleteUser: the account and its GitHub login", () => {
+  /** Queues the pipelines a no-team, no-SD-keys delete walks through; a
+   *  delete that fails before its audit line queues none for it, so no reply
+   *  is left over for the next test. */
+  function queueDelete(audited = true) {
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    mockNoSecureDevKeys();
+    mockModuleResets([0, 0, 0, 0, 0]);
+    mockQuizAndHintsPipeline();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
+    if (audited) mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
+  }
+  const auditLine = (action: string) => {
+    const cmd = allCommands().find((c) => c[0] === "LPUSH" && String(c[2]).includes(`"${action}"`));
+    return cmd ? JSON.parse(String(cmd[2])) : null;
+  };
+  const nothingDeleted = () => {
+    expect(allCommands().some((c) => c[0] === "DEL" || c[0] === "SREM" || c[0] === "LPUSH")).toBe(false);
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+    expect(linkDeps.releaseGithubLink).not.toHaveBeenCalled();
+    expect(authDeps.deleteUserSessions).not.toHaveBeenCalled();
+    expect(authDeps.deleteAccounts).not.toHaveBeenCalled();
+    expect(authDeps.deleteUser).not.toHaveBeenCalled();
+  };
+
+  it("refuses an organizer with the organizer copy and deletes nothing", async () => {
+    grantDeps.isAdminGrantee.mockResolvedValue(true);
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    const err = await deleteUser(OCTO, ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err.message).toBe("octocat is an organizer. Revoke their admin access first.");
+    expect(grantDeps.isAdminGrantee).toHaveBeenCalledWith(OCTO);
+    nothingDeleted();
+    expect(foldCache.beginScoreLowering).not.toHaveBeenCalled();
+  });
+
+  it("checks the grant before the captaincy", async () => {
+    grantDeps.isAdminGrantee.mockResolvedValue(true);
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget("red-team"), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", OCTO));
+    mockNoSecureDevKeys();
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/organizer/);
+    nothingDeleted();
+  });
+
+  it("a failed grant read refuses instead of reading as not an organizer", async () => {
+    grantDeps.isAdminGrantee.mockRejectedValue(new Error("Upstash SISMEMBER admin grants failed: NOAUTH"));
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/NOAUTH/);
+    nothingDeleted();
+  });
+
+  it("releases the link with a block, then deletes sessions, accounts and the user, then audits", async () => {
+    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
+    linkDeps.releaseGithubLink.mockResolvedValueOnce("octocat");
+    queueDelete();
+    mocks.upstashEval.mockResolvedValueOnce(1); // held clear
+    await deleteUser(OCTO, ADMIN);
+
+    expect(linkDeps.releaseGithubLink).toHaveBeenCalledWith(OCTO, { block: true });
+    expect(authDeps.deleteUserSessions).toHaveBeenCalledWith(OCTO);
+    expect(authDeps.deleteAccounts).toHaveBeenCalledWith(OCTO);
+    expect(authDeps.deleteUser).toHaveBeenCalledWith(OCTO);
+    const order = [
+      mocks.upstashEval.mock.invocationCallOrder.at(-1)!, // held clear
+      linkDeps.releaseGithubLink.mock.invocationCallOrder[0],
+      authDeps.deleteUserSessions.mock.invocationCallOrder[0],
+      authDeps.deleteAccounts.mock.invocationCallOrder[0],
+      authDeps.deleteUser.mock.invocationCallOrder[0],
+      mocks.upstashPipeline.mock.invocationCallOrder.at(-1)!, // audit
+    ];
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(auditLine("ops:user-delete")).toMatchObject({
+      action: "ops:user-delete",
+      player: OCTO,
+      leftTeam: null,
+      blockedLogin: "octocat",
+      by: ADMIN.id,
+    });
+  });
+
+  it("audits blockedLogin null for a player with no link", async () => {
+    queueDelete();
+    await deleteUser(OCTO, ADMIN);
+    expect(linkDeps.releaseGithubLink).toHaveBeenCalledWith(OCTO, { block: true });
+    expect(auditLine("ops:user-delete")).toMatchObject({ player: OCTO, blockedLogin: null });
+  });
+
+  it("deletes an account that holds no event state", async () => {
+    queueDelete();
+    await expect(deleteUser(OCTO, ADMIN)).resolves.toMatchObject({ leftTeam: null });
+    expect(authDeps.deleteUser).toHaveBeenCalledWith(OCTO);
+  });
+
+  it("an id with neither an account nor event state is No such player., and nothing is written", async () => {
+    authDeps.findUserById.mockResolvedValue(null);
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    const err = await deleteUser(OCTO, ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err.message).toBe("No such player.");
+    nothingDeleted();
+  });
+
+  it("event state with no account row is still deleted", async () => {
+    authDeps.findUserById.mockResolvedValue(null);
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget("red-team"), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mocks.upstashPipeline.mockResolvedValueOnce(replies("Red Team", BOB));
+    mockNoSecureDevKeys();
+    mockNoSecureDevKeys();
+    mockModuleResets([0, 0, 0, 0, 0]);
+    mockQuizAndHintsPipeline();
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
+    await expect(deleteUser(OCTO, ADMIN)).resolves.toMatchObject({ leftTeam: "red-team" });
+  });
+
+  it("a failed auth delete rejects with no audit line", async () => {
+    linkDeps.releaseGithubLink.mockResolvedValueOnce("octocat");
+    queueDelete(false);
+    authDeps.deleteAccounts.mockRejectedValueOnce(new Error("auth store: deleteMany account failed"));
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("auth store");
+    expect(authDeps.deleteUser).not.toHaveBeenCalled();
+    expect(auditLine("ops:user-delete")).toBeNull();
+    expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(2);
+  });
+
+  it("a user row that survives the delete is a failure, not a delete", async () => {
+    // better-auth's single-row delete swallows a failed read and deletes
+    // nothing; the re-read is what notices.
+    authDeps.deleteUser.mockResolvedValueOnce(undefined);
+    queueDelete(false);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/account/);
+    expect(auditLine("ops:user-delete")).toBeNull();
+  });
+});
+
+describe("deleteAllAccounts", () => {
+  const auditLine = () => {
+    const cmd = allCommands().find((c) => c[0] === "LPUSH");
+    return cmd ? JSON.parse(String(cmd[2])) : null;
+  };
+
+  it.each([["DELETE ALL ACCOUNTS"], ["delete all accounts "], [""], [undefined], [true]])(
+    "refuses confirm %j and changes nothing",
+    async (confirm) => {
+      const err = await deleteAllAccounts(confirm, ADMIN).catch((e) => e);
+      expect(err).toBeInstanceOf(OpsValidationError);
+      expect(err.field).toBe("confirm");
+      expect(err.message).toBe("Type delete all accounts to confirm.");
+      expect(storeDeps.resetEvent).not.toHaveBeenCalled();
+      expect(storeDeps.scanDelByPrefix).not.toHaveBeenCalled();
+      expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+    },
+  );
+
+  it("resets the event, sweeps the account namespaces, drops the grants, and audits the counts", async () => {
+    storeDeps.resetEvent.mockResolvedValueOnce({ cleared: { solves: 3, users: 2 }, resetAt: "1" });
+    storeDeps.scanDelByPrefix.mockImplementation(async (pattern: string) => pattern.length);
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(2)); // DEL grants + gen
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
+
+    const { cleared } = await deleteAllAccounts("delete all accounts", ADMIN);
+
+    expect(storeDeps.resetEvent).toHaveBeenCalledWith(ADMIN);
+    expect(storeDeps.scanDelByPrefix.mock.calls.map((c) => c[0])).toEqual([
+      "ctf:auth:*",
+      "ctf:link:*",
+      "ctf:relink:*",
+      "ctf:admin:code:*",
+      "ctf:admin:reset-code:*",
+    ]);
+    expect(storeDeps.resetEvent.mock.invocationCallOrder[0]).toBeLessThan(
+      storeDeps.scanDelByPrefix.mock.invocationCallOrder[0],
+    );
+    expect(allCommands()).toContainEqual(["DEL", "ctf:admin:grants", "ctf:admin:grant-gen"]);
+    // The spent bootstrap code stays spent.
+    expect(allCommands().some((c) => c.includes("ctf:admin:claim:spent"))).toBe(false);
+    expect(storeDeps.scanDelByPrefix.mock.calls.some((c) => "ctf:admin:claim:spent".startsWith(String(c[0]).replace("*", "")))).toBe(false);
+    expect(cleared).toEqual({
+      solves: 3,
+      users: 2,
+      auth: "ctf:auth:*".length,
+      links: "ctf:link:*".length,
+      relink: "ctf:relink:*".length,
+      adminCodes: "ctf:admin:code:*".length,
+      resetCodes: "ctf:admin:reset-code:*".length,
+      adminGrantKeys: 2,
+    });
+    expect(auditLine()).toMatchObject({ action: "ops:delete-all-accounts", by: ADMIN.id, cleared });
+  });
+
+  it("a failed sweep rejects with no audit line and no grant delete", async () => {
+    storeDeps.resetEvent.mockResolvedValueOnce({ cleared: {}, resetAt: "1" });
+    storeDeps.scanDelByPrefix.mockRejectedValueOnce(new Error("command failed (reset ctf:auth:*): READONLY"));
+    await expect(deleteAllAccounts("delete all accounts", ADMIN)).rejects.toThrow(/READONLY/);
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+  });
+
+  it("a failed grant delete rejects with no audit line", async () => {
+    storeDeps.resetEvent.mockResolvedValueOnce({ cleared: {}, resetAt: "1" });
+    storeDeps.scanDelByPrefix.mockResolvedValue(0);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]);
+    await expect(deleteAllAccounts("delete all accounts", ADMIN)).rejects.toThrow(/READONLY/);
+    expect(auditLine()).toBeNull();
+  });
+
+  it("a failed reset stops before any account is touched", async () => {
+    storeDeps.resetEvent.mockRejectedValueOnce(new Error("reset failed"));
+    await expect(deleteAllAccounts("delete all accounts", ADMIN)).rejects.toThrow("reset failed");
+    expect(storeDeps.scanDelByPrefix).not.toHaveBeenCalled();
+    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
   });
 });
 

@@ -1,6 +1,10 @@
 import "server-only";
 import { assertPipelineOk, parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
-import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-store";
+import { ADMIN_AUDIT_KEY, AUDIT_CAP, resetEvent, scanDelByPrefix } from "@/lib/admin-store";
+import { ADMIN_GRANTS_KEY, isAdminGrantee } from "@/lib/admin-grants";
+import { ADMIN_CODE_PREFIX, ADMIN_GRANT_GEN_KEY } from "@/lib/admin-claim";
+import { RESET_CODE_PREFIX } from "@/lib/password-reset";
+import { AUTH_PREFIX } from "@/lib/auth-store/keys";
 import type { AuditActor } from "@/lib/admin-audit-keys";
 import { PLAYER_ID_RE, displayNameOf, getPlayerProfiles } from "@/lib/player";
 import { rateLimitKeysFor } from "@/lib/rate-limit-store";
@@ -504,17 +508,22 @@ redis.call('SREM', KEYS[2], ARGV[1])
 return 1`;
 
 /**
- * Removes a contestant's event state entirely: their progress, their hints,
- * their team membership, their `ctf:user:<id>` record and their rate-limit
- * counters. For a "delete my data" request as much as for support.
+ * Removes a contestant entirely: their progress, their hints, their team
+ * membership, their `ctf:user:<id>` record, their rate-limit counters, the
+ * scores sync is holding for their linked login (`ctf:sd:held:*`), their
+ * GitHub link, and their account (the better-auth user row, its account rows
+ * and its sessions, so the username is free again). The released login goes on
+ * the re-link blocklist, so it cannot come back on a new account and collect
+ * held scores until a master reset clears the list.
  *
- * The account itself (`ctf:auth:*`) and its GitHub link (`ctf:link:*`) are
- * NOT touched: they belong to the account store, and this clears what the
- * event holds about a player, not who they are. Releasing the link (and
- * blocking a re-link) is a separate decision. Scores sync is holding for the
- * linked login (`ctf:sd:held:*`) are event state and are cleared.
+ * Refused for an organizer (revoke the grant first: this also covers deleting
+ * yourself and the last admin) and for a captain (see `forceTransferCaptain`).
+ * Both refusals, and the "No such player." for an id with neither an account
+ * nor event state, come before any write.
  *
- * A captain is a deliberate refusal here — see `forceTransferCaptain`.
+ * Re-runnable: every step tolerates what an earlier, failed run already
+ * removed, so a delete that threw part way completes on the next call. A
+ * cached session can keep working for up to the cookie cache's lifetime.
  */
 export async function deleteUser(
   rawId: unknown,
@@ -523,11 +532,18 @@ export async function deleteUser(
   const player = requirePlayerId(rawId);
 
   const detail = await lookupUser(player);
+  if (await isAdminGrantee(player)) {
+    throw new OpsValidationError("id", `${detail.name} is an organizer. Revoke their admin access first.`);
+  }
   if (detail.team?.isCaptain) {
     throw new OpsValidationError(
       "id",
       `${detail.name} is captain of "${detail.team.name}". Transfer the captaincy or disband the team first.`,
     );
+  }
+  const { internalAdapter } = await auth.$context;
+  if (!detail.known && !(await internalAdapter.findUserById(player))) {
+    throw new OpsValidationError("id", "No such player.");
   }
 
   // Read before the bracket: a failed read aborts with nothing written.
@@ -556,11 +572,71 @@ export async function deleteUser(
       await upstashEval(CLEAR_HELD_SCRIPT, [`ctf:sd:held:by:${heldLogin}`, "ctf:sd:held:authors"], [heldLogin]);
     }
 
-    await audit("ops:user-delete", actor, { player, leftTeam });
+    // The link goes, blocked, before the account: a failure after it leaves
+    // an account a retry deletes, never an account whose login re-links.
+    const blockedLogin = await releaseGithubLink(player, { block: true });
+    await internalAdapter.deleteUserSessions(player);
+    await internalAdapter.deleteAccounts(player);
+    await internalAdapter.deleteUser(player);
+    // better-auth's single-row delete swallows a failed read of the row and
+    // then deletes nothing, so the re-read (which throws on a Redis error) is
+    // what tells a delete from a no-op.
+    if (await internalAdapter.findUserById(player)) {
+      throw new Error("delete user: the account row is still there");
+    }
+
+    await audit("ops:user-delete", actor, { player, leftTeam, blockedLogin });
     return { cleared: reset.cleared, warnings: reset.warnings, leftTeam };
   } finally {
     await endScoreLowering();
   }
+}
+
+// --- delete all accounts ----------------------------------------------------
+
+export const DELETE_ALL_ACCOUNTS_CONFIRM = "delete all accounts";
+
+/** Account namespaces `deleteAllAccounts` sweeps after the master reset, as
+ *  [label, SCAN pattern]. None of them matches `ctf:admin:claim:spent` (the
+ *  spent bootstrap code stays spent), the audit list or the settings. */
+const ACCOUNT_PREFIXES: readonly [string, string][] = [
+  ["auth", `${AUTH_PREFIX}:*`],
+  ["links", "ctf:link:*"],
+  ["relink", "ctf:relink:*"],
+  ["adminCodes", `${ADMIN_CODE_PREFIX}*`],
+  ["resetCodes", `${RESET_CODE_PREFIX}*`],
+];
+
+/**
+ * Empties the box of people: the master reset, then every account, session,
+ * GitHub link, re-link block, outstanding admin or reset code, and every admin
+ * grant, the acting admin's included. Content, settings, the audit list and
+ * the spent bootstrap code stay. Afterwards `/admin` is closed until someone
+ * claims it with a fresh claim code: `requireAdmin` reads the grants, so a
+ * cached session that survives the sweep is still refused.
+ *
+ * Requires the exact typed confirmation. Fails closed: any failed step throws
+ * with what came before it standing, and re-running finishes the sweep.
+ */
+export async function deleteAllAccounts(
+  confirm: unknown,
+  actor: AuditActor,
+): Promise<{ cleared: Record<string, number> }> {
+  if (confirm !== DELETE_ALL_ACCOUNTS_CONFIRM) {
+    throw new OpsValidationError("confirm", `Type ${DELETE_ALL_ACCOUNTS_CONFIRM} to confirm.`);
+  }
+  const { cleared: resetCleared } = await resetEvent(actor);
+  const cleared: Record<string, number> = { ...resetCleared };
+  for (const [label, pattern] of ACCOUNT_PREFIXES) {
+    cleared[label] = await scanDelByPrefix(pattern);
+  }
+  const [grants] = assertPipelineOk(
+    await upstashPipeline([["DEL", ADMIN_GRANTS_KEY, ADMIN_GRANT_GEN_KEY]]),
+    "delete admin grants",
+  );
+  cleared.adminGrantKeys = Number(grants.result) || 0;
+  await audit("ops:delete-all-accounts", actor, { cleared });
+  return { cleared };
 }
 
 // --- team operations --------------------------------------------------------

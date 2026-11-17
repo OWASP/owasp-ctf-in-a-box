@@ -789,8 +789,9 @@ export const RESET_PREFIXES: readonly [string, string][] = [
 ];
 
 // SCAN (never KEYS — non-blocking) a prefix and DEL matches in batches until the
-// cursor wraps. Returns how many keys were removed.
-async function scanDelByPrefix(pattern: string): Promise<number> {
+// cursor wraps. Returns how many keys were removed. Exported for
+// deleteAllAccounts, which sweeps the account namespaces the same way.
+export async function scanDelByPrefix(pattern: string): Promise<number> {
   let cursor = "0";
   let total = 0;
   do {

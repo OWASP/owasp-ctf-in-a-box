@@ -78,7 +78,8 @@ scoring workflows and the package-grant checklist. With it empty each of
 those prints `⏭  not needed` and the run goes straight to the bring-up — no
 scorer image to build, no App to install, no org to create, and a `docker
 compose --profile app` command with no `secdev` profile. Step 6, the
-sign-in OAuth app, always runs: every event needs sign-in. With no event org
+sign-in OAuth app, runs only with Secure Development (GitHub keys are required
+only then); on an event without it the wizard skips the step. With no event org
 it points you at GitHub's personal new-OAuth-App page instead of the org's.
 
 The wizard never asks which targets to run: `ctf-setup.sh org` forks and
@@ -612,12 +613,35 @@ username is asked to pick one first, and can add a password from `/profile`.
 There is no password change or recovery yet; a player who loses a password
 signs in with GitHub if the account has one, or makes a new account.
 
-## GitHub OAuth app
+## Sign-in providers
 
-Contestants (and admins) can sign in with GitHub, which Secure Development
-needs to link a player to their pull requests, so you need an OAuth app —
-separate from the sync GitHub App above. OAuth apps have no manifest/create
-API, so this is a guided flow rather than an auto-filled one:
+Username and password sign-in is always on. Contestants and admins can also
+sign in with GitHub, Google or Discord, each from its own OAuth app. Each
+provider reads two `.env` keys, and it counts as configured only when both
+are non-blank:
+
+| Provider | Keys | Callback URL |
+|---|---|---|
+| GitHub | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | `<EVENT_URL>/api/auth/callback/github` |
+| Google | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | `<EVENT_URL>/api/auth/callback/google` |
+| Discord | `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | `<EVENT_URL>/api/auth/callback/discord` |
+
+The GitHub keys are required only with Secure Development (`SCORE_IMAGE`
+non-empty), because players link GitHub to have their pull requests scored.
+Google and Discord are optional on every event. The app reads the keys at
+start-up, so restart it after changing them. A configured provider appears
+as a switch in the `/admin` Event tab (see
+[the admin panel](operations.md#organizer-admin-panel)).
+
+The app stores no provider email, name or avatar for Google or Discord, and no
+email from any provider; GitHub keeps its name and avatar. Only GitHub can be
+linked to an account.
+
+### GitHub OAuth app
+
+The GitHub OAuth app is separate from the sync GitHub App above. OAuth apps
+have no manifest/create API, so this is a guided flow rather than an
+auto-filled one:
 
 ```bash
 # 1. Open GitHub's new-OAuth-App page for the event org and print the exact
@@ -1024,7 +1048,8 @@ the same list, annotated), and `doctor` flags a missing `REDIS_PASSWORD`.
 | Variable | Read by | Default | Meaning |
 |---|---|---|---|
 | `BETTER_AUTH_SECRET` | `lib/auth.ts` | required | Session-signing secret. |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | `lib/auth.ts` | required | The sign-in OAuth app (not the poll GitHub App). |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | `lib/auth.ts` | required with Secure Development | The sign-in OAuth app (not the poll GitHub App). |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | `lib/auth.ts` | optional | Google and Discord sign-in; a provider needs both of its keys. See [Sign-in providers](#sign-in-providers). |
 | `ALLOW_INSECURE_EVENT_URL` | `instrumentation.ts` | unset | `1` downgrades the `http://` non-loopback refusal to a start-up warning. TLS-less closed networks only. |
 | `LEADERBOARD_SOURCE` | `lib/leaderboard/source.ts` | *fixed*: `lambda` | `mock` / `lambda`. With `secure-development` disabled the mode is forced to `empty` (no scorer read; the board is built from the module overlays alone); an unknown value falls back to `mock` with a warning. |
 | `LEADERBOARD_API_URL` | `lib/challenges.ts`, `lib/leaderboard/lambda.ts` | *fixed*: `http://scorer:4000` | Scorer base URL for the challenge catalogue and the board. |

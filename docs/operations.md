@@ -1213,8 +1213,10 @@ with GitHub, first set a username for them in Support (type it in the
 **Username** box and press **Save**), then give them a reset code so they can
 set a password. The refusal names whichever of the two steps is missing.
 The unlink also clears the GitHub login from the player's record, and the
-avatar if it came from GitHub. Admin search stops finding the player by
-that login, and the player shows under their username.
+avatar if it came from GitHub. Admin search no longer matches the old GitHub
+login, though it still matches the player's username and display name (so a
+player whose username is that same name is still found by it). The player
+shows under their username.
 
 The unlink runs under a hold on the player's scores (`ctf:score-hold:<player
 id>`), the same one a delete uses: while it is on, the scorer answers every

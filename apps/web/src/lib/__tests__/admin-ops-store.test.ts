@@ -1036,7 +1036,7 @@ describe("deleteUser: the deleted marker (#775)", () => {
       const line = log.mock.calls.find((c) => String(c[0]).includes("deleted marker"));
       expect(line).toBeDefined();
       expect(String(line![0])).toContain(OCTO);
-      expect(String(line![0])).toMatch(/re-run the delete/i);
+      expect(String(line![0])).toMatch(/re-run of the delete succeeds/i);
       expect(line![1]).toBe("Error: Upstash EVAL failed: NOAUTH");
     } finally {
       log.mockRestore();
@@ -1051,7 +1051,7 @@ describe("deleteUser: the deleted marker (#775)", () => {
       deletedDeps.restoreAfterFailedDelete.mockResolvedValueOnce("in-flight");
       await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("auth store: deleteMany account failed");
       const line = log.mock.calls.find((c) => String(c[0]).includes("another delete"));
-      expect(line).toEqual([`[admin-ops] delete ${OCTO} failed; another delete of this player is still running and keeps its deleted marker`]);
+      expect(line).toEqual([`[admin-ops] delete ${OCTO} failed; another delete token remains on the deleted marker (running, or failed without lifting it)`]);
     } finally {
       log.mockRestore();
     }

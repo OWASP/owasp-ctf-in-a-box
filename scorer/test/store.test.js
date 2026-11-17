@@ -98,7 +98,7 @@ test("deleted-player keys match the app's: ctf:deleted:<id> and the ctf:auth:use
 
 test("memory store: a deletion marker refuses the write — pending while the row exists, deleted after", async () => {
   const store = createMemoryStore();
-  store.deleted.set("octocat", "pending:x");
+  store.deleted.add("octocat");
   store.users.add("octocat");
   assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0), "pending");
   assert.deepEqual(await store.getSolves("dvwa"), {});

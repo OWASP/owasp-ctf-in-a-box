@@ -668,17 +668,17 @@ export async function deleteUser(
     // that finished concurrently keeps the marker; scores write again only
     // once no other delete of this player holds a token in it. A failed
     // restore leaves this token, which holds the player's scores (503, sync
-    // retries) until the delete is re-run; the original error is what the
-    // caller sees.
+    // retries) until a re-run of the delete SUCCEEDS; the original error is
+    // what the caller sees.
     if (!rowGone) {
       try {
         const outcome = await restoreAfterFailedDelete(player, token);
         if (outcome === "in-flight") {
-          console.error(`[admin-ops] delete ${player} failed; another delete of this player is still running and keeps its deleted marker`);
+          console.error(`[admin-ops] delete ${player} failed; another delete token remains on the deleted marker (running, or failed without lifting it)`);
         }
       } catch (restoreErr) {
         console.error(
-          `[admin-ops] delete ${player} failed and removing its deleted marker failed too; scores for this player wait until you re-run the delete`,
+          `[admin-ops] delete ${player} failed and removing its deleted marker failed too; scores for this player wait until a re-run of the delete succeeds`,
           errorLabel(restoreErr),
         );
       }

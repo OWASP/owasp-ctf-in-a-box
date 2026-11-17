@@ -736,7 +736,7 @@ test("an unreadable scoring policy fails OPEN: the score is recorded at its comm
 
 test("a score for a player whose delete is in progress answers 503 and writes nothing", async (t) => {
   const { store, post } = await bootWith(t);
-  store.deleted.set(pid("octocat"), "pending:x");
+  store.deleted.add(pid("octocat"));
   store.users.add(pid("octocat"));
   const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
   assert.equal(res.status, 503);
@@ -746,7 +746,7 @@ test("a score for a player whose delete is in progress answers 503 and writes no
 
 test("a score for a deleted player answers 422 player-deleted and writes nothing", async (t) => {
   const { store, post } = await bootWith(t);
-  store.deleted.set(pid("octocat"), "pending:x");
+  store.deleted.add(pid("octocat"));
   const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
   assert.equal(res.status, 422);
   assert.deepEqual(await res.json(), { error: "player deleted", refused: "player-deleted" });

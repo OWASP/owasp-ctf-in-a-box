@@ -32,7 +32,8 @@ return 1`;
 // Lifts this call's token only while the account row still exists: with the
 // row gone the player is deleted (by this call or a concurrent one) and the
 // marker stays. Redis drops the key when the set empties; tokens left behind
-// belong to other deletes of this player, still running ('in-flight').
+// belong to other deletes of this player: running, or failed without lifting
+// theirs ('in-flight').
 export const RESTORE_AFTER_FAILED_DELETE_SCRIPT = `if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then
   redis.call('SREM', KEYS[1], ARGV[2])
   if redis.call('EXISTS', KEYS[1]) == 1 then return 'in-flight' end

@@ -1,9 +1,10 @@
 /**
  * POST one score to the scorer. Resolves to the scorer's verdict:
  *   - `accepted`: written (2xx).
- *   - `refused`: a FINAL verdict on when the score was posted (422 — during a
- *     freeze, outside the scoring window, or before the last master reset).
- *     The rule did its job; `reason` is the scorer's `refused` code.
+ *   - `refused`: a FINAL verdict (422) on when the score was posted (during a
+ *     freeze, outside the scoring window, or before the last master reset)
+ *     or on who posted it (`player-deleted`: the account is gone). The rule
+ *     did its job; `reason` is the scorer's `refused` code.
  *   - `rejected`: any other 4xx, a score that will never be written without
  *     a human.
  * Anything else throws, and the caller re-presents the comment next tick.

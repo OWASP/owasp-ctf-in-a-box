@@ -32,6 +32,17 @@ test("refused on 422, carrying the scorer's reason", async () => {
   assert.deepEqual(await submitScore(CFG, PAYLOAD, f), { outcome: "refused", reason: "paused" });
 });
 
+test("refused on 422 player-deleted: a verdict on who, final like the rest", async () => {
+  const f = async () =>
+    new Response(JSON.stringify({ error: "player deleted", refused: "player-deleted" }), { status: 422 });
+  assert.deepEqual(await submitScore(CFG, PAYLOAD, f), { outcome: "refused", reason: "player-deleted" });
+});
+
+test("a 503 (player delete in progress) throws so the caller retries", async () => {
+  const f = async () => new Response(JSON.stringify({ error: "player delete in progress" }), { status: 503 });
+  await assert.rejects(() => submitScore(CFG, PAYLOAD, f));
+});
+
 test("refused on a 422 whose body is unreadable, with an unknown reason", async () => {
   const f = async () => new Response("not json", { status: 422 });
   assert.deepEqual(await submitScore(CFG, PAYLOAD, f), { outcome: "refused", reason: "unknown" });

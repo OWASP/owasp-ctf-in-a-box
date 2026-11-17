@@ -97,7 +97,7 @@ export function createMemoryStore({ teams = [] } = {}) {
   // some — the same answer the Redis store gives when it cannot read them.
   let policy = null;
   // Test seams mirroring ctf:deleted:<player> and the ctf:auth:user rows.
-  const deleted = new Map();
+  const deleted = new Set();
   const users = new Set();
   return {
     deleted,

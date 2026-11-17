@@ -407,7 +407,7 @@ expect_no_solve() { # $1 = player label, $2 = what
 DELETED_BODY="$TMP/deleted-body.json"
 
 echo "--- deleted player: a score mid-delete (marker set, account row present) answers 503 and writes nothing"
-redis_freeze SET "ctf:deleted:$(player_for doomed)" pending:x
+redis_freeze SADD "ctf:deleted:$(player_for doomed)" x
 redis_freeze HSET ctf:auth:user "$(player_for doomed)" '{}'
 expect_code 503 "$(score_deleted_body doomed "$DELETED_BODY")" "a score while the player's delete is in progress"
 grep -q '"player delete in progress"' "$DELETED_BODY" \

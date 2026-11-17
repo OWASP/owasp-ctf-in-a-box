@@ -126,6 +126,15 @@ describe("issuePasswordResetCode", () => {
     expect((err as OpsValidationError).field).toBe("id");
   });
 
+  it("refuses an organizer by name, without retrying, so their password is reset only after the grant goes", async () => {
+    m.upstashEval.mockResolvedValue(-4);
+    const err = await issuePasswordResetCode(BOB.id, ALICE).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect((err as OpsValidationError).field).toBe("id");
+    expect((err as Error).message).toBe("Bob is an organizer. Revoke their admin access first.");
+    expect(m.upstashEval).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses a malformed player id without touching Redis", async () => {
     await expect(issuePasswordResetCode("octocat", ALICE)).rejects.toBeInstanceOf(OpsValidationError);
     expect(m.upstashEval).not.toHaveBeenCalled();

@@ -124,6 +124,23 @@ describe.skipIf(!liveConfigured)("password reset codes against a live Redis", ()
     expect(await redis(["EXISTS", reset.resetPointerKey(ghost)])).toBe(0);
   });
 
+  it("refuses a player who holds an admin grant, writing no code and no audit line", async () => {
+    const { reset, ADMIN_GRANTS_KEY } = await load();
+    const by = await admin();
+    const organizer = await player("password");
+    admins.push(organizer);
+    await redis(["SADD", ADMIN_GRANTS_KEY, organizer]);
+    const auditBefore = await redis(["LINDEX", "ctf:admin:audit", 0]);
+    const err = await reset.issuePasswordResetCode(organizer, by).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: "OpsValidationError", field: "id" });
+    expect((err as Error).message).toMatch(/ is an organizer\. Revoke their admin access first\.$/);
+    expect(await redis(["EXISTS", reset.resetPointerKey(organizer)])).toBe(0);
+    expect(await redis(["LINDEX", "ctf:admin:audit", 0])).toBe(auditBefore);
+    // Once the grant is gone the same player can be given a code.
+    await redis(["SREM", ADMIN_GRANTS_KEY, organizer]);
+    await expect(reset.issuePasswordResetCode(organizer, by)).resolves.toMatchObject({ code: expect.any(String) });
+  });
+
   it("a code redeemed twice concurrently succeeds exactly once", async () => {
     const { reset } = await load();
     const [by, who] = [await admin(), await player("password")];

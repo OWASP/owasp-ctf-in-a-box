@@ -11,7 +11,7 @@ import { PLAYER_ID_RE } from "@/lib/player";
 import { assertPipelineOk, upstashEval, upstashPipeline } from "@/lib/upstash";
 
 /**
- * Password reset codes an organizer hands a player (#740).
+ * Password reset codes an organizer hands a player.
  *
  * An admin issues a code for one player from /admin and passes it on; the
  * player redeems it, signed out, at /reset with a password of their choosing.
@@ -47,7 +47,9 @@ export const resetPointerKey = (player: string) => `${RESET_CODE_PREFIX}by:${pla
  * KEYS [grants, pointer, newCode, prevCode, audit, userRows, grantGen]
  * ARGV [actorId, playerId, valueJson, ttl, auditLine, cap-1, newHash, expectedPrev]
  *
- * -1: the actor holds no grant. -2: the player has no auth user row. -3: the
+ * -1: the actor holds no grant. -2: the player has no auth user row. -4: the
+ * player holds an admin grant: a reset code would let whoever holds it sign in
+ * as an organizer, so the grant is revoked first, as for a delete. -3: the
  * pointer no longer names `expectedPrev` (another issue for this player landed
  * between the caller's read and this script): the caller re-reads and retries.
  * 0: an NX collision on the new code. 1: stored, previous code deleted, pointer
@@ -59,6 +61,7 @@ export const resetPointerKey = (player: string) => `${RESET_CODE_PREFIX}by:${pla
 export const ISSUE_RESET_SCRIPT = `
 if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 0 then return -1 end
 if redis.call('HEXISTS', KEYS[6], ARGV[2]) == 0 then return -2 end
+if redis.call('SISMEMBER', KEYS[1], ARGV[2]) == 1 then return -4 end
 local prev = redis.call('GET', KEYS[2]) or ''
 if prev ~= ARGV[8] then return -3 end
 local value = cjson.decode(ARGV[3])
@@ -98,8 +101,8 @@ return {'ok', v.player}`;
  *  the player's previous one. Returns the code for the one display to the
  *  issuing admin; only its hash is stored. Throws `NotAdminError` when the
  *  actor's grant is gone by the time the script runs, `OpsValidationError`
- *  on `id` for a malformed id or a player with no account, and any store
- *  error as is (the caller answers 503). */
+ *  on `id` for a malformed id, a player with no account or a player who holds
+ *  an admin grant, and any store error as is (the caller answers 503). */
 export async function issuePasswordResetCode(playerId: string, actor: AuditActor): Promise<{ code: string; expiresAt: string }> {
   if (typeof playerId !== "string" || !PLAYER_ID_RE.test(playerId)) {
     throw new OpsValidationError("id", "invalid player id");
@@ -134,8 +137,16 @@ export async function issuePasswordResetCode(playerId: string, actor: AuditActor
     if (res === 1) return { code: formatClaimCode(normalized), expiresAt };
     if (res === -1) throw new NotAdminError();
     if (res === -2) throw new OpsValidationError("id", "No player with that id");
+    if (res === -4) throw new OpsValidationError("id", `${await displayName(playerId)} is an organizer. Revoke their admin access first.`);
   }
   throw new Error("password reset: could not store a code after three attempts");
+}
+
+/** The name the refusal copy shows, as the admin's player lookup shows it. */
+async function displayName(playerId: string): Promise<string> {
+  const { internalAdapter } = await auth.$context;
+  const user = (await internalAdapter.findUserById(playerId)) as { name?: string; displayUsername?: string | null } | null;
+  return user?.displayUsername || user?.name || "This player";
 }
 
 export type RedeemResult = { ok: true; player: string } | { ok: false; reason: "invalid" | "password" };

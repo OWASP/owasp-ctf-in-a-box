@@ -6,7 +6,7 @@ import { redeemPasswordResetCode } from "@/lib/password-reset";
 import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
 
 /**
- * Redeem a password reset code an organizer handed over (#740), signed out.
+ * Redeem a password reset code an organizer handed over, signed out.
  *
  * Outside /api/auth on purpose: better-auth's own /reset-password stays in
  * `disabledPaths` (it needs an email flow this kit does not run), and this

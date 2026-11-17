@@ -230,7 +230,7 @@ describe("the player id tells same-named players apart", () => {
   });
 });
 
-// Issue #740: the account tools on the player card.
+// The account tools on the player card.
 describe("delete confirm copy", () => {
   it("says the account goes and the GitHub login stays blocked", () => {
     const { body } = deleteContestantConfirm(detail);

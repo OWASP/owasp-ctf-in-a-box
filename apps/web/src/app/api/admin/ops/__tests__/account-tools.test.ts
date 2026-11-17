@@ -1,4 +1,4 @@
-// Admin account tools (issue #740): the reset-code, rename and unlink actions
+// Admin account tools: the reset-code, rename and unlink actions
 // on the per-player route, the player GitHub login on the lookup, and the
 // delete-all-accounts route. The stores are mocked; what these pin is the
 // boundary: who may call, the error mapping, and the Secure Development gate.

@@ -16,6 +16,7 @@ import { errorLabel } from "@/lib/error-label";
 import { OpsValidationError } from "@/lib/ops-errors";
 import { auth } from "@/lib/auth";
 import { type TakenLink, getGithubLink, releaseGithubLink, restoreGithubLink, takeGithubLink } from "@/lib/github-link";
+import { markDeleting, restoreAfterFailedDelete } from "@/lib/deleted-player";
 import { currentUsername, renameUsername } from "@/lib/username-store";
 import { USERNAME_COPY } from "@/lib/username-rules";
 import { resolveTeamMaxMembers } from "@/lib/team-store";
@@ -423,13 +424,21 @@ export async function resetUserProgress(rawId: unknown, actor: AuditActor): Prom
   // ones standing — the finally closes it.
   await beginScoreLowering();
   try {
-    return await resetProgressOf(player, actor);
+    const reset = await resetProgressOf(player, actor);
+    if (reset.cleared.secureDevSolves > 0) reset.warnings.push(SECURE_DEV_RETURNS_WARNING);
+    return reset;
   } finally {
     await endScoreLowering();
   }
 }
 
-/** The reset itself; `resetUserProgress` wraps it with the memo drop. */
+/** A reset player's Secure Development solves come back when their PR is
+ *  scored again. Not a delete's warning: the deleted marker refuses that PR. */
+const SECURE_DEV_RETURNS_WARNING =
+  "Secure Development solves are re-ingested from PR comments: the scorer writes them with HSETNX and the poller re-submits, so these return if this contestant's PR is scored again. Close the PR or freeze scoring to make it stick.";
+
+/** The reset itself, without the score-lowering bracket: `resetUserProgress`
+ *  and `deleteUser` each run it inside their own. */
 async function resetProgressOf(player: string, actor: AuditActor): Promise<ResetScope> {
   const secureDev = await clearSecureDevSolves(player);
 
@@ -493,15 +502,8 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
     secureDevSolves: secureDev,
   };
 
-  const warnings: string[] = [];
-  if (secureDev > 0) {
-    warnings.push(
-      "Secure Development solves are re-ingested from PR comments: the scorer writes them with HSETNX and the poller re-submits, so these return if this contestant's PR is scored again. Close the PR or freeze scoring to make it stick.",
-    );
-  }
-
   await audit("ops:user-reset", actor, { player, cleared });
-  return { cleared, warnings };
+  return { cleared, warnings: [] };
 }
 
 // --- delete -----------------------------------------------------------------
@@ -539,6 +541,14 @@ return 1`;
  * what a run that failed at the grant removal leaves, and the retry removes
  * it, with its own warning.
  *
+ * After the refusals and before any other write it sets the deleted marker
+ * (`ctf:deleted:<id>`, deleted-player.ts), which the scorer reads atomically
+ * with its solve write, so a Secure Development score in flight is never
+ * written into the cleared progress. The marker stays once the account row is
+ * gone; a delete that throws before that removes its own marker. Deleting
+ * every account (`deleteAllAccounts`) sets none: its master reset moves
+ * `resetAt`, and the scorer refuses every score from before it.
+ *
  * Re-runnable: every step tolerates what an earlier, failed run already
  * removed, so a delete that threw part way completes on the next call. One
  * gap: a retry cannot see the released login, so held scores a failed run
@@ -573,72 +583,103 @@ export async function deleteUser(
     throw new OpsValidationError("id", "No such player.");
   }
 
-  // The lookup above already read the link, before the bracket: a failed
-  // read aborted with nothing written.
+  // The lookup above already read the link, before any write: a failed read
+  // aborted with nothing written.
   const heldLogin = detail.github?.login.toLowerCase() ?? null;
 
-  // The link goes, blocked, before any other write: from here sync reads the
-  // login as unlinked and holds its scores instead of scoring them into the
-  // reset below, and a failure later leaves an account a retry deletes, never
-  // an account whose login re-links.
-  const blockedLogin = await releaseGithubLink(player, { block: true });
-
-  // One score-lowering bracket around the WHOLE delete: the inner
-  // reset nests its own — the marker is a counter — so the in-progress flag
-  // stays up through the tail writes (membership, account record), and the
-  // last close comes after the last write, on the failure path too.
-  await beginScoreLowering();
+  // The deleted marker goes first, before any write: from here the scorer
+  // answers this player's in-flight score "pending" (503, sync retries) while
+  // the account row exists and "deleted" (422, final) once it is gone, so no
+  // score lands between the progress reset below and the row delete. A failed
+  // mark throws here with nothing written.
+  const token = await markDeleting(player);
+  // Set once the re-read confirms the row is gone: marker plus no row is the
+  // finished state, so a later throw has nothing to restore.
+  let rowGone = false;
   try {
-    const leftTeam = detail.team?.slug ?? null;
-    const reset = await resetUserProgress(player, actor);
-    const cmds: (string | number)[][] = [];
-    if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), player]);
-    cmds.push(["DEL", userKey(player)]);
-    for (const key of rateLimitKeysFor(player)) cmds.push(["DEL", key]);
-    // Checked: a refused DEL reported as a delete leaves the player on the
-    // team with their record in place.
-    assertPipelineOk(await upstashPipeline(cmds), "delete user");
-    // Held scores go only once the record is gone (the check above): sync has
-    // moved its cursor past those comments, so for a player who stays they
-    // are the only copy. One script, hash before index, so a failed DEL can
-    // never leave a hash that sync cannot find.
-    if (heldLogin) {
-      await upstashEval(CLEAR_HELD_SCRIPT, [`ctf:sd:held:by:${heldLogin}`, "ctf:sd:held:authors"], [heldLogin]);
-    }
+    // The link goes, blocked, before any progress write: from here sync reads
+    // the login as unlinked and holds its scores instead of scoring them into
+    // the reset below, and a failure later leaves an account a retry deletes,
+    // never an account whose login re-links.
+    const blockedLogin = await releaseGithubLink(player, { block: true });
 
-    await internalAdapter.deleteUserSessions(player);
-    await internalAdapter.deleteAccounts(player);
-    await internalAdapter.deleteUser(player);
-    // better-auth's single-row delete swallows a failed read of the row and
-    // then deletes nothing, so the re-read (which throws on a Redis error) is
-    // what tells a delete from a no-op.
-    if (await internalAdapter.findUserById(player)) {
-      throw new Error("delete user: the account row is still there");
-    }
-    // CLAIM_SCRIPT refuses an id with no account row, so from the re-read
-    // above no claim can bind this id. A grant found here was claimed between
-    // the organizer check and the row delete, and is removed with nothing
-    // left to race it: a grant on a deleted id would keep /admin open to a
-    // cookie-cached session.
-    const [grant] = assertPipelineOk(
-      await upstashPipeline([["SREM", ADMIN_GRANTS_KEY, player]]),
-      "delete user admin grant",
-    );
-    const grantRemoved = Number(grant.result) === 1;
-    const warnings = [...reset.warnings];
-    const grantWarning = orphanGrant ? ORPHAN_GRANT_REMOVED : GRANT_CLAIMED_DURING_DELETE;
-    if (grantRemoved) warnings.push(grantWarning);
+    // One score-lowering bracket around the whole delete, so the in-progress
+    // flag stays up through the tail writes (membership, account record) and
+    // closes after the last write, on the failure path too.
+    await beginScoreLowering();
+    try {
+      const leftTeam = detail.team?.slug ?? null;
+      // The reset without resetUserProgress's "scored again" warning: the
+      // marker refuses this player's PR, so their solves do not come back.
+      const reset = await resetProgressOf(player, actor);
+      const cmds: (string | number)[][] = [];
+      if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), player]);
+      cmds.push(["DEL", userKey(player)]);
+      for (const key of rateLimitKeysFor(player)) cmds.push(["DEL", key]);
+      // Checked: a refused DEL reported as a delete leaves the player on the
+      // team with their record in place.
+      assertPipelineOk(await upstashPipeline(cmds), "delete user");
+      // Held scores go only once the record is gone (the check above): sync
+      // has moved its cursor past those comments, so for a player who stays
+      // they are the only copy. One script, hash before index, so a failed
+      // DEL can never leave a hash that sync cannot find.
+      if (heldLogin) {
+        await upstashEval(CLEAR_HELD_SCRIPT, [`ctf:sd:held:by:${heldLogin}`, "ctf:sd:held:authors"], [heldLogin]);
+      }
 
-    await audit("ops:user-delete", actor, {
-      player,
-      leftTeam,
-      blockedLogin,
-      grantRemoved,
-      ...(grantRemoved ? { warning: grantWarning } : {}),
-    });
-    return { cleared: reset.cleared, warnings, leftTeam };
-  } finally {
-    await endScoreLowering();
+      await internalAdapter.deleteUserSessions(player);
+      await internalAdapter.deleteAccounts(player);
+      await internalAdapter.deleteUser(player);
+      // better-auth's single-row delete swallows a failed read of the row and
+      // then deletes nothing, so the re-read (which throws on a Redis error)
+      // is what tells a delete from a no-op.
+      if (await internalAdapter.findUserById(player)) {
+        throw new Error("delete user: the account row is still there");
+      }
+      rowGone = true;
+      // CLAIM_SCRIPT refuses an id with no account row, so from the re-read
+      // above no claim can bind this id. A grant found here was claimed
+      // between the organizer check and the row delete, and is removed with
+      // nothing left to race it: a grant on a deleted id would keep /admin
+      // open to a cookie-cached session.
+      const [grant] = assertPipelineOk(
+        await upstashPipeline([["SREM", ADMIN_GRANTS_KEY, player]]),
+        "delete user admin grant",
+      );
+      const grantRemoved = Number(grant.result) === 1;
+      const warnings = [...reset.warnings];
+      const grantWarning = orphanGrant ? ORPHAN_GRANT_REMOVED : GRANT_CLAIMED_DURING_DELETE;
+      if (grantRemoved) warnings.push(grantWarning);
+
+      await audit("ops:user-delete", actor, {
+        player,
+        leftTeam,
+        blockedLogin,
+        grantRemoved,
+        ...(grantRemoved ? { warning: grantWarning } : {}),
+      });
+      return { cleared: reset.cleared, warnings, leftTeam };
+    } finally {
+      await endScoreLowering();
+    }
+  } catch (err) {
+    // The account row may still be there: take this delete's marker back off
+    // so the player's later scores write. The script removes it only while
+    // the row exists and the marker carries this call's token, so a delete
+    // that finished concurrently keeps its marker. A failed restore leaves
+    // the marker pending, which holds the player's scores (503, sync retries)
+    // until the delete is re-run; the original error is what the caller sees.
+    if (!rowGone) {
+      try {
+        await restoreAfterFailedDelete(player, token);
+      } catch (restoreErr) {
+        console.error(
+          `[admin-ops] delete ${player} failed and removing its deleted marker failed too; scores for this player wait until you re-run the delete`,
+          errorLabel(restoreErr),
+        );
+      }
+    }
+    throw err;
   }
 }
 

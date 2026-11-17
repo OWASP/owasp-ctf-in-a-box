@@ -166,6 +166,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
       await pipeline([
         ["DEL", `ctf:user:${id}`, `ctf:user:${id}:hints`, `ctf:hints:at:${id}`, `ctf:quiz:answers:${id}`, `ctf:quiz:attempts:${id}`],
         ["DEL", `ctf:classic:solves:${id}`, `ctf:classic:attempts:${id}`, `ctf:classic:opened:${id}`, `ctf:link:user:${id}`],
+        ["DEL", `ctf:deleted:${id}`],
         ...buckets.map((b) => ["DEL", `ctf:rl:${b}:${id}`]),
         ...["ctf:hints:spent", "ctf:quiz:points", "ctf:quiz:answered", "ctf:quiz:lastAt", "ctf:classic:points", "ctf:classic:solved", "ctf:classic:lastAt", "ctf:link:at"].map((k) => ["HDEL", k, id]),
       ]);
@@ -298,15 +299,70 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     } finally {
       spy.mockRestore();
     }
-    // The event record and the link went before the failure; the account did not.
-    const [record] = await pipeline([["EXISTS", `ctf:user:${id}`]]);
+    // The event record and the link went before the failure; the account did
+    // not, so the delete's own marker is gone and later scores write.
+    const [record, marker] = await pipeline([["EXISTS", `ctf:user:${id}`], ["EXISTS", `ctf:deleted:${id}`]]);
     expect(record.result).toBe(0);
+    expect(marker.result).toBe(0);
     expect((await authState(id)).user).toMatchObject({ id });
 
     await expect(ops.deleteUser(id, actor)).resolves.toMatchObject({ leftTeam: null });
+    const [markedAfter] = await pipeline([["GET", `ctf:deleted:${id}`]]);
+    expect(String(markedAfter.result)).toMatch(/^pending:[0-9a-f-]{36}$/);
     expect(await authState(id)).toEqual({ user: null, accounts: 0, sessions: 0 });
     const [blocked] = await pipeline([["SISMEMBER", "ctf:relink:blocked", gh]]);
     expect(blocked.result).toBe(1);
+  });
+
+  it("a finished delete leaves the deleted marker and no account row, so the scorer answers deleted", async () => {
+    const { pipeline, ops } = await load();
+    const gh = `vt5${tag}`.slice(0, 39);
+    const id = await makePlayer(gh);
+    const [before] = await pipeline([["EXISTS", `ctf:deleted:${id}`]]);
+    expect(before.result).toBe(0);
+
+    await ops.deleteUser(id, { id: crypto.randomUUID(), name: "organizer" });
+
+    const [marker, row] = await pipeline([["GET", `ctf:deleted:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
+    expect(String(marker.result)).toMatch(/^pending:[0-9a-f-]{36}$/);
+    expect(row.result).toBe(0);
+  });
+
+  it("a second delete that fails after the first finished keeps the marker", async () => {
+    const { ctx, pipeline, ops } = await load();
+    const gh = `vt6${tag}`.slice(0, 39);
+    const id = await makePlayer(gh);
+    const actor = { id: crypto.randomUUID(), name: "organizer" };
+    await ops.deleteUser(id, actor);
+    // Event state written after A finished makes B pass the "No such player."
+    // refusal with A's row already gone; B then fails before its row step.
+    await pipeline([["HSET", `ctf:user:${id}`, "firstTeamAt", at]]);
+    const spy = vi.spyOn(ctx.internalAdapter, "deleteAccounts").mockRejectedValueOnce(new Error("auth store: down"));
+    try {
+      await expect(ops.deleteUser(id, actor)).rejects.toThrow("auth store: down");
+    } finally {
+      spy.mockRestore();
+    }
+    const [marker, row] = await pipeline([["GET", `ctf:deleted:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
+    expect(String(marker.result)).toMatch(/^pending:/);
+    expect(row.result).toBe(0);
+  });
+
+  it("restore removes only its own marker, and only while the account row exists", async () => {
+    const { pipeline } = await load();
+    const { markDeleting, restoreAfterFailedDelete } = await import("@/lib/deleted-player");
+    const gh = `vt7${tag}`.slice(0, 39);
+    const id = await makePlayer(gh);
+
+    const mine = await markDeleting(id);
+    const theirs = await markDeleting(id);
+    // A concurrent delete re-marked: this call's restore leaves theirs.
+    await expect(restoreAfterFailedDelete(id, mine)).resolves.toBe("kept");
+    const [kept] = await pipeline([["GET", `ctf:deleted:${id}`]]);
+    expect(kept.result).toBe(`pending:${theirs}`);
+    await expect(restoreAfterFailedDelete(id, theirs)).resolves.toBe("restored");
+    const [gone] = await pipeline([["EXISTS", `ctf:deleted:${id}`]]);
+    expect(gone.result).toBe(0);
   });
 
   it("a grant claimed after the organizer check is removed with the account, and the id cannot claim again", async () => {

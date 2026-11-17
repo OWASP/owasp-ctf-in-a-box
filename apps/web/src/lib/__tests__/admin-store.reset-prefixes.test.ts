@@ -57,6 +57,12 @@ describe("RESET_PREFIXES", () => {
     }
   });
 
+  it("keeps the deleted-player markers through a master reset", () => {
+    for (const [, pattern] of RESET_PREFIXES) {
+      expect(globToRegExp(pattern).test("ctf:deleted:x")).toBe(false);
+    }
+  });
+
   it("the matcher does match what a pattern names", () => {
     expect(globToRegExp("ctf:team:*").test("ctf:team:abc")).toBe(true);
   });

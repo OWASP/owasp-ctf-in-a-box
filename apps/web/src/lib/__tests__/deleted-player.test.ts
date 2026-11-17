@@ -31,14 +31,14 @@ describe("deleted-player keys", () => {
 });
 
 describe("markDeleting", () => {
-  it("sets the marker to pending:<fresh token> and returns the token", async () => {
+  it("adds a fresh token to the marker set and returns it", async () => {
     mocks.upstashEval.mockResolvedValue(1);
     const a = await markDeleting(ID);
     const b = await markDeleting(ID);
     expect(a).toMatch(/^[0-9a-f-]{36}$/);
     expect(b).not.toBe(a);
     expect(mocks.upstashEval).toHaveBeenNthCalledWith(1, MARK_DELETING_SCRIPT, [`ctf:deleted:${ID}`], [a]);
-    expect(MARK_DELETING_SCRIPT).toContain("'pending:' .. ARGV[1]");
+    expect(MARK_DELETING_SCRIPT).toContain("SADD");
   });
 
   it("throws on an unconfirmed mark", async () => {
@@ -58,9 +58,11 @@ describe("restoreAfterFailedDelete", () => {
     );
   });
 
-  it("passes kept through and throws on any other reply", async () => {
+  it("passes kept and in-flight through and throws on any other reply", async () => {
     mocks.upstashEval.mockResolvedValueOnce("kept");
     await expect(restoreAfterFailedDelete(ID, "tok")).resolves.toBe("kept");
+    mocks.upstashEval.mockResolvedValueOnce("in-flight");
+    await expect(restoreAfterFailedDelete(ID, "tok")).resolves.toBe("in-flight");
     mocks.upstashEval.mockResolvedValueOnce(1);
     await expect(restoreAfterFailedDelete(ID, "tok")).rejects.toThrow(/unexpected reply/);
   });

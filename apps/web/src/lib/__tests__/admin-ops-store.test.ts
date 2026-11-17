@@ -1043,6 +1043,20 @@ describe("deleteUser: the deleted marker (#775)", () => {
     }
   });
 
+  it("logs ids only when another delete of the player still holds the marker", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      queueThroughTail();
+      authDeps.deleteAccounts.mockRejectedValueOnce(new Error("auth store: deleteMany account failed"));
+      deletedDeps.restoreAfterFailedDelete.mockResolvedValueOnce("in-flight");
+      await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("auth store: deleteMany account failed");
+      const line = log.mock.calls.find((c) => String(c[0]).includes("another delete"));
+      expect(line).toEqual([`[admin-ops] delete ${OCTO} failed; another delete of this player is still running and keeps its deleted marker`]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("a throw after the row is confirmed gone does not restore", async () => {
     queueThroughTail();
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]); // grant SREM

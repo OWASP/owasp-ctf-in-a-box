@@ -307,8 +307,8 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     expect((await authState(id)).user).toMatchObject({ id });
 
     await expect(ops.deleteUser(id, actor)).resolves.toMatchObject({ leftTeam: null });
-    const [markedAfter] = await pipeline([["GET", `ctf:deleted:${id}`]]);
-    expect(String(markedAfter.result)).toMatch(/^pending:[0-9a-f-]{36}$/);
+    const [markedAfter] = await pipeline([["SMEMBERS", `ctf:deleted:${id}`]]);
+    expect(markedAfter.result).toEqual([expect.stringMatching(/^[0-9a-f-]{36}$/)]);
     expect(await authState(id)).toEqual({ user: null, accounts: 0, sessions: 0 });
     const [blocked] = await pipeline([["SISMEMBER", "ctf:relink:blocked", gh]]);
     expect(blocked.result).toBe(1);
@@ -323,8 +323,8 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
 
     await ops.deleteUser(id, { id: crypto.randomUUID(), name: "organizer" });
 
-    const [marker, row] = await pipeline([["GET", `ctf:deleted:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
-    expect(String(marker.result)).toMatch(/^pending:[0-9a-f-]{36}$/);
+    const [marker, row] = await pipeline([["SMEMBERS", `ctf:deleted:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
+    expect(marker.result).toEqual([expect.stringMatching(/^[0-9a-f-]{36}$/)]);
     expect(row.result).toBe(0);
   });
 
@@ -343,12 +343,13 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     } finally {
       spy.mockRestore();
     }
-    const [marker, row] = await pipeline([["GET", `ctf:deleted:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
-    expect(String(marker.result)).toMatch(/^pending:/);
+    // B's restore lifts nothing with the row gone: A's token and B's stay.
+    const [marker, row] = await pipeline([["SCARD", `ctf:deleted:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
+    expect(marker.result).toBe(2);
     expect(row.result).toBe(0);
   });
 
-  it("restore removes only its own marker, and only while the account row exists", async () => {
+  it("restore lifts only its own token, and only while the account row exists", async () => {
     const { pipeline } = await load();
     const { markDeleting, restoreAfterFailedDelete } = await import("@/lib/deleted-player");
     const gh = `vt7${tag}`.slice(0, 39);
@@ -356,13 +357,45 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
 
     const mine = await markDeleting(id);
     const theirs = await markDeleting(id);
-    // A concurrent delete re-marked: this call's restore leaves theirs.
-    await expect(restoreAfterFailedDelete(id, mine)).resolves.toBe("kept");
-    const [kept] = await pipeline([["GET", `ctf:deleted:${id}`]]);
-    expect(kept.result).toBe(`pending:${theirs}`);
+    await expect(restoreAfterFailedDelete(id, mine)).resolves.toBe("in-flight");
+    const [left] = await pipeline([["SMEMBERS", `ctf:deleted:${id}`]]);
+    expect(left.result).toEqual([theirs]);
     await expect(restoreAfterFailedDelete(id, theirs)).resolves.toBe("restored");
     const [gone] = await pipeline([["EXISTS", `ctf:deleted:${id}`]]);
     expect(gone.result).toBe(0);
+  });
+
+  it("A fails while B is in flight: B's mark survives A's restore, and B finishes deleted", async () => {
+    const { ctx, pipeline, ops } = await load();
+    const { markDeleting, restoreAfterFailedDelete } = await import("@/lib/deleted-player");
+    const gh = `vt8${tag}`.slice(0, 39);
+    const id = await makePlayer(gh);
+    const actor = { id: crypto.randomUUID(), name: "organizer" };
+
+    // B marks; A marks, fails before its row step and restores. B's token is
+    // still there, so the scorer keeps answering pending.
+    const b = await markDeleting(id);
+    const original = ctx.internalAdapter.deleteAccounts.bind(ctx.internalAdapter);
+    const spy = vi.spyOn(ctx.internalAdapter, "deleteAccounts").mockRejectedValueOnce(new Error("auth store: down"));
+    try {
+      await expect(ops.deleteUser(id, actor)).rejects.toThrow("auth store: down");
+    } finally {
+      spy.mockRestore();
+    }
+    const [mid, rowMid] = await pipeline([["SMEMBERS", `ctf:deleted:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
+    expect(mid.result).toEqual([b]);
+    expect(rowMid.result).toBe(1);
+
+    // B finishes: the row goes with B's token still in the marker, so the
+    // scorer answers deleted. B's own restore, after the fact, keeps it.
+    await original(id);
+    await ctx.internalAdapter.deleteUser(id);
+    const [end, rowEnd] = await pipeline([["EXISTS", `ctf:deleted:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
+    expect(end.result).toBe(1);
+    expect(rowEnd.result).toBe(0);
+    await expect(restoreAfterFailedDelete(id, b)).resolves.toBe("kept");
+    const [still] = await pipeline([["SMEMBERS", `ctf:deleted:${id}`]]);
+    expect(still.result).toEqual([b]);
   });
 
   it("a grant claimed after the organizer check is removed with the account, and the id cannot claim again", async () => {

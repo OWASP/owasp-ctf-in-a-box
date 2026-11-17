@@ -11,8 +11,9 @@ const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
 // The manual freeze's closed intervals, newest first, one JSON {from, to} per
 // entry. apps/web admin-store.ts writes it atomically with the `paused` flag.
 const ADMIN_PAUSES_KEY = "ctf:admin:pauses";
-// A player's deletion marker, `pending:<token>`, which apps/web's deleteUser
-// sets before it deletes anything and never expires.
+// A player's deletion marker, a set of delete tokens that apps/web's
+// deleteUser adds to before it deletes anything; it never expires. Only its
+// existence is read here, whatever its type.
 export const deletedKey = (player) => `ctf:deleted:${player}`;
 // The better-auth user rows hash, field = player id: apps/web
 // auth-store/keys.ts rowsKey(AUTH_PREFIX, "user"). Both sides pin this literal.

@@ -545,7 +545,7 @@ return 1`;
  * (`ctf:deleted:<id>`, deleted-player.ts), which the scorer reads atomically
  * with its solve write, so a Secure Development score in flight is never
  * written into the cleared progress. The marker stays once the account row is
- * gone; a delete that throws before that removes its own marker. Deleting
+ * gone; a delete that throws before that lifts only its own token. Deleting
  * every account (`deleteAllAccounts`) sets none: its master reset moves
  * `resetAt`, and the scorer refuses every score from before it.
  *
@@ -663,15 +663,19 @@ export async function deleteUser(
       await endScoreLowering();
     }
   } catch (err) {
-    // The account row may still be there: take this delete's marker back off
-    // so the player's later scores write. The script removes it only while
-    // the row exists and the marker carries this call's token, so a delete
-    // that finished concurrently keeps its marker. A failed restore leaves
-    // the marker pending, which holds the player's scores (503, sync retries)
-    // until the delete is re-run; the original error is what the caller sees.
+    // The account row may still be there: lift this call's token from the
+    // marker. The script does that only while the row exists, so a delete
+    // that finished concurrently keeps the marker; scores write again only
+    // once no other delete of this player holds a token in it. A failed
+    // restore leaves this token, which holds the player's scores (503, sync
+    // retries) until the delete is re-run; the original error is what the
+    // caller sees.
     if (!rowGone) {
       try {
-        await restoreAfterFailedDelete(player, token);
+        const outcome = await restoreAfterFailedDelete(player, token);
+        if (outcome === "in-flight") {
+          console.error(`[admin-ops] delete ${player} failed; another delete of this player is still running and keeps its deleted marker`);
+        }
       } catch (restoreErr) {
         console.error(
           `[admin-ops] delete ${player} failed and removing its deleted marker failed too; scores for this player wait until you re-run the delete`,

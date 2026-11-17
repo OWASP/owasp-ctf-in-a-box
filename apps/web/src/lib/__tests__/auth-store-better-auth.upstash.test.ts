@@ -9,7 +9,7 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { betterAuth } from "better-auth";
 import { createAuthEndpoint } from "better-auth/api";
-import { handleOAuthUserInfo, linkOAuthAccount } from "better-auth/oauth2";
+import { handleOAuthUserInfo, linkOAuthAccount, parseState } from "better-auth/oauth2";
 import { authOptions } from "@/lib/auth";
 import * as keys from "@/lib/auth-store/keys";
 import { LINK_AT_KEY, LINK_USER_PREFIX, linkKey } from "@/lib/github-link";
@@ -46,19 +46,25 @@ vi.hoisted(() => {
 type User = { id: string; email: string; login?: string };
 
 type LinkInput = { userId: string; kitEmail: string; accountId: string; login: string; ghEmail: string };
+type ProbeBody = Omit<LinkInput, "userId" | "kitEmail">;
 type LinkResult = { linked: boolean; error?: { code: string } };
 
-// The link half of GitHub's callback, mounted at the callback's own route so
-// the user-update hooks see the endpoint context a real link runs under.
-// Test-only: the token exchange in front of it needs GitHub.
+// The link half of GitHub's callback, mounted at the callback's own route and
+// called with `id: github`, so the hooks see the endpoint context a real link
+// runs under. It parses the state a real /link-social minted, as the callback
+// does: parseState is what puts `link` in the request's OAuth state, which
+// gateOAuthCallback reads to tell a link from a sign-in. Test-only: the token
+// exchange between the two needs GitHub.
 const linkProbe = {
   id: "link-probe",
   endpoints: {
     linkProbe: createAuthEndpoint("/callback/:id", { method: "POST" }, async (c) => {
-      const b = c.body as LinkInput;
+      const b = c.body as ProbeBody;
+      const { link } = await parseState(c);
+      if (!link) throw new Error("link probe: the state carries no link");
       return c.json(
         await linkOAuthAccount(c, {
-          link: { userId: b.userId, email: b.kitEmail },
+          link,
           userInfo: {
             id: b.accountId,
             email: b.ghEmail,
@@ -78,10 +84,30 @@ const linkProbe = {
 async function build() {
   const prefix = liveKey("auth-better-auth", freshId("p"));
   const instance = betterAuth({ ...authOptions, database: redisAdapter({ prefix }), plugins: [linkProbe] });
+  const ctx = await instance.$context;
   // The probe declares no body schema, so its typed input is `undefined`.
-  const probe = instance.api.linkProbe as unknown as (input: { body: LinkInput }) => Promise<LinkResult>;
-  const link = (body: LinkInput) => probe({ body });
-  return { prefix, instance, ctx: await instance.$context, link };
+  const probe = instance.api.linkProbe as unknown as (input: {
+    body: ProbeBody;
+    query: { state: string };
+    params: { id: string };
+    headers: Headers;
+  }) => Promise<LinkResult>;
+  // Starts the link as the player's browser would, then completes it at
+  // GitHub's callback with the state and state cookie /link-social handed out.
+  const link = async ({ userId, accountId, login, ghEmail }: LinkInput) => {
+    const session = await sessionHeaders(ctx, userId);
+    const started = await instance.api.linkSocialAccount({
+      body: { provider: "github", callbackURL: "/profile?linked=github" },
+      headers: session,
+      returnHeaders: true,
+    });
+    const state = new URL(started.response.url).searchParams.get("state");
+    if (!state) throw new Error("link probe: /link-social returned no state");
+    const stateCookies = started.headers.getSetCookie().map((c) => c.split(";")[0]);
+    const cookie = [session.get("cookie"), ...stateCookies].join("; ");
+    return probe({ body: { accountId, login, ghEmail }, query: { state }, params: { id: "github" }, headers: new Headers({ cookie }) });
+  };
+  return { prefix, instance, ctx, link };
 }
 
 // A signed session cookie for `userId`, as the browser would send it.

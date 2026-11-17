@@ -685,7 +685,9 @@ See [ADR 68](decisions.md#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled
   archive never contains `ctf:auth:*` or `ctf:link:*`. **`ctf:sd:held:*`**
   holds the scores sync could not attribute yet (`ctf:sd:held:authors`, a set
   of lowercased logins, and `ctf:sd:held:by:<login>`, a hash per author); the
-  master reset wipes them, and deleting a player clears theirs.
+  master reset wipes them, and deleting a player clears theirs. **`ctf:relink:blocked`**
+  (a set of lowercased logins) holds the GitHub logins of deleted players,
+  which `LINK_SCRIPT` refuses to link; the master reset wipes it.
   `GET /api/admin/sd/held` lists them read-only on the Secure Development
   admin tab, marking as `unclaimed` those no tick can release any more: the
   author linked at or after the close, or is still unlinked once it has

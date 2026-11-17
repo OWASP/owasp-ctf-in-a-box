@@ -97,8 +97,9 @@ mistyping a password does not lock anyone else out. The limits live in
 for them in `/admin`.
 
 Password sign-ins and sign-ups appear in the admin activity log. A player who
-loses a password has no recovery yet: they can sign in with GitHub if the
-account has one, or make a new account.
+loses a password asks an organizer for a reset code ([Accounts](#accounts)).
+Redeeming one at `/reset` has its own budget of 300 per 15 minutes per client
+address.
 
 ## Teams
 
@@ -795,8 +796,9 @@ The panel offers:
   every target, their quiz answers, classic solves, attempts and hints;
   keeps the account and the team), **delete contestant** (all of that
   plus the team membership, their event record, their rate-limit counters and
-  any Secure Development scores held for their GitHub login; the sign-in
-  account and its GitHub link stay), **remove from team**, or
+  any Secure Development scores held for their GitHub login, and the sign-in
+  account itself with its sessions and GitHub link; see
+  [Accounts](#accounts)), **remove from team**, or
   **add to team** / **move to team**: type a team slug and the player goes
   onto it, leaving their current team if they have one, whatever the
   registration state. This is how a player who left after registration
@@ -867,7 +869,10 @@ The panel offers:
   stay signed in across a reset, and so do the GitHub links
   (`ctf:link:*`, including when each was made) that tie a player to the GitHub
   login their PRs score under. Held Secure Development scores
-  (`ctf:sd:held:*`) are wiped, and deleting a player clears theirs. It is server-side and
+  (`ctf:sd:held:*`) are wiped, and deleting a player clears theirs. The
+  re-link blocklist that deleting a player builds (`ctf:relink:*`, see
+  [Accounts](#accounts)) is wiped too, so every blocked GitHub login can
+  link again. It is server-side and
   admin-gated, and requires **typing the event name** — the current runtime
   name from the Identity section above, not a fixed default — to proceed (a
   single click can't fire it).
@@ -1152,6 +1157,62 @@ valid until it is recovered.
 the access check fails **closed**, deliberately unlike the freeze read, which
 fails *open* so a Redis blip cannot drop live submissions. A claim during an
 outage answers "try again", never a grant.
+
+### Accounts
+
+The Support tab acts on one player's sign-in account; the Event tab's danger
+zone acts on all of them. Every action here is written to the admin audit
+log, naming the player and never a code or a password. A failed Redis write
+is reported as a failure (HTTP 503), never as success.
+
+**Reset code (a forgotten password).** Search the player in Support and press
+**Issue reset code**. The code appears once, in the same eight groups of four
+hex as a claim code, with a copy button; it is never stored in the clear and
+the audit log names only a short code id. Hand it over in person. The player
+opens `/reset` (no sign-in needed), enters the code and chooses a new
+password of 12 to 128 characters. The organizer never sees or sets the
+password. Then:
+
+- A code works once and expires after 15 minutes. Issuing a new code for the
+  same player voids the previous one.
+- A code dies with its issuer's admin access: if the admin who issued it
+  loses their grant, the code stops working.
+- Redeeming signs the player out of every session. A device whose session is
+  held in the 5-minute cookie cache can keep working for up to 5 minutes
+  before it notices.
+- It works for an account that signs in only with GitHub, Google or Discord:
+  the redeem gives it a password. A player with no username still needs to
+  pick one at `/welcome` before they can sign in by username.
+- Redemption is rate limited to 300 attempts per 15 minutes per client
+  address (`passwordReset` in `apps/web/src/lib/rate-limit-store.ts`).
+- If redeeming fails with a server error, the code may already be spent:
+  issue a new one.
+
+**Rename.** In Support, type the new username and press **Rename**. The
+username rules of sign-up apply, and a username another player holds is
+refused in any letter case. Scores, team and GitHub link are untouched. The
+renamed player's header can keep showing the old name for up to 5 minutes.
+
+**Unlink GitHub** (Secure Development on only). Releases the player's GitHub
+link so they can link another account. It is refused once the link has scored
+a Secure Development solve, and refused when GitHub is the player's only
+sign-in; give them a reset code first so they have a password.
+
+**Delete contestant.** Removes the account, its sessions, progress, team
+membership and held scores. A team captain is refused, and so is an
+organizer: revoke their admin access first. The player's GitHub login is
+added to a blocklist (`ctf:relink:blocked`) and cannot link to any account
+until the next master reset, so a deleted player's PRs cannot be claimed by a
+new account. The deleted username is free again.
+
+**Delete all accounts** (Event tab, danger zone). Type `delete all accounts`
+to confirm. It deletes every account, **including yours**, every admin grant
+and all progress; it keeps the settings, your authored content and the audit
+log. `/admin` is then closed until someone claims it with a fresh claim code
+at `/admin/claim`, so **rotate the claim code first** (`ctf-setup.sh
+admin-code`, or `deploy.sh --new-admin-code` on Fly and AWS) and keep the new
+code to hand. Run it with registration closed, or a player can sign up
+between the wipe and the claim.
 
 ## Sponsors
 

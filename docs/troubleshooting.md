@@ -434,6 +434,32 @@ username and password. `SIGN_IN_SETTINGS_UNREADABLE` ("Sign-in options could
 not be loaded") means the switch could not be read from Redis; retry, and see
 [`/health/deep`](#the-monitor-says-healthdeep-is-503-but-the-site-loads-fine).
 
+## A player forgot their password
+
+**Symptom.** A player cannot sign in by username and has no other sign-in on
+the account.
+
+**Fix.** In `/admin`, open the Support tab, find the player and press **Issue
+reset code**. Hand the code over in person; the player enters it at `/reset`
+and chooses a new password. A code works once and expires after 15 minutes,
+and a new code voids the old one. If `/reset` says the code is invalid, it was
+used, expired, replaced, or its issuer lost admin access: issue another. See
+[Accounts](operations.md#accounts).
+
+## A GitHub login cannot be linked
+
+**Symptom.** A player's GitHub sign-in or link is refused, or their PRs stay
+held, although the GitHub account is theirs.
+
+**Cause and fix.** Deleting a contestant blocks their GitHub login from
+linking to any account until the next master reset, so a deleted player's
+scores cannot be claimed by a new account. If that login belongs to someone
+who should be playing, run the master reset (it clears the block along with
+the rest of the event's progress). Before the event that is fine; mid-event
+the player needs a different GitHub account. Unlinking a link
+that has not scored, from the Support tab, does not block the login. See
+[Accounts](operations.md#accounts).
+
 ## Still stuck
 
 `./setup/ctf-setup.sh doctor` (the org, fork by fork) ·

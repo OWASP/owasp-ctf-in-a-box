@@ -352,7 +352,7 @@ export default function AdminEventTab({
         <div>
           <h3 className="text-white">Sign-in</h3>
           <p className="text-sm text-muted">
-            Username and password is always on. A provider appears here once its client id and secret are in .env and the app has restarted.
+            Username and password is always on. A provider appears here once its client id and secret are in .env and the app has restarted. Switching one off also stops players whose only way in is that provider; they can add a password from their profile first, or an organizer can help.
           </p>
         </div>
         {configuredSignInProviders.length === 0 ? (

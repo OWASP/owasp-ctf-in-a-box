@@ -5,6 +5,7 @@
 // the post-signin step, so a password sign-in meets the same team steering as
 // an OAuth one.
 
+import { PROVIDER_DISABLED_COPY, SIGN_IN_SETTINGS_UNREADABLE_COPY } from "@/lib/sign-in-error-copy";
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { oauthErrorCallbackURL, postSigninCallbackURL } from "@/lib/post-signin";
@@ -50,9 +51,9 @@ function errorCopy(error: AuthError): string {
     case "INVALID_USERNAME_OR_PASSWORD":
       return "Wrong username or password.";
     case "PROVIDER_DISABLED":
-      return "That sign-in option is not available.";
+      return PROVIDER_DISABLED_COPY;
     case "SIGN_IN_SETTINGS_UNREADABLE":
-      return "Sign-in options could not be loaded. Try again.";
+      return SIGN_IN_SETTINGS_UNREADABLE_COPY;
     default:
       return GENERIC_COPY;
   }

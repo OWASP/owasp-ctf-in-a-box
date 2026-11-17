@@ -368,7 +368,7 @@ export function redisAdapter(opts: { prefix?: string } = {}) {
       /**
        * Writes `next` (or deletes the row when null) only if the stored row still equals `snap`.
        * Returns false on a lost race. A taken unique value fails the write instead of
-       * retrying: when a GitHub email moves to another contestant's account, the
+       * retrying: when a stored email moves to another contestant's account, the
        * sign-in that would copy it onto a second user row fails until the first row
        * stops holding it.
        */

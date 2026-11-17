@@ -434,7 +434,7 @@ export default async function ProfilePage({
             Add a password
           </h2>
           <p className="text-sm text-zinc-400">
-            Sign in with your username and a password as well as GitHub. You can&apos;t change it here afterwards.
+            Sign in with your username and a password as well as your sign-in provider. You can&apos;t change it here afterwards.
           </p>
           <AddPasswordForm />
         </section>

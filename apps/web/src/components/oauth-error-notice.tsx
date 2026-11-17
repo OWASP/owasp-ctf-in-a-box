@@ -3,11 +3,11 @@
 // The landing page's OAuth callback error banner (issue #380).
 //
 // The provider (GitHub, Google or Discord) redirects an authorize failure
-// straight back to the app with
-// `?error=<code>&error_description=<text>` — a suspended/deleted OAuth app,
-// a contestant who cancelled the provider prompt, or a redirect URI the
-// provider doesn't recognize; so does a callback the sign-in switches refuse. Before this, the landing page read neither parameter:
-// the sign-in button looked like it simply did nothing.
+// straight back to the app with `?error=<code>&error_description=<text>`: a
+// suspended/deleted OAuth app, a contestant who cancelled the provider
+// prompt, or a redirect URI the provider doesn't recognize. A callback the
+// sign-in switches refuse redirects the same way. The banner is what keeps
+// the sign-in button from looking like it did nothing.
 //
 // Reuses the mock-data/hint notice's amber `ds-card` look (server-only
 // components) but as `role="alert"`, since this is something that JUST
@@ -15,8 +15,9 @@
 // first paint — the opposite of teamless-notice's reasoning for skipping it.
 
 import { signInHref } from "@/lib/post-signin";
+import { PROVIDER_DISABLED_COPY, SIGN_IN_SETTINGS_UNREADABLE_COPY } from "@/lib/sign-in-error-copy";
 
-/** Friendly, human sentences for the callback errors worth naming. GitHub's
+/** Friendly, human sentences for the callback errors worth naming. The provider's
  *  own `error_description` for these — and for every other code — is NEVER
  *  rendered: it is arbitrary provider-supplied prose with no guarantee about
  *  its contents (CodeRabbit pre-merge finding, "Secrets & Challenge Data In
@@ -31,6 +32,8 @@ const FRIENDLY_COPY: Record<string, string> = {
     "Sign-in was cancelled before the provider confirmed your identity — nothing was created or changed.",
   redirect_uri_mismatch:
     "The sign-in configuration doesn't match this site yet, so the provider refused the request. Let an organizer know.",
+  PROVIDER_DISABLED: PROVIDER_DISABLED_COPY,
+  SIGN_IN_SETTINGS_UNREADABLE: SIGN_IN_SETTINGS_UNREADABLE_COPY,
 };
 
 const GENERIC_MESSAGE = "Sign-in did not complete.";
@@ -38,7 +41,8 @@ const GENERIC_MESSAGE = "Sign-in did not complete.";
 /** OAuth error codes are short machine identifiers (`access_denied`,
  *  `server_error`, …): letters, digits, underscore, hyphen, capped well above
  *  any real one. A value outside that shape is not a code this app trusts as
- *  the provider's own, so none of it — not even the sanitized parts — is shown; the generic sentence renders alone. */
+ *  the provider's own, so none of it — not even the sanitized parts — is
+ *  shown; the generic sentence renders alone. */
 const CODE_SHAPE = /^[A-Za-z0-9_-]{1,40}$/;
 
 export default function OAuthErrorNotice({

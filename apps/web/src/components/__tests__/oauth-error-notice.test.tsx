@@ -25,3 +25,15 @@ describe("OAuthErrorNotice retry", () => {
     expect(screen.getByRole("link", { name: "Try again" }).getAttribute("href")).toBe("/sign-in?next=%2Fprofile");
   });
 });
+
+describe("OAuthErrorNotice provider-switch refusals", () => {
+  it("names a PROVIDER_DISABLED refusal", () => {
+    render(<OAuthErrorNotice error="PROVIDER_DISABLED" />);
+    expect(screen.getByRole("alert").textContent).toContain("That sign-in option is not available.");
+  });
+
+  it("names a SIGN_IN_SETTINGS_UNREADABLE refusal", () => {
+    render(<OAuthErrorNotice error="SIGN_IN_SETTINGS_UNREADABLE" />);
+    expect(screen.getByRole("alert").textContent).toContain("Sign-in options could not be loaded. Try again.");
+  });
+});

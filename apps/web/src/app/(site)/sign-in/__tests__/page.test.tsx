@@ -54,6 +54,7 @@ describe("/sign-in", () => {
   it("renders the form with no providers when the settings read throws", async () => {
     getPlayer.mockResolvedValue(null);
     getAdminSettings.mockRejectedValue(new Error("redis down"));
+    enabledSignInProviders.mockReturnValue(["github"]);
     vi.spyOn(console, "error").mockImplementation(() => {});
     const html = renderToStaticMarkup(await SignInPage({ searchParams: Promise.resolve({}) }));
     expect(html).toContain('data-providers=""');

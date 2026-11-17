@@ -406,7 +406,7 @@ export const authOptions = {
   },
   hooks: {
     // In this order: the rate limit is charged before anything reads the
-    // body, and the body checks run before anything reads Redis. Each check
+    // body, and the body checks run before the switch and link reads. Each check
     // returns early off its own path.
     before: createAuthMiddleware(async (ctx) => {
       await limitAuthAttempt(ctx);

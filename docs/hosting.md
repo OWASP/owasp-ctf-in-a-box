@@ -634,7 +634,7 @@ as a switch in the `/admin` Event tab (see
 [the admin panel](operations.md#organizer-admin-panel)).
 
 The app stores no provider email, name or avatar for Google or Discord, and no
-email from any provider; GitHub keeps its name and avatar. Only GitHub can be
+email from any provider; GitHub sets its name and avatar at account creation. Only GitHub can be
 linked to an account.
 
 ### GitHub OAuth app

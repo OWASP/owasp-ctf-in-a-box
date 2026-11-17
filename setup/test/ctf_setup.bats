@@ -1196,7 +1196,7 @@ _stub_prereqs() {
   printf '#!/bin/sh\n[ "$1" = auth ] && exit 0\nexit 1\n' > "$BATS_TEST_TMPDIR/stubbin/gh"
   chmod +x "$BATS_TEST_TMPDIR/stubbin/gh"
   printf 'GITHUB_ORG=\nGITHUB_CLIENT_ID=\nGITHUB_CLIENT_SECRET=\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\n' > .env
-  run env CTF_NO_BROWSER=1 PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" wizard
+  run env CTF_NO_BROWSER=1 PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" wizard </dev/null
   [ "$status" -eq 0 ]
   [ -z "$(echo "$output" | grep -F "OAuth Client ID")" ]
   echo "$output" | grep -qF "GitHub sign-in is optional without Secure Development — skipped"

@@ -90,7 +90,8 @@ import { APIError } from "better-auth/api";
  *   /sign-up/email     username + password sign-up (refuseSignUpFields closes
  *                      it to every identity field but the username)
  *   /sign-in/username  username + password sign-in
- *   /sign-in/social    authClient.signIn.social({ provider: "github" })
+ *   /sign-in/social    authClient.signIn.social({ provider }) for each enabled
+ *                      provider (github, google, discord)
  *   /link-social       authClient.linkSocial({ provider: "github" }), the
  *                      signed-in player's Link GitHub button
  *   /callback/:id      GitHub's OAuth redirect back, for sign-in and for a link

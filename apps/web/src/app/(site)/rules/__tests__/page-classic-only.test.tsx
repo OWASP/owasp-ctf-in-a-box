@@ -56,7 +56,7 @@ describe("/rules in a classic-only event", () => {
 
   it("states the same rules in classic's own terms", () => {
     expect(html).toContain(
-      "Your account is your identity for scoring — everything you submit counts for the account you signed in with.",
+      "Your account is your identity for scoring — everything you submit on this site counts for the account you signed in with.",
     );
     expect(html).toContain("The published flags are the whole game.");
     expect(html).toContain(

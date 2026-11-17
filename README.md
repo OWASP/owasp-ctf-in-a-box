@@ -190,6 +190,9 @@ Components, the score data flow and the security model:
 
 - **Contestants** create an account on the box (or sign in with a provider
   you turned on) and form or join a team (a team is required to score), then play whichever modules you enabled.
+  With Secure Development on, each contestant also links GitHub from their
+  profile: a PR scores for the account its author is linked to, and an
+  unlinked author's score is held until they link.
 - **Organizers** run everything from `/admin`: the schedule, the freeze,
   registration, content — and when one contestant gets stuck, they fix that
   one contestant instead of resetting the event.

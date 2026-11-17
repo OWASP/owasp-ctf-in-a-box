@@ -137,10 +137,9 @@ stock upstream image and fails if anything scores above zero
 
 ## Quickstart
 
-The full, canonical sequence — tooling check, scorer image, the four `.env`
-bootstrap keys, the sync GitHub App, the GitHub OAuth app (Secure Development
-only), org provisioning,
-and bringing the box up — lives in
+The full, canonical sequence — tooling check, the four `.env` bootstrap keys
+and bringing the box up, plus, for Secure Development only, the scorer image,
+the sync GitHub App, the GitHub OAuth app and org provisioning — lives in
 [Hosting → Quickstart: zero to a scored event](hosting.md#quickstart-zero-to-a-scored-event).
 
 Scores reach the box by outbound polling, and that is the only transport there

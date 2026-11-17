@@ -73,7 +73,7 @@ export default async function RulesPage() {
         // (issue #200, tier 4). A module contributes a teams bullet only for
         // nuance this sentence cannot carry (secure-development's PR-author
         // credit, below).
-        "Your account is your identity for scoring — everything you submit counts for the account you signed in with.",
+        "Your account is your identity for scoring — everything you submit on this site counts for the account you signed in with.",
         ...fromModules("teams"),
       ],
     },

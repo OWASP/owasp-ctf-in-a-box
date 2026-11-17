@@ -78,6 +78,17 @@ describe("notifyFirstBlood", () => {
     expect(JSON.stringify(msg)).toContain("Web 1");
   });
 
+  it("carries the points the award script banked, not a later catalogue price", async () => {
+    // The catalogue mock prices web-1 at 100; the award that triggered this
+    // notification banked 42 (a mid-event price change or a partial award).
+    // The message must show what the solver actually earned.
+    await notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice", points: 42 });
+    const msg = mocks.enqueueLedgerAnnouncement.mock.calls[0][1] as {
+      embeds: { fields?: { name: string; value: string }[] }[];
+    };
+    expect(msg.embeds[0].fields).toEqual([{ name: "Points", value: "42", inline: true }]);
+  });
+
   it("does NOT post when another player is the recorded first solver", async () => {
     mocks.readLedgerField.mockResolvedValue(JSON.stringify({ playerId: "bob", at: "2026-10-14T12:00:00Z" }));
     await notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });

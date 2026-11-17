@@ -129,7 +129,7 @@ export async function POST(request: Request) {
     // throws, and this solve has already banked, so a Discord hiccup can
     // never surface here. Fresh solves only, same guard as logActivity.
     if (!result.already) {
-      void notifyFirstBlood({ module: "classic", challengeId, playerId });
+      void notifyFirstBlood({ module: "classic", challengeId, playerId, points: result.points });
     }
     // `already` (this login had banked this flag before — see SubmitResult)
     // rides along so the client can say so, instead of reading the

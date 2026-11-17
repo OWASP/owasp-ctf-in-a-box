@@ -267,6 +267,40 @@ describe("lifecycle tick", () => {
     }
   });
 
+  it("rides a disabled launch edge on the CAS, so an enable during the settings read cannot consume it", async () => {
+    // The tick captures launch=off; launch happens while it waits on settings
+    // and an admin enables the switch in that gap. The launch edge must still
+    // ride the CAS (captured off) so the script can reject the stale
+    // observation — filtering it out would store L1 silently and the nudged
+    // tick would see no edge to announce.
+    mocks.getAnnounceConfig.mockResolvedValue(config({ launch: false, pause: true }));
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringStartsAt: "2026-10-14T11:00:00Z" }));
+    mocks.readStatePack.mockResolvedValue("v2|L0P0C0A0");
+    mocks.stateCompareSet.mockResolvedValue({ code: 0, seq: 0, prev: "v2|L0P0C0A0" });
+    await runAnnounceTick(T0);
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith(
+      "ctf:announce:lifecycle",
+      "v2|L0P0C0A0",
+      "v2|L1P0C0A0",
+      [expect.objectContaining({ kind: "launch", enabled: false })],
+      0,
+    );
+    expect(lifecycleEntries()).toEqual([expect.objectContaining({ kind: "launch", enabled: false })]);
+
+    // Fresh configuration with launch on: the next tick wins and announces.
+    mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true, pause: true }));
+    mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L0P0C0A0" });
+    await runAnnounceTick(T0 + 30_000);
+    expect(mocks.stateCompareSet).toHaveBeenCalledWith(
+      "ctf:announce:lifecycle",
+      "v2|L0P0C0A0",
+      "v2|L1P0C0A0",
+      [expect.objectContaining({ kind: "launch", enabled: true })],
+      0,
+    );
+    expect(lifecycleEntries()).toEqual([expect.objectContaining({ kind: "launch", enabled: true })]);
+  });
+
   it("stamps a lifecycle edge with the generation and epoch captured by the tick", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(
       config({ launch: true, webhookGeneration: 4, kindEpochs: { "first-blood": 0, launch: 2, pause: 0, resume: 0, milestone: 0 } }),
@@ -377,7 +411,9 @@ describe("lifecycle tick", () => {
     mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L1P0C0A0" });
     await runAnnounceTick(T0);
     expect(mocks.stateCompareSet).toHaveBeenCalled();
-    expect(lifecycleEntries()).toEqual([]);
+    expect(lifecycleEntries()).toEqual([
+      expect.objectContaining({ kind: "pause", enabled: false, ...captured }),
+    ]);
   });
 
   it("does not store an announced pause the disabled switch never posted", async () => {
@@ -389,7 +425,9 @@ describe("lifecycle tick", () => {
     mocks.stateCompareSet.mockResolvedValue({ code: 1, seq: 2, prev: "v2|L1P0C0A0" });
     await runAnnounceTick(T0);
     expect(mocks.stateCompareSet).toHaveBeenCalledWith("ctf:announce:lifecycle", "v2|L1P0C0A0", "v2|L1P1C0A0", expect.any(Array), 0);
-    expect(lifecycleEntries()).toEqual([]);
+    expect(lifecycleEntries()).toEqual([
+      expect.objectContaining({ kind: "pause", enabled: false, ...captured }),
+    ]);
 
     // Enabling pause announcements during the same freeze does not turn the
     // old, unheard hold into an announced one.
@@ -397,7 +435,9 @@ describe("lifecycle tick", () => {
     mocks.readStatePack.mockResolvedValue("v2|L1P1C0A0");
     await runAnnounceTick(T0 + 30_000);
     expect(mocks.stateCompareSet).toHaveBeenCalledTimes(1);
-    expect(lifecycleEntries()).toEqual([]);
+    expect(lifecycleEntries()).toEqual([
+      expect.objectContaining({ kind: "pause", enabled: false, ...captured }),
+    ]);
 
     // Unfreezing posts nothing: no pause was ever announced, so no resume is owed.
     mocks.getAdminSettings.mockResolvedValue(settings({ paused: false }));

@@ -518,4 +518,14 @@ describe("postToDiscord", () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 429 })));
     expect(await postToDiscord(URL, { embeds: [] })).toEqual({ ok: false, retryAfterMs: 1_000 });
   });
+
+  it("never returns a non-finite retry from an unparseable Retry-After header", async () => {
+    // `Number("junk") * 1000` is NaN: without the finite guard the caller
+    // would park its sweeps for NaN ms (immediate retry, a hot loop).
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false, status: 429, headers: { get: () => "junk" }, json: async () => ({}) })),
+    );
+    expect(await postToDiscord(URL, { embeds: [] })).toEqual({ ok: false, retryAfterMs: 1_000 });
+  });
 });

@@ -346,7 +346,7 @@ describe("the first-blood hook (#590)", () => {
     answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10 });
     await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
     expect(announceNotify.notifyFirstBlood).toHaveBeenCalledTimes(1);
-    expect(announceNotify.notifyFirstBlood).toHaveBeenCalledWith({ module: "quiz", challengeId: "q1", playerId: ALICE_ID });
+    expect(announceNotify.notifyFirstBlood).toHaveBeenCalledWith({ module: "quiz", challengeId: "q1", playerId: ALICE_ID, points: 10 });
   });
 
   it("does NOT announce an idempotent re-submission (it banked nothing)", async () => {

@@ -343,7 +343,7 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
       webhookGeneration: 5,
       kindEpoch: 4,
     });
-    const fresh = ["v1|L0P0", "v1|L1P0", new Date().toISOString(), "1", `${RUN}-enq-launch`, entry, "launch", "epoch:launch", "4", "5"];
+    const fresh = ["v1|L0P0", "v1|L1P0", new Date().toISOString(), "1", `${RUN}-enq-launch`, entry, "launch", "epoch:launch", "4", "5", "1"];
 
     await upstashPipeline([
       ["DEL", stateKey, seqKey, boxKey, cfgKey, genKey],
@@ -358,14 +358,14 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     // the entry, so the notice is lost while a later resume still fires.
     const staleEpoch = await upstashEval(STATE_CAS_ENQUEUE_SCRIPT, keys, [
       "v1|L0P0", "v1|L1P0", new Date().toISOString(), "1",
-      `${RUN}-enq-epoch`, entry, "launch", "epoch:launch", "3", "5",
+      `${RUN}-enq-epoch`, entry, "launch", "epoch:launch", "3", "5", "1",
     ]);
     expect((staleEpoch as number[])[0]).toBe(0);
 
     // Stale webhook generation: the webhook rotated after this observation.
     const staleGeneration = await upstashEval(STATE_CAS_ENQUEUE_SCRIPT, keys, [
       "v1|L0P0", "v1|L1P0", new Date().toISOString(), "1",
-      `${RUN}-enq-gen`, entry, "launch", "epoch:launch", "4", "4",
+      `${RUN}-enq-gen`, entry, "launch", "epoch:launch", "4", "4", "1",
     ]);
     expect((staleGeneration as number[])[0]).toBe(0);
 
@@ -394,6 +394,32 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     const [pack2, box2] = await upstashPipeline([["GET", stateKey], ["HGET", boxKey, `${RUN}-enq-launch`]]);
     expect(pack2.result).toBe("v1|L1P0");
     expect(box2.result).toBe(entry);
+
+    // A disabled edge captured as OFF still fences the CAS: if the switch is
+    // turned ON before the write, the observation is stale and must lose —
+    // otherwise the entry-free swap would consume the launch silently.
+    await upstashPipeline([
+      ["SET", stateKey, "v1|L0P0"],
+      ["SET", genKey, "5"],
+      ["HSET", cfgKey, "launch", "1", "epoch:launch", "4"],
+    ]);
+    const capturedOff = ["v1|L0P0", "v1|L1P0", new Date().toISOString(), "1", `${RUN}-enq-off`, entry, "launch", "epoch:launch", "4", "5", "0"];
+    const enabledDuringRead = await upstashEval(STATE_CAS_ENQUEUE_SCRIPT, keys, capturedOff);
+    expect((enabledDuringRead as number[])[0]).toBe(0);
+    const [packAfterOff, boxAfterOff] = await upstashPipeline([["GET", stateKey], ["HGETALL", boxKey]]);
+    expect(packAfterOff.result).toBe("v1|L0P0");
+    expect(boxAfterOff.result).toEqual([]);
+
+    // Captured OFF and still OFF: the CAS wins and writes NOTHING — the edge
+    // is consumed silently, exactly as a disabled switch must behave.
+    await upstashPipeline([["HSET", cfgKey, "launch", "0"]]);
+    const silent = await upstashEval(STATE_CAS_ENQUEUE_SCRIPT, keys, capturedOff);
+    const silentArr = silent as [number, number, string, number];
+    expect(silentArr[0]).toBe(1);
+    expect(silentArr[3]).toBe(0);
+    const [packSilent, boxSilent] = await upstashPipeline([["GET", stateKey], ["HGETALL", boxKey]]);
+    expect(packSilent.result).toBe("v1|L1P0");
+    expect(boxSilent.result).toEqual([]);
 
     await upstashPipeline([["DEL", stateKey, seqKey, boxKey, cfgKey, genKey]]);
   });

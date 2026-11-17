@@ -626,7 +626,7 @@ describe("stateCompareSet / readStatePack", () => {
     ]);
     expect(args.slice(0, 4)).toEqual(["v1|L0P0", "v1|L1P0", expect.any(String), "1"]);
     expect(args[4]).toBe("id-1");
-    expect(args.slice(6)).toEqual(["launch", "epoch:launch", "2", "3", ""]);
+    expect(args.slice(6)).toEqual(["launch", "epoch:launch", "2", "3", "1", ""]);
   });
 
   it("forwards the observed revision, so a pack recycled by a pause/resume cycle cannot match", async () => {

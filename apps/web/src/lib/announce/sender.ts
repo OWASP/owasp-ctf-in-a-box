@@ -395,7 +395,7 @@ export async function postToDiscord(url: string, body: unknown): Promise<Discord
             // No parseable body: use the conservative default below.
           }
         }
-        if (retryAfterMs === undefined) retryAfterMs = 1_000;
+        if (retryAfterMs === undefined || !Number.isFinite(retryAfterMs) || retryAfterMs <= 0) retryAfterMs = 1_000;
         console.error("[announce] discord post rate limited: HTTP 429");
         return { ok: false, retryAfterMs };
       }

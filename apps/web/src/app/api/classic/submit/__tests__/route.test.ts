@@ -390,7 +390,7 @@ describe("the first-blood hook (#590)", () => {
     storeReturns({ ok: true, correct: true, points: 50 });
     await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(announceNotify.notifyFirstBlood).toHaveBeenCalledTimes(1);
-    expect(announceNotify.notifyFirstBlood).toHaveBeenCalledWith({ module: "classic", challengeId: "c-1", playerId: ALICE_ID });
+    expect(announceNotify.notifyFirstBlood).toHaveBeenCalledWith({ module: "classic", challengeId: "c-1", playerId: ALICE_ID, points: 50 });
   });
 
   it("does NOT announce an idempotent re-submission (it banked nothing)", async () => {

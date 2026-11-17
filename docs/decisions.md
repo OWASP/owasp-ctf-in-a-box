@@ -4610,11 +4610,11 @@ work an event without the feature must never pay for.
   phishing link under the event's authority) and splits `https://` so
   Discord autolinks nothing out of untrusted text. A classic challenge
   still locked behind its story step is never announced: the notifier
-  spends its claim first (so nobody can post it later either) and then
-  checks the same unlock computation the board makes from the no-solve view
-  (ADR 60), withholding the ENTIRE post — title, points and the bare id the
-  board also redacts — when the step is locked, or when the story line it
-  needs cannot be read at all. The admin "Send test" and the per-type
+  checks visibility first — the same unlock computation the board makes
+  from the no-solve view (ADR 60) — withholding the ENTIRE post (title,
+  points and the bare id the board also redacts) when the step is locked,
+  or when the story line it needs cannot be read at all, and spends its
+  claim only when an eligible post is enqueued. The admin "Send test" and the per-type
   previews are built by the same builders the live announcer uses, so a
   preview demonstrates the live message format — the same embeds, mention
   suppression and escaping — on sample data, not the real content of any

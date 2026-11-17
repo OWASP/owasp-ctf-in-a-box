@@ -151,10 +151,10 @@ describe("resetEvent", () => {
     });
     expect(out.resetAt).toMatch(/^\d+$/);
 
-    // one SCAN + one DEL per prefix (23 prefixes) = 46 pipeline calls
+    // one SCAN + one DEL per prefix (RESET_PREFIXES.length) = 2x pipeline calls
     const verbs = mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0]);
-    expect(verbs.filter((v) => v === "SCAN").length).toBe(23);
-    expect(verbs.filter((v) => v === "DEL").length).toBe(23);
+    expect(verbs.filter((v) => v === "SCAN").length).toBe(RESET_PREFIXES.length);
+    expect(verbs.filter((v) => v === "DEL").length).toBe(RESET_PREFIXES.length);
     // every wiped prefix, and NOT settings/audit/sync
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
@@ -196,6 +196,7 @@ describe("resetEvent", () => {
       "ctf:admin:pauses",
       "ctf:admin:discord:webhook-generation",
       "ctf:announce:milestone",
+      "ctf:announce:first-announced",
     ]);
     expect(args[0]).toBe("alice"); // updatedBy: the actor's name
     const auditLine = JSON.parse(String(args[3]));

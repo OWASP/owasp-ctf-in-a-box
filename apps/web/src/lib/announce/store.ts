@@ -626,6 +626,10 @@ export type StateCasEntry = {
   payload: unknown;
   webhookGeneration: number;
   kindEpoch: number;
+  /** Whether the captured switch was ON. A disabled edge still rides the CAS
+   *  (so the observation is fenced against a concurrent enable) but is never
+   *  written to the outbox. */
+  enabled?: boolean;
 };
 
 /** The CAS plus optional outbox writes, one atomic script. Without this, a
@@ -662,8 +666,12 @@ if n > 0 then
     local epochField = ARGV[i + 3]
     local kindEpoch = ARGV[i + 4]
     local generation = ARGV[i + 5]
-    i = i + 6
-    if redis.call('HGET', KEYS[4], switchField) ~= '1'
+    local capturedEnabled = ARGV[i + 6]
+    i = i + 7
+    -- The captured switch state must still match: an enable (or disable)
+    -- during the settings read invalidates the observation, including an
+    -- entry-free CAS that would otherwise silently consume the edge.
+    if (redis.call('HGET', KEYS[4], switchField) or '0') ~= capturedEnabled
       or tonumber(redis.call('HGET', KEYS[4], epochField) or 0) ~= tonumber(kindEpoch)
       or tonumber(redis.call('GET', KEYS[5]) or 0) ~= tonumber(generation) then
       return {0, 0, cur == false and '' or cur, 0}
@@ -704,11 +712,14 @@ if code == 1 and n > 0 then
     local epochField = ARGV[i + 3]
     local kindEpoch = ARGV[i + 4]
     local generation = ARGV[i + 5]
-    i = i + 6
+    local capturedEnabled = ARGV[i + 6]
+    i = i + 7
     local enabled = redis.call('HGET', KEYS[4], switchField)
     local currentEpoch = tonumber(redis.call('HGET', KEYS[4], epochField)) or 0
     local currentGeneration = tonumber(redis.call('GET', KEYS[5])) or 0
-    if enabled == '1' and currentEpoch == tonumber(kindEpoch) and currentGeneration == tonumber(generation) then
+    -- Validation above already matched the captured switch/epoch/generation;
+    -- only an ON edge is written to the outbox.
+    if capturedEnabled == '1' and enabled == '1' and currentEpoch == tonumber(kindEpoch) and currentGeneration == tonumber(generation) then
       redis.call('HSET', KEYS[3], id, entry)
       enqueued = enqueued + 1
     end
@@ -761,6 +772,7 @@ export async function stateCompareSet(
       KIND_EPOCH_FIELDS[entry.kind],
       String(entry.kindEpoch),
       String(entry.webhookGeneration),
+      entry.enabled === false ? "0" : "1",
     ];
   });
   const raw = await upstashEval(

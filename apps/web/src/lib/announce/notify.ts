@@ -60,6 +60,9 @@ export type FirstBloodInput = {
   /** The solving player's id — the session's, never the body's. Displayed as
    *  the TEAM name when the solver has one, else the player's display name. */
   playerId: string;
+  /** The points the award script banked for this solve — the message carries
+   *  these, never a later catalogue price an admin may have changed. */
+  points?: number;
 };
 
 /** Public prompt + points for one quiz item, from the module's PUBLIC
@@ -176,7 +179,7 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
         // A quiz challenge deleted between solve and lookup still
         // announces — under its id, with zero points — rather than vanishing.
         challengeTitle: item?.title ?? input.challengeId,
-        points: item?.points ?? 0,
+        points: input.points ?? item?.points ?? 0,
         who,
         ...(url ? { url } : {}),
       }),

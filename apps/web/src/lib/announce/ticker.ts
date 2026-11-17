@@ -315,18 +315,21 @@ async function tickLifecycle(
     // (`prevSnap === null`) seeds silently: there is no trustworthy baseline
     // to announce from, so no entries are passed.
     const name = eventName(settings);
+    // Every edge rides the CAS — including ones whose switch is off — so a
+    // concurrent enable during the settings read invalidates this observation
+    // instead of silently consuming the edge. Disabled edges are never
+    // written to the outbox (the script's capturedEnabled flag).
     const entries: StateCasEntry[] =
       prevSnap === null
         ? []
-        : lifecycleEdges(prevSnap, snap)
-            .filter((edge) => kindEnabled(config, edge.kind))
-            .map((edge) => ({
-              id: newOutboxId(edge.kind),
-              kind: edge.kind,
-              payload: buildLifecycleMessage({ kind: edge.kind, eventName: name }),
-              webhookGeneration: config.webhookGeneration,
-              kindEpoch: config.kindEpochs[edge.kind],
-            }));
+        : lifecycleEdges(prevSnap, snap).map((edge) => ({
+            id: newOutboxId(edge.kind),
+            kind: edge.kind,
+            payload: buildLifecycleMessage({ kind: edge.kind, eventName: name }),
+            webhookGeneration: config.webhookGeneration,
+            kindEpoch: config.kindEpochs[edge.kind],
+            enabled: kindEnabled(config, edge.kind),
+          }));
     const cas = await stateCompareSet(ANNOUNCE_LIFECYCLE_KEY, expected, next, entries, expectedRev);
     // 0 = someone else won or the state moved on; 2 = silent init. Either
     // way the script wrote no entries for this caller.

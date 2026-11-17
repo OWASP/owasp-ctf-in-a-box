@@ -6,7 +6,7 @@ vi.mock("@/lib/auth-client", () => ({ authClient: {} }));
 
 import ResetPasswordForm from "@/components/reset-password-form";
 import { MISMATCH_COPY, PASSWORD_COPY } from "@/components/password-auth-form";
-import { RESET_CODE_INVALID_COPY, RESET_DONE_COPY } from "@/lib/password-reset-copy";
+import { RESET_CODE_INVALID_COPY, RESET_DONE_COPY, RESET_UNAVAILABLE_COPY } from "@/lib/password-reset-copy";
 
 const CODE = "0123-4567-89ab-cdef-0123-4567-89ab-cdef";
 const PW = "correct horse battery";
@@ -58,5 +58,11 @@ describe("ResetPasswordForm", () => {
   it("shows the rate-limit wait", async () => {
     fill(PW, PW, new Response("{}", { status: 429, headers: { "Retry-After": "60" } }));
     expect(await screen.findByText("Too many attempts. Try again in 60 seconds.")).toBeTruthy();
+  });
+
+  it("on a 503 says the code may be spent and to ask for a new one", async () => {
+    fill(PW, PW, new Response(JSON.stringify({ error: "unavailable" }), { status: 503 }));
+    expect(await screen.findByText(RESET_UNAVAILABLE_COPY)).toBeTruthy();
+    expect(RESET_UNAVAILABLE_COPY).toBe("Something went wrong. Ask an organizer for a new code if this keeps happening.");
   });
 });

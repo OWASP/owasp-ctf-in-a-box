@@ -26,6 +26,7 @@ vi.mock("@/lib/upstash", () => ({
 }));
 
 import { POST } from "@/app/api/reset-password/route";
+import { RATE_LIMITS } from "@/lib/rate-limit-store";
 
 const req = (body: unknown, ip = "203.0.113.7") =>
   new Request("http://box.test/api/reset-password", {
@@ -64,13 +65,18 @@ describe("POST /api/reset-password", () => {
     expect(await res.json()).toEqual({ error: "PASSWORD_LENGTH" });
   });
 
-  it("429s with Retry-After after 10 attempts from one address, without trying the code", async () => {
+  it("sizes the budget for a shared venue address: 300 per 15 minutes", () => {
+    expect(RATE_LIMITS.passwordReset).toEqual({ bucket: "password-reset", limit: 300, windowSeconds: 900 });
+  });
+
+  it("429s with Retry-After once one address spends the budget, without trying the code", async () => {
+    const { limit } = RATE_LIMITS.passwordReset;
     m.redeem.mockResolvedValue({ ok: false, reason: "invalid" });
-    for (let i = 0; i < 10; i++) expect((await POST(req({ code: CODE, password: PW }))).status).toBe(400);
+    for (let i = 0; i < limit; i++) expect((await POST(req({ code: CODE, password: PW }))).status).toBe(400);
     const res = await POST(req({ code: CODE, password: PW }));
     expect(res.status).toBe(429);
     expect(res.headers.get("Retry-After")).toBe("600");
-    expect(m.redeem).toHaveBeenCalledTimes(10);
+    expect(m.redeem).toHaveBeenCalledTimes(limit);
     expect((await POST(req({ code: CODE, password: PW }, "198.51.100.9"))).status).toBe(400);
   });
 

@@ -6,7 +6,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { GENERIC_COPY, MISMATCH_COPY, PASSWORD_COPY, rateLimitCopy } from "@/components/password-auth-form";
-import { RESET_CODE_INVALID_COPY, RESET_DONE_COPY } from "@/lib/password-reset-copy";
+import { RESET_CODE_INVALID_COPY, RESET_DONE_COPY, RESET_UNAVAILABLE_COPY } from "@/lib/password-reset-copy";
 
 const INPUT =
   "w-full rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 font-mono text-sm text-white placeholder:text-zinc-600 focus-visible:border-[#2563eb]/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]";
@@ -37,6 +37,7 @@ export default function ResetPasswordForm() {
       });
       if (res.ok) return setDone(true);
       if (res.status === 429) return setError(rateLimitCopy(Number(res.headers.get("Retry-After"))));
+      if (res.status === 503) return setError(RESET_UNAVAILABLE_COPY);
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
       if (body?.error === "RESET_CODE_INVALID") return setError(RESET_CODE_INVALID_COPY);
       if (body?.error === "PASSWORD_LENGTH") return setError(PASSWORD_COPY);

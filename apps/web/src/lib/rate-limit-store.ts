@@ -118,10 +118,12 @@ export const RATE_LIMITS = {
   adminClaim: { bucket: "admin-claim", limit: 5, windowSeconds: 900 },
   /** Password reset code redemptions (`/api/reset-password`), keyed on the
    *  client address because the player is signed out, and charged FAIL
-   *  CLOSED like adminClaim: the budget is what bounds guessing. A code is
-   *  128 bits, so it is not what makes guessing infeasible; it stops a script
-   *  trying. */
-  passwordReset: { bucket: "password-reset", limit: 10, windowSeconds: 900 },
+   *  CLOSED. A code is 128 bits, so guessing is infeasible whatever this is;
+   *  the budget only throttles a script hammering the route. Sized like
+   *  signUpIp, because behind a venue NAT or a CDN edge every player shares
+   *  one address, and a small budget would let one person lock every reset
+   *  out. */
+  passwordReset: { bucket: "password-reset", limit: 300, windowSeconds: 900 },
   /** Sign-up attempts per client address (`/sign-up/email`), charged fail
    *  closed. Sized so a venue sharing one NAT, or a CDN edge address, still
    *  fits a whole room signing up. */

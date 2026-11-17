@@ -13,8 +13,8 @@ import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
  * route is the kit's replacement. The proxy's origin check covers it like
  * every other `/api` route.
  *
- * Bounds: ten attempts per client address per 15 minutes, charged FAIL
- * CLOSED (`RATE_LIMITS.passwordReset`). Every refusal of a code reads the
+ * Bounds: `RATE_LIMITS.passwordReset` per client address, charged FAIL
+ * CLOSED; it throttles scripts, since a 128-bit code cannot be guessed. Every refusal of a code reads the
  * same, so the answer says nothing about which codes exist. Neither the code
  * nor the password is ever logged.
  */

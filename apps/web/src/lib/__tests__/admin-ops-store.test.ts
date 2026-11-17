@@ -1182,6 +1182,18 @@ describe("unlinkGithub", () => {
     expect(linkDeps.releaseGithubLink).not.toHaveBeenCalled();
   });
 
+  it("answers no link, not the GitHub-only copy, when the player has no account rows", async () => {
+    linkDeps.getGithubLink.mockResolvedValueOnce({ login: "octocat", linkedAt: 1 });
+    mockSecureDevKeys("ctf:solves:vampi", [`${BOB}:api1`]);
+    authDeps.findAccounts.mockResolvedValue([]);
+    const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err.message).toBe("No GitHub account is linked.");
+    expect(authDeps.deleteAccount).not.toHaveBeenCalled();
+    expect(linkDeps.releaseGithubLink).not.toHaveBeenCalled();
+    expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
+  });
+
   it("refuses a player with no link", async () => {
     linkDeps.getGithubLink.mockResolvedValueOnce(null);
     const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);

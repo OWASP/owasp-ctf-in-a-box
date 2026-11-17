@@ -889,6 +889,9 @@ export async function unlinkGithub(rawId: unknown, actor: AuditActor): Promise<{
   }
   const { internalAdapter } = await auth.$context;
   const accounts = await internalAdapter.findAccounts(player);
+  // Link keys with no account rows behind them: nothing signs in through
+  // this link, so the GitHub-only copy would send the admin the wrong way.
+  if (accounts.length === 0) throw new OpsValidationError("id", "No GitHub account is linked.");
   const github = accounts.filter((a) => a.providerId === "github");
   if (github.length === accounts.length) {
     throw new OpsValidationError(

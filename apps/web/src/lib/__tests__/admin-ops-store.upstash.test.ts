@@ -356,6 +356,37 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     await expect(ops.deleteUser(id, actor)).rejects.toThrow("No such player.");
   });
 
+  it("a re-run after a failed membership removal finds the team through the record and removes the player from it", async () => {
+    const { ctx, pipeline, ops } = await load();
+    const gh = `vm2${tag}`.slice(0, 39);
+    const id = await makePlayer(gh);
+    const team = `vtm-${tag}`.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40);
+    try {
+      // What a first run that failed at the membership SREM leaves: no
+      // account, the record still naming the team, the membership, the marker.
+      await ctx.internalAdapter.deleteUserSessions(id);
+      await ctx.internalAdapter.deleteAccounts(id);
+      await ctx.internalAdapter.deleteUser(id);
+      const seeded = await pipeline([
+        ["HSET", `ctf:team:${team}`, "name", "VTM", "captain", mate],
+        ["SADD", `ctf:team:${team}:members`, mate, id],
+        ["HSET", `ctf:user:${id}`, "team", team, "joinedAt", at],
+        ["SET", `ctf:admin:deleting:${id}`, "1"],
+      ]);
+      expect(seeded.filter((r) => r.error)).toEqual([]);
+      await expect(ops.deleteUser(id, { id: crypto.randomUUID(), name: "organizer" })).resolves.toMatchObject({ leftTeam: team });
+      const [member, mateStays, record, marker] = await pipeline([
+        ["SISMEMBER", `ctf:team:${team}:members`, id],
+        ["SISMEMBER", `ctf:team:${team}:members`, mate],
+        ["EXISTS", `ctf:user:${id}`],
+        ["EXISTS", `ctf:admin:deleting:${id}`],
+      ]);
+      expect([member.result, mateStays.result, record.result, marker.result]).toEqual([0, 1, 0, 0]);
+    } finally {
+      await pipeline([["DEL", `ctf:team:${team}`, `ctf:team:${team}:members`]]);
+    }
+  });
+
   it("a finished delete leaves its score-hold token and no account row, so the scorer answers deleted", async () => {
     const { pipeline, ops } = await load();
     const gh = `vd5${tag}`.slice(0, 39);

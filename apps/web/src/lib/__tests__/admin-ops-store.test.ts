@@ -186,13 +186,14 @@ function queueDeleteMark() {
 /** What `deleteUser` writes once the account row is confirmed gone, in
  *  order: the grant SREM, the held-score clear (`held`), the progress reset
  *  (its secure-dev sweep, the classic script, the quiz/hints pipeline and its
- *  audit), the tail and the delete's audit. `stopAfter` leaves the later
+ *  audit), the membership SREM (`team`), the record DEL, the marker DEL and
+ *  the delete's audit. `stopAfter` leaves the later
  *  stages unqueued, so a delete that fails there leaves no reply over for the
  *  next test. */
 function queueDeleteWrites(
-  opts: { grantRemoved?: number; held?: boolean; stopAfter?: "grant" | "held" | "reset" | "tail" | "audit" } = {},
+  opts: { grantRemoved?: number; held?: boolean; team?: boolean; stopAfter?: "grant" | "held" | "reset" | "tail" | "audit" } = {},
 ) {
-  const { grantRemoved = 0, held = false, stopAfter = "audit" } = opts;
+  const { grantRemoved = 0, held = false, team = false, stopAfter = "audit" } = opts;
   queueDeleteMark();
   mocks.upstashPipeline.mockResolvedValueOnce(replies(grantRemoved)); // grant SREM
   if (stopAfter === "grant") return;
@@ -203,7 +204,8 @@ function queueDeleteWrites(
   mockQuizAndHintsPipeline();
   mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
   if (stopAfter === "reset") return;
-  mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
+  if (team) mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // membership SREM
+  mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // record DEL
   if (stopAfter === "tail") return;
   mocks.upstashPipeline.mockResolvedValueOnce(replies(1)); // marker DEL
   mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
@@ -637,7 +639,7 @@ describe("deleteUser", () => {
 
   it("removes the membership and the account record", async () => {
     queueDeleteLookup("red-team", "a11ce000-0000-4000-8000-00000000000c");
-    queueDeleteWrites();
+    queueDeleteWrites({ team: true });
 
     const result = await deleteUser("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
     expect(result.leftTeam).toBe("red-team");
@@ -741,26 +743,40 @@ describe("deleteUser: held Secure Development scores", () => {
     expect(holdDeps.holdScores).not.toHaveBeenCalled();
   });
 
-  it("a failed cleanup command leaves the marker, and the re-run finishes", async () => {
-    // First run: the account goes, the reset lands, a cleanup command in the
-    // record batch fails.
+  it("a failed membership removal leaves the record and the marker, so the re-run still finds the team", async () => {
+    // First run: the account goes, the reset lands, the membership SREM fails.
     queueDeleteLookup("red-team", BOB);
     queueDeleteWrites({ stopAfter: "reset" });
-    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }, { result: 1 }]);
-    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/delete user.*READONLY/);
-    const markerDel = () =>
-      mocks.upstashPipeline.mock.calls.some((c) => c[0].some((cmd) => cmd[0] === "DEL" && cmd[1] === `ctf:admin:deleting:${OCTO}`));
-    expect(markerDel()).toBe(false);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/delete user membership.*READONLY/);
+    const deleted = (key: string) =>
+      mocks.upstashPipeline.mock.calls.some((c) => c[0].some((cmd) => cmd[0] === "DEL" && cmd[1] === key));
+    // Neither the record (the team's only pointer) nor the marker was touched.
+    expect(deleted(`ctf:user:${OCTO}`)).toBe(false);
+    expect(deleted(`ctf:admin:deleting:${OCTO}`)).toBe(false);
 
-    // Re-run: no account row, the membership is the trace the lookup counts,
-    // and the marker is still set.
+    // Re-run: no account row; the record still names the team.
     vi.clearAllMocks();
     authDeps.findUserById.mockResolvedValue(null);
     queueDeleteLookup("red-team", BOB, 1);
-    queueDeleteWrites();
+    queueDeleteWrites({ team: true });
     await expect(deleteUser(OCTO, ADMIN)).resolves.toMatchObject({ leftTeam: "red-team" });
-    expect(allCommands()).toContainEqual(["SREM", "ctf:team:red-team:members", OCTO]);
-    expect(markerDel()).toBe(true);
+    const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0]);
+    const sremAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "SREM" && c[1] === "ctf:team:red-team:members"));
+    const recordAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "DEL" && c[1] === `ctf:user:${OCTO}`));
+    expect(calls[sremAt]).toEqual([["SREM", "ctf:team:red-team:members", OCTO]]);
+    expect(sremAt).toBeLessThan(recordAt);
+    expect(deleted(`ctf:admin:deleting:${OCTO}`)).toBe(true);
+  });
+
+  it("a failed record DEL keeps the marker for the re-run", async () => {
+    queueDeleteLookup();
+    queueDeleteWrites({ stopAfter: "reset" });
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }, { result: 1 }]);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/delete user.*READONLY/);
+    expect(
+      mocks.upstashPipeline.mock.calls.some((c) => c[0].some((cmd) => cmd[0] === "DEL" && cmd[1] === `ctf:admin:deleting:${OCTO}`)),
+    ).toBe(false);
   });
 
   it("sets the deleting marker before the account delete", async () => {
@@ -917,7 +933,7 @@ describe("deleteUser: the account and its GitHub login", () => {
   it("event state with no account row is still deleted", async () => {
     authDeps.findUserById.mockResolvedValue(null);
     queueDeleteLookup("red-team", BOB);
-    queueDeleteWrites();
+    queueDeleteWrites({ team: true });
     await expect(deleteUser(OCTO, ADMIN)).resolves.toMatchObject({ leftTeam: "red-team" });
   });
 

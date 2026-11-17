@@ -679,12 +679,15 @@ export async function deleteUser(
       // The reset without resetUserProgress's "scored again" warning: the
       // hold refuses this player's PR, so their solves do not come back.
       const reset = await resetProgressOf(player, actor);
-      const cmds: (string | number)[][] = [];
-      if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), player]);
-      cmds.push(["DEL", userKey(player)]);
+      // The membership goes in its own checked request before the record: the
+      // record's `team` field is how a re-run finds the team, so it must
+      // outlive any membership left behind.
+      if (leftTeam) {
+        assertPipelineOk(await upstashPipeline([["SREM", membersKey(leftTeam), player]]), "delete user membership");
+      }
+      const cmds: (string | number)[][] = [["DEL", userKey(player)]];
       for (const key of rateLimitKeysFor(player)) cmds.push(["DEL", key]);
-      // Checked: a refused DEL reported as a delete leaves the player on the
-      // team with their record in place.
+      // Checked: a refused DEL reported as a delete leaves the record in place.
       assertPipelineOk(await upstashPipeline(cmds), "delete user");
       // Its own request, after the batch is confirmed: commands in one
       // pipeline run independently, so a marker DEL in the batch would land

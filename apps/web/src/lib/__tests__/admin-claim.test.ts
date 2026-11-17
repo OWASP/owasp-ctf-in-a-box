@@ -22,6 +22,7 @@ import {
   issueAdminCode,
   normalizeClaimCode,
   NotAdminError,
+  resetBusyKey,
   revokeAdmin,
 } from "@/lib/admin-claim";
 import { ADMIN_GRANTS_KEY, countAdminGrants, isAdminGrantee, listAdminGrants } from "@/lib/admin-grants";
@@ -91,6 +92,7 @@ describe("claimAdmin", () => {
       ADMIN_AUDIT_KEY,
       ADMIN_GRANT_GEN_KEY,
       "ctf:auth:user",
+      resetBusyKey(ALICE.id),
     ]);
     expect(args.slice(0, 4)).toEqual([ALICE.id, ALICE.name, VECTOR_HASH, VECTOR_HASH]);
     const sent = JSON.stringify(upstashEval.mock.calls);
@@ -102,6 +104,11 @@ describe("claimAdmin", () => {
     upstashEval.mockResolvedValue(["invalid"]);
     await claimAdmin(VECTOR_CODE, ALICE, "not-a-hash");
     expect(upstashEval.mock.calls[0][2][3]).toBe("");
+  });
+
+  it("throws on busy (a password reset is writing this player's password), so the route answers 503", async () => {
+    upstashEval.mockResolvedValue(["busy"]);
+    await expect(claimAdmin(VECTOR_CODE, ALICE, VECTOR_HASH)).rejects.toThrow(/password reset/);
   });
 
   it("maps the script's refusals", async () => {

@@ -27,14 +27,17 @@ vi.mock("@/lib/auth", () => ({
   auth: { $context: Promise.resolve({ internalAdapter: m.ia, password: { hash: m.hash } }) },
 }));
 
-import { hashClaimCode, normalizeClaimCode, NotAdminError } from "@/lib/admin-claim";
+import { hashClaimCode, normalizeClaimCode, NotAdminError, resetBusyKey } from "@/lib/admin-claim";
 import { ADMIN_AUDIT_KEY } from "@/lib/admin-audit-keys";
 import { ADMIN_GRANTS_KEY } from "@/lib/admin-grants";
 import { OpsValidationError } from "@/lib/ops-errors";
 import {
   issuePasswordResetCode,
   redeemPasswordResetCode,
+  RELEASE_RESET_GUARD_SCRIPT,
+  RESET_BUSY_TTL_SECONDS,
   RESET_CODE_PREFIX,
+  RESET_GUARD_SCRIPT,
   resetCodeKey,
   resetPointerKey,
 } from "@/lib/password-reset";
@@ -243,6 +246,40 @@ describe("redeemPasswordResetCode", () => {
     codeFor(BOB.id);
     m.ia.deleteUserSessions.mockRejectedValue(new Error("redis down"));
     await expect(redeemPasswordResetCode(CODE, PW)).rejects.toThrow();
+  });
+
+  it("re-checks the grant in the guard script after the hash and before the write, and releases the guard after it", async () => {
+    codeFor(BOB.id);
+    await expect(redeemPasswordResetCode(CODE, PW)).resolves.toEqual({ ok: true, player: BOB.id });
+    const scripts = m.upstashEval.mock.calls.map((c) => c[0]);
+    const guardAt = scripts.indexOf(RESET_GUARD_SCRIPT);
+    const releaseAt = scripts.indexOf(RELEASE_RESET_GUARD_SCRIPT);
+    const [, keys, args] = m.upstashEval.mock.calls[guardAt];
+    expect(keys).toEqual([ADMIN_GRANTS_KEY, resetBusyKey(BOB.id)]);
+    expect(args[0]).toBe(BOB.id);
+    expect(args[2]).toBe(String(RESET_BUSY_TTL_SECONDS));
+    expect(m.upstashEval.mock.calls[releaseAt].slice(1)).toEqual([[resetBusyKey(BOB.id)], [args[1]]]);
+    const guardOrder = m.upstashEval.mock.invocationCallOrder[guardAt];
+    expect(guardOrder).toBeGreaterThan(m.hash.mock.invocationCallOrder[0]);
+    expect(guardOrder).toBeLessThan(m.ia.updateAccount.mock.invocationCallOrder[0]);
+    expect(m.upstashEval.mock.invocationCallOrder[releaseAt]).toBeGreaterThan(m.ia.deleteUserSessions.mock.invocationCallOrder[0]);
+  });
+
+  it("a player granted admin after the consume is invalid at the guard, and no password is written", async () => {
+    codeFor(BOB.id);
+    m.upstashEval.mockResolvedValueOnce(0); // the guard: the player now holds a grant
+    await expect(redeemPasswordResetCode(CODE, PW)).resolves.toEqual({ ok: false, reason: "invalid" });
+    expect(m.ia.updateAccount).not.toHaveBeenCalled();
+    expect(m.ia.linkAccount).not.toHaveBeenCalled();
+    expect(m.ia.deleteUserSessions).not.toHaveBeenCalled();
+    expect(m.upstashEval.mock.calls.some((c) => c[0] === RELEASE_RESET_GUARD_SCRIPT)).toBe(false);
+  });
+
+  it("releases the guard when the password write fails", async () => {
+    codeFor(BOB.id);
+    m.ia.updateAccount.mockRejectedValue(new Error("redis down"));
+    await expect(redeemPasswordResetCode(CODE, PW)).rejects.toThrow("redis down");
+    expect(m.upstashEval.mock.calls.some((c) => c[0] === RELEASE_RESET_GUARD_SCRIPT)).toBe(true);
   });
 
   it("throws on an error reply from the pre-read rather than reading it as no code", async () => {

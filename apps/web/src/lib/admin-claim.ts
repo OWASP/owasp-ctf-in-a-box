@@ -60,8 +60,15 @@ export function codeId(hash: string): string {
   return hash.slice(0, 8);
 }
 
+/** Set while a password reset writes `player`'s password (password-reset.ts
+ *  RESET_GUARD_SCRIPT): CLAIM_SCRIPT refuses that player while it exists, so
+ *  no grant lands between the reset's organizer check and its write. Under
+ *  password-reset's `ctf:admin:reset-code:` prefix, so delete-all-accounts
+ *  sweeps it with the codes; "busy:" is never a code hash. */
+export const resetBusyKey = (player: string): string => `ctf:admin:reset-code:busy:${player}`;
+
 /**
- * KEYS [grants, spent, codeKey, audit, grantGen, userRows]
+ * KEYS [grants, spent, codeKey, audit, grantGen, userRows, resetBusy]
  * ARGV [playerId, playerName, hash, bootstrapHash, at, cap-1]
  *
  * An existing admin consumes nothing, and neither does an id with no account
@@ -77,12 +84,15 @@ export function codeId(hash: string): string {
  * generation, so every code they issued stays void even after they are
  * granted again, or a removed admin's code could be claimed back. An entry
  * with no readable issuer or generation is refused the same way (fail closed).
+ * A claim while a password reset is writing this player's password is `busy`,
+ * with nothing consumed: the caller answers 503 and the player tries again.
  */
 export const CLAIM_SCRIPT = `
 local grants, spent, codeKey, audit, gens, users = KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]
 local id, name, hash, boot, at, cap = ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5], tonumber(ARGV[6])
 if redis.call('SISMEMBER', grants, id) == 1 then return {'already-admin'} end
 if redis.call('HEXISTS', users, id) == 0 then return {'invalid'} end
+if redis.call('EXISTS', KEYS[7]) == 1 then return {'busy'} end
 local entry = {at = at, by = id, name = name, action = 'admin:grant', player = id, playerName = name, codeId = string.sub(hash, 1, 8)}
 if hash ~= '' and boot ~= '' and hash == boot and redis.call('SISMEMBER', spent, hash) == 0 then
   redis.call('SADD', spent, hash)
@@ -173,12 +183,15 @@ export async function claimAdmin(code: string, player: AuditActor, bootstrapHash
       ADMIN_AUDIT_KEY,
       ADMIN_GRANT_GEN_KEY,
       rowsKey(AUTH_PREFIX, "user"),
+      resetBusyKey(player.id),
     ],
     [player.id, player.name, hash, boot, new Date().toISOString(), String(AUDIT_CAP - 1)],
   );
   const [head, via] = Array.isArray(res) ? (res as unknown[]) : [];
   if (head === "ok" && (via === "bootstrap" || via === "code")) return { ok: true, via };
   if (head === "invalid" || head === "already-admin") return { ok: false, reason: head };
+  // Transient, and nothing was consumed: the caller's 503 asks for a retry.
+  if (head === "busy") throw new Error("admin claim: a password reset for this player is being written");
   throw new Error("admin claim: unexpected script reply");
 }
 

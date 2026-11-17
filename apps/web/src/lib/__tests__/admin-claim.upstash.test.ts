@@ -29,6 +29,7 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
       audit: k("audit"),
       gen: k("grant-gen"),
       users: k("users"),
+      busy: k("reset-busy"),
       code: (hash: string) => k(`code:${hash}`),
     };
   }
@@ -50,7 +51,7 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     if (account) await accounts(k, player);
     return upstashEval(
       claim.CLAIM_SCRIPT,
-      [k.grants, k.spent, k.code(hash), k.audit, k.gen, k.users],
+      [k.grants, k.spent, k.code(hash), k.audit, k.gen, k.users, k.busy],
       [player, `name-${player.slice(-2)}`, hash, boot, "2026-11-15T00:00:00.000Z", "499"],
     );
   }
@@ -144,6 +145,24 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     expect(await runClaim(k, id(1), h, "")).toEqual(["already-admin"]);
     const [exists] = await pipeline([["EXISTS", k.code(h)]]);
     expect(exists.result).toBe(1);
+  });
+
+  it("a claim while a password reset writes the player's password is busy and consumes nothing", async () => {
+    const { pipeline } = await load();
+    const k = keys();
+    const [boot, issued] = [sha("boot-busy"), sha("issued-busy")];
+    await pipeline([["SADD", k.grants, id(9)], ["HSET", k.gen, id(9), 0], ["SET", k.busy, "token", "EX", 60]]);
+    expect(await runIssue(k, issued, id(9))).toBe(1);
+    expect(await runClaim(k, id(1), boot, boot)).toEqual(["busy"]);
+    expect(await runClaim(k, id(1), issued, "")).toEqual(["busy"]);
+    const [spent, member, code] = await pipeline([
+      ["SISMEMBER", k.spent, boot],
+      ["SISMEMBER", k.grants, id(1)],
+      ["EXISTS", k.code(issued)],
+    ]);
+    expect([spent.result, member.result, code.result]).toEqual([0, 0, 1]);
+    await pipeline([["DEL", k.busy]]);
+    expect(await runClaim(k, id(1), issued, "")).toEqual(["ok", "code"]);
   });
 
   it("an issued code is single-use under a race", async () => {

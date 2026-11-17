@@ -163,6 +163,55 @@ describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("password res
     expect(await passwordOf(who)).toBe(before);
   });
 
+  it("a grant claimed after the consume and before the write is refused at the guard, and no password is written", async () => {
+    const { reset, ctx, ADMIN_GRANTS_KEY, claim } = await load();
+    const [by, who] = [await admin(), await player("password")];
+    const before = await passwordOf(who);
+    const { code } = await reset.issuePasswordResetCode(who, by);
+    const original = ctx.password.hash;
+    // The grant lands while the new password is hashed: after the consume's
+    // organizer check, before the write.
+    const spy = vi.spyOn(ctx.password, "hash").mockImplementationOnce(async (pw: string) => {
+      admins.push(who);
+      await redis(["SADD", ADMIN_GRANTS_KEY, who]);
+      return original(pw);
+    });
+    try {
+      expect(await reset.redeemPasswordResetCode(code, PW)).toEqual({ ok: false, reason: "invalid" });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await passwordOf(who)).toBe(before);
+    expect(await redis(["EXISTS", claim.resetBusyKey(who)])).toBe(0);
+  });
+
+  it("an admin claim while the password is written is busy and spends no code, and works once the write is done", async () => {
+    const { reset, ctx, claim } = await load();
+    const [by, who] = [await admin(), await player("password")];
+    const { code } = await reset.issuePasswordResetCode(who, by);
+    const { code: adminCode } = await claim.issueAdminCode(by);
+    const adminHash = claim.hashClaimCode(claim.normalizeClaimCode(adminCode)!);
+    const original = ctx.internalAdapter.updateAccount.bind(ctx.internalAdapter);
+    let midWrite: unknown;
+    const spy = vi.spyOn(ctx.internalAdapter, "updateAccount").mockImplementationOnce(async (...args: Parameters<typeof original>) => {
+      midWrite = await claim.claimAdmin(adminCode, { id: who, name: "p" }, "").catch((e: Error) => e);
+      return original(...args);
+    });
+    try {
+      expect(await reset.redeemPasswordResetCode(code, PW)).toEqual({ ok: true, player: who });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(midWrite).toBeInstanceOf(Error);
+    expect((midWrite as Error).message).toMatch(/password reset/);
+    // Nothing was consumed: the admin code is still there, and the busy key
+    // is gone once the write is done.
+    expect(await redis(["EXISTS", `${claim.ADMIN_CODE_PREFIX}${adminHash}`])).toBe(1);
+    expect(await redis(["EXISTS", claim.resetBusyKey(who)])).toBe(0);
+    admins.push(who);
+    await expect(claim.claimAdmin(adminCode, { id: who, name: "p" }, "")).resolves.toEqual({ ok: true, via: "code" });
+  });
+
   it("a code redeemed twice concurrently succeeds exactly once", async () => {
     const { reset } = await load();
     const [by, who] = [await admin(), await player("password")];

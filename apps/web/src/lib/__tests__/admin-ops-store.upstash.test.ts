@@ -6,7 +6,7 @@
 // See live-redis.ts for the harness.
 
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { RUN, freshId, liveConfigured, liveKey } from "./live-redis";
+import { RUN, destructiveLiveRedisAllowed, freshId, liveConfigured, liveKey } from "./live-redis";
 
 vi.mock("server-only", () => ({}));
 
@@ -329,8 +329,10 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
 // deleteAllAccounts against the real keyspace. It runs the master reset and
 // wipes the account namespaces, so it is the LAST suite in this file and
 // every assertion is about what this run seeded: the live suites run
-// serially (--no-file-parallelism) and each seeds its own state.
-describe.skipIf(!liveConfigured)("deleteAllAccounts against a live Redis", () => {
+// serially (--no-file-parallelism) and each seeds its own state. It deletes
+// every account on the Redis it reaches, so it runs only against a throwaway
+// one (destructiveLiveRedisAllowed in live-redis.ts).
+describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("deleteAllAccounts against a live Redis", () => {
   const sentinel = JSON.stringify({ at: "2026-01-01T00:00:00.000Z", action: `vt-sentinel-${RUN}` });
   const spentHash = `vt-spent-${RUN}`;
   let pipeline: (typeof import("@/lib/upstash"))["upstashPipeline"];

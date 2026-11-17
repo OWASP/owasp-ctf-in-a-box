@@ -254,7 +254,9 @@ describe("reset password", () => {
       <ResetCodeDialog code="aaaa-bbbb-cccc" expiresAt="2026-11-16T10:15:00.000Z" onClose={() => {}} />,
     );
     expect(html).toContain("aaaa-bbbb-cccc");
-    expect(html).toContain("Expires at");
+    // adminTime carries the zone label itself, so the line names UTC once.
+    expect(html).toContain("Expires at 2026-11-16 10:15:00 UTC</p>");
+    expect(html).not.toContain("UTC UTC");
     expect(html).toContain("Hand this to the player in person. It works once, for 15 minutes.");
     expect(html).toContain("Copy");
   });

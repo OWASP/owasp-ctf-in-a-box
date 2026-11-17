@@ -1,0 +1,1 @@
+- **Fixed: the reset code dialog in the admin Support tab printed "UTC UTC" after the expiry time (#793).**

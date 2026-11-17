@@ -1870,6 +1870,8 @@ the tick that wrote it and is `HDEL`ed by the next clean tick. A dropped score
 is still missing after the poller recovers, so clearing it on recovery would
 erase the only pointer to the PR a human has to go re-run.
 
+*Amended 2026-11-17 by [#775](https://github.com/OWASP/owasp-ctf-in-a-box/issues/775): the scorer's `422` also carries `refused: "player-deleted"`, a verdict on who the score belongs to rather than when it was posted. It lands in the `refused` bucket, final and logged, not in `rejected` and not as a drop: the player is gone, so there is nothing to re-run. The `503` the scorer answers while that player's delete is still running is a `retried`, re-presented next tick.*
+
 **Consequences.** The counter's value is in staying at zero. It cannot catch a
 *novel* silent path — a future `continue` added without a bucket is invisible
 again — so the buckets, not the number, are the thing to maintain: any new
@@ -4130,6 +4132,8 @@ across every admin action and is not structured for an instant lookup; the
 pause log is one short list with one shape.
 
 **Status.** Accepted (#596). Amends [ADR 32](#adr-32-scheduled-windows-evaluated-at-read-time-in-three-readers).
+
+*Amended 2026-11-17 by [#775](https://github.com/OWASP/owasp-ctf-in-a-box/issues/775): after the time judging above, the scorer refuses a deleted player's score. One script checks the deletion marker `ctf:deleted:<player id>` and the account row (`ctf:auth:user`) with the solve write. A marker with the account row still present means a delete is running: `503` `{"error":"player delete in progress"}`, which sync retries. A marker with the row gone means the player is deleted: a final `422` `{"error":"player deleted","refused":"player-deleted"}`. No marker writes as before. The marker is a set of per-delete tokens with no expiry; master reset keeps it, and a delete that fails removes only its own token while the row exists. Delete all accounts needs no marker, since its master reset moves the reset time and the pre-reset refusal applies.*
 
 ## ADR 68. A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock
 

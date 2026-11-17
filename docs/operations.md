@@ -1220,6 +1220,11 @@ organizer: revoke their admin access first. The player's GitHub login is
 added to a blocklist (`ctf:relink:blocked`) and cannot link to any account
 until the next master reset, so a deleted player's PRs cannot be claimed by a
 new account. The deleted username is free again.
+A Secure Development score for that player still in flight is refused, so it
+cannot restore their solves: the scorer answers it with a final `422`
+(`player-deleted`), and with a retryable `503` while the delete is running. A
+delete that fails leaves scoring as it was. If its cleanup itself failed, the
+player's scores wait until you run the delete again.
 
 **Delete all accounts** (Event tab, danger zone). Type `delete all accounts`
 to confirm. It deletes every account, **including yours**, every admin grant

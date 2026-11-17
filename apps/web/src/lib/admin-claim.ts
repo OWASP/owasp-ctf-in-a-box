@@ -61,10 +61,13 @@ export function codeId(hash: string): string {
 }
 
 /**
- * KEYS [grants, spent, codeKey, audit, grantGen]
+ * KEYS [grants, spent, codeKey, audit, grantGen, userRows]
  * ARGV [playerId, playerName, hash, bootstrapHash, at, cap-1]
  *
- * An existing admin consumes nothing. The bootstrap path matches only the
+ * An existing admin consumes nothing, and neither does an id with no account
+ * row (`invalid`): a session that outlives its account in the cookie cache,
+ * after a delete or delete-all, must not take the grant or spend the code the
+ * organizer rotated for the real claim. The bootstrap path matches only the
  * CURRENT env hash and only once (the spent set); it works whether or not
  * admins exist, because recovery includes an admin who still holds a grant
  * but cannot sign in. The issued path is GET then DEL in the same script, so
@@ -76,9 +79,10 @@ export function codeId(hash: string): string {
  * with no readable issuer or generation is refused the same way (fail closed).
  */
 export const CLAIM_SCRIPT = `
-local grants, spent, codeKey, audit, gens = KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5]
+local grants, spent, codeKey, audit, gens, users = KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6]
 local id, name, hash, boot, at, cap = ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5], tonumber(ARGV[6])
 if redis.call('SISMEMBER', grants, id) == 1 then return {'already-admin'} end
+if redis.call('HEXISTS', users, id) == 0 then return {'invalid'} end
 local entry = {at = at, by = id, name = name, action = 'admin:grant', player = id, playerName = name, codeId = string.sub(hash, 1, 8)}
 if hash ~= '' and boot ~= '' and hash == boot and redis.call('SISMEMBER', spent, hash) == 0 then
   redis.call('SADD', spent, hash)
@@ -162,7 +166,14 @@ export async function claimAdmin(code: string, player: AuditActor, bootstrapHash
   const boot = HASH_RE.test(bootstrapHash) ? bootstrapHash : "";
   const res = await upstashEval(
     CLAIM_SCRIPT,
-    [ADMIN_GRANTS_KEY, ADMIN_CLAIM_SPENT_KEY, `${ADMIN_CODE_PREFIX}${hash}`, ADMIN_AUDIT_KEY, ADMIN_GRANT_GEN_KEY],
+    [
+      ADMIN_GRANTS_KEY,
+      ADMIN_CLAIM_SPENT_KEY,
+      `${ADMIN_CODE_PREFIX}${hash}`,
+      ADMIN_AUDIT_KEY,
+      ADMIN_GRANT_GEN_KEY,
+      rowsKey(AUTH_PREFIX, "user"),
+    ],
     [player.id, player.name, hash, boot, new Date().toISOString(), String(AUDIT_CAP - 1)],
   );
   const [head, via] = Array.isArray(res) ? (res as unknown[]) : [];

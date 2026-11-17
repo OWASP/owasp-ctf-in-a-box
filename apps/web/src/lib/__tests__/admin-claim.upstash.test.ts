@@ -44,11 +44,13 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     if (used.length) await pipeline([["DEL", ...used]]);
   });
 
-  async function runClaim(k: ReturnType<typeof keys>, player: string, hash: string, boot: string) {
+  /** Claim as `player`, whose account row exists unless `account` is false. */
+  async function runClaim(k: ReturnType<typeof keys>, player: string, hash: string, boot: string, account = true) {
     const { claim, upstashEval } = await load();
+    if (account) await accounts(k, player);
     return upstashEval(
       claim.CLAIM_SCRIPT,
-      [k.grants, k.spent, k.code(hash), k.audit, k.gen],
+      [k.grants, k.spent, k.code(hash), k.audit, k.gen, k.users],
       [player, `name-${player.slice(-2)}`, hash, boot, "2026-11-15T00:00:00.000Z", "499"],
     );
   }
@@ -86,6 +88,30 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     const [member, spent] = await pipeline([["SISMEMBER", k.grants, id(1)], ["SISMEMBER", k.spent, h]]);
     expect([member.result, spent.result]).toEqual([1, 1]);
     expect(await runClaim(k, id(2), h, h)).toEqual(["invalid"]);
+  });
+
+  it("refuses an id with no account row, consuming neither the bootstrap code nor an issued one", async () => {
+    const { pipeline } = await load();
+    const k = keys();
+    const boot = sha("boot-ghost");
+    expect(await runClaim(k, id(7), boot, boot, false)).toEqual(["invalid"]);
+    await pipeline([["SADD", k.grants, id(9)], ["HSET", k.gen, id(9), 0]]);
+    const issued = sha("issued-ghost");
+    expect(await runIssue(k, issued, id(9))).toBe(1);
+    expect(await runClaim(k, id(7), issued, "", false)).toEqual(["invalid"]);
+    const [spent, granted, code, audit] = await pipeline([
+      ["SMEMBERS", k.spent],
+      ["SMEMBERS", k.grants],
+      ["EXISTS", k.code(issued)],
+      ["LLEN", k.audit],
+    ]);
+    expect(spent.result).toEqual([]);
+    expect(granted.result).toEqual([id(9)]);
+    expect(code.result).toBe(1);
+    expect(audit.result).toBe(1);
+    // The same codes still work for a player whose account exists.
+    expect(await runClaim(k, id(1), boot, boot)).toEqual(["ok", "bootstrap"]);
+    expect(await runClaim(k, id(2), issued, "")).toEqual(["ok", "code"]);
   });
 
   it("a rotated bootstrap hash is claimable again, and the old one is refused", async () => {

@@ -84,7 +84,14 @@ describe("claimAdmin", () => {
     upstashEval.mockResolvedValue(["ok", "bootstrap"]);
     await expect(claimAdmin(VECTOR_CODE, ALICE, VECTOR_HASH)).resolves.toEqual({ ok: true, via: "bootstrap" });
     const [, keys, args] = upstashEval.mock.calls[0];
-    expect(keys).toEqual([ADMIN_GRANTS_KEY, ADMIN_CLAIM_SPENT_KEY, `${ADMIN_CODE_PREFIX}${VECTOR_HASH}`, ADMIN_AUDIT_KEY, ADMIN_GRANT_GEN_KEY]);
+    expect(keys).toEqual([
+      ADMIN_GRANTS_KEY,
+      ADMIN_CLAIM_SPENT_KEY,
+      `${ADMIN_CODE_PREFIX}${VECTOR_HASH}`,
+      ADMIN_AUDIT_KEY,
+      ADMIN_GRANT_GEN_KEY,
+      "ctf:auth:user",
+    ]);
     expect(args.slice(0, 4)).toEqual([ALICE.id, ALICE.name, VECTOR_HASH, VECTOR_HASH]);
     const sent = JSON.stringify(upstashEval.mock.calls);
     expect(sent).not.toContain("0123456789abcdef0123456789abcdef");

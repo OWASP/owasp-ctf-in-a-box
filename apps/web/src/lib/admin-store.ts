@@ -33,7 +33,7 @@ import {
   CLASSIC_OPENED_PREFIX,
 } from "@/lib/classic-keys";
 import { ACTIVITY_LOG_KEY } from "@/lib/activity-keys";
-import { ANNOUNCE_WEBHOOK_GENERATION_KEY } from "@/lib/announce/keys";
+import { ANNOUNCE_MILESTONE_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY } from "@/lib/announce/keys";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP, type AuditActor } from "@/lib/admin-audit-keys";
 import { SPONSORS_KEY, SPONSORS_LOGO_KEY, isSponsorLogoSize, type SponsorLogoSize } from "@/lib/sponsors-keys";
 import { PROVIDER_SWITCH_FIELD, SIGN_IN_PROVIDERS, type SignInProviderId } from "@/lib/sign-in-providers";
@@ -835,14 +835,20 @@ export async function scanDelByPrefix(pattern: string): Promise<number> {
 // intervals go; the reset's own freeze is open from the reset instant), and
 // append the audit record. One atomic script so a reset can never land
 // without its audit line. Exported for the live suite only.
-// KEYS: [1]=settings [2]=audit [3]=pause log
+// KEYS: [1]=settings [2]=audit [3]=pause log [4]=webhook generation
+//       [5]=milestone claims
 // ARGV: [1]=actor [2]=at [3]=resetAt [4]=auditLine [5]=cap-1
 export const RESET_SCRIPT = `
 redis.call('HSET', KEYS[1], 'paused', '1', 'pausedSince', ARGV[2], 'resetAt', ARGV[3], 'updatedBy', ARGV[1], 'updatedAt', ARGV[2])
 redis.call('HDEL', KEYS[1], 'scoringStartsAt')
 redis.call('DEL', KEYS[3])
 redis.call('LPUSH', KEYS[2], ARGV[4])
-redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
+redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))
+-- The final generation bump and the claim wipe are one atomic step: a tick
+-- that read the first bump can still recreate an old milestone claim before
+-- this script, and that claim must not block the fresh event's first mark.
+if KEYS[4] then redis.call('INCR', KEYS[4]) end
+if KEYS[5] then redis.call('DEL', KEYS[5]) end`;
 
 // The reset's first write, before its sweep: the freeze, the new `resetAt`
 // epoch and a `reset:start` audit line, in one atomic script, so the pause it
@@ -912,21 +918,17 @@ export async function resetEvent(actor: AuditActor): Promise<{ cleared: Record<s
     const audit = JSON.stringify({ at, by: actor.id, name: actor.name, action: "reset", cleared });
     await upstashEval(
       RESET_SCRIPT,
-      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY, ADMIN_PAUSES_KEY],
+      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY, ADMIN_PAUSES_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY, ANNOUNCE_MILESTONE_KEY],
       [actor.name, at, resetAt, audit, String(AUDIT_CAP - 1)],
     );
-    // Advance AGAIN after the wipe. The first increment only outruns
-    // producers that read the generation BEFORE the reset; a ticker pass can
-    // read the NEW generation and still read the previous event's settings
-    // before RESET_SCRIPT clears them, then enqueue a milestone whose
-    // generation matches the first increment — delivery would post it into
-    // the fresh event. This increment makes every such entry stale. Fail
-    // closed like the first: a reset that cannot fence its own announcements
-    // reports the failure instead of returning a half-fenced wipe.
-    assertPipelineOk(
-      await upstashPipeline([["INCR", ANNOUNCE_WEBHOOK_GENERATION_KEY]]),
-      "reset webhook generation (post-wipe)",
-    );
+    // RESET_SCRIPT's trailing increment advances the generation AGAIN, inside
+    // the same atomic step that clears milestone claims. The first increment
+    // only outruns producers that read the generation BEFORE the reset; a
+    // ticker pass can read the NEW generation and still read the previous
+    // event's settings before this script clears them, then recreate a
+    // milestone claim and enqueue an entry matching the first increment. The
+    // trailing bump makes the entry stale and the claim wipe leaves the fresh
+    // event's marks unclaimed.
     return { cleared, resetAt };
   } finally {
     await endScoreLowering();

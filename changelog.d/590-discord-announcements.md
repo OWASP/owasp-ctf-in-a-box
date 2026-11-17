@@ -14,8 +14,9 @@
   replica announces each edge — and the first observation a box makes seeds
   silently, so configuring a webhook never replays history, while a freeze
   that spans a close and a window extension is announced once — first blood is
-  claimed atomically at solve time (a box that is off never claims, so
-  enabling later cannot replay it), and marks claim every crossed time in
+  recorded atomically at solve time and claimed when the post is enqueued (a
+  box that is off never claims, so enabling later cannot replay it), and marks
+  claim every crossed time in
   one pass while posting at most one check, so a restart or a mid-event
   enable never bursts. Delivery goes through a leased Redis outbox with
   retries — a restart loses nothing durable, and turning a type off stops

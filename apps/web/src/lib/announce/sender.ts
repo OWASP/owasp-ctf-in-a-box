@@ -136,9 +136,8 @@ export async function enqueueLedgerAnnouncement(
 async function trackEnqueued(id: string): Promise<void> {
   queue.push(id);
   while (queue.length > MAX_QUEUE) {
-    const droppedId = queue.shift();
+    queue.shift();
     droppedCount += 1;
-    if (droppedId) await outboxSkip(droppedId);
   }
   scheduleFlush();
 }
@@ -229,10 +228,10 @@ export async function flush(): Promise<void> {
         await outboxSkip(item.id);
         continue;
       }
-      if (!kindEnabled(config, item.entry.kind)) {
-        await outboxSkip(item.id);
-        continue;
-      }
+      // The claim script re-checks the switch atomically against the
+      // current config. A disabled entry has already been skipped by the
+      // settings write; leaving a late one pending here avoids permanently
+      // dropping a fresh entry that an enable raced into this pass.
       candidates.push(item);
     }
     // The local queue has served its purpose (bounded ids for the drop
@@ -314,10 +313,10 @@ export async function flushRetries(): Promise<void> {
         await outboxSkip(item.id);
         continue;
       }
-      if (!kindEnabled(config, item.entry.kind)) {
-        await outboxSkip(item.id);
-        continue;
-      }
+      // The claim script re-checks the switch atomically against the
+      // current config. A disabled entry has already been skipped by the
+      // settings write; leaving a late one pending here avoids permanently
+      // dropping a fresh entry that an enable raced into this pass.
       candidates.push(item);
     }
     for (let i = 0; i < candidates.length; i += PACK_EMBEDS) {

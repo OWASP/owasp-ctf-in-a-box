@@ -252,6 +252,32 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     await upstashPipeline([["DEL", settingsKey, auditKey, pausesKey]]);
   });
 
+  it("RESET_SCRIPT fences announcements and clears milestone claims atomically", async () => {
+    const { RESET_SCRIPT } = await import("@/lib/admin-store");
+    const { upstashEval } = await import("@/lib/upstash");
+    const settingsKey = liveKey("admin", freshId("settings"));
+    const auditKey = liveKey("admin", freshId("audit"));
+    const pausesKey = liveKey("admin", freshId("pauses"));
+    const generationKey = liveKey("announce", freshId("generation"));
+    const milestoneKey = liveKey("announce", freshId("milestone"));
+    await upstashPipeline([
+      ["SET", generationKey, "4"],
+      ["HSET", milestoneKey, "close:mark", "claimed"],
+    ]);
+    await upstashEval(
+      RESET_SCRIPT,
+      [settingsKey, auditKey, pausesKey, generationKey, milestoneKey],
+      ["alice", "2026-10-01T00:00:00.000Z", "e1", "{}", 9],
+    );
+    const [generation, claims] = await upstashPipeline([
+      ["GET", generationKey],
+      ["EXISTS", milestoneKey],
+    ]);
+    expect(generation.result).toBe("5");
+    expect(Number(claims.result)).toBe(0);
+    await upstashPipeline([["DEL", settingsKey, auditKey, generationKey, milestoneKey]]);
+  });
+
   it("resetEvent wipes held SD scores and keeps the GitHub link records", async () => {
     const { resetEvent } = await import("@/lib/admin-store");
     const login = `held${crypto.randomUUID().replace(/-/g, "")}`.slice(0, 30);

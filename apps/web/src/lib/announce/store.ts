@@ -998,6 +998,30 @@ local currentEpoch = tonumber(redis.call('HGET', KEYS[3], ARGV[7])) or 0
 if tonumber(e.kindEpoch) ~= currentEpoch then return 0 end
 local currentGeneration = tonumber(redis.call('GET', KEYS[4])) or 0
 if tonumber(e.webhookGeneration) ~= currentGeneration then return 0 end
+-- Lifecycle edges stay in stream order across replicas: a later launch/pause/
+-- resume must not overtake an earlier one that is still pending or retryable.
+-- Compare (at, ord), the same order deliveryCandidates uses; sent/skipped are
+-- delivered/cancelled, and a failed entry past its retry budget no longer blocks.
+local kind = e.kind
+if kind == 'launch' or kind == 'pause' or kind == 'resume' then
+  local flat = redis.call('HGETALL', KEYS[1])
+  for j = 1, #flat, 2 do
+    local otherId = flat[j]
+    if otherId ~= ARGV[1] then
+      local ok2, o = pcall(cjson.decode, flat[j + 1])
+      if ok2 and type(o) == 'table' and (o.kind == 'launch' or o.kind == 'pause' or o.kind == 'resume') then
+        local earlierAt = tostring(o.at or '')
+        local currentAt = tostring(e.at or '')
+        local earlierOrd = tonumber(o.ord) or 0
+        local currentOrd = tonumber(e.ord) or 0
+        if earlierAt < currentAt or (earlierAt == currentAt and earlierOrd < currentOrd) then
+          local exhausted = o.status == 'failed' and (tonumber(o.n) or 0) >= tonumber(ARGV[8])
+          if o.status ~= 'sent' and o.status ~= 'skipped' and not exhausted then return 0 end
+        end
+      end
+    end
+  end
+end
 if redis.call('SET', KEYS[2], ARGV[5], 'PX', ARGV[4], 'NX') then return 1 end
 return 0
 `;
@@ -1034,6 +1058,7 @@ export async function outboxClaim(
         token,
         KIND_SWITCH_FIELDS[seen.kind],
         KIND_EPOCH_FIELDS[seen.kind],
+        ANNOUNCE_MAX_ATTEMPTS,
       ],
     ]);
     if (res.error) {

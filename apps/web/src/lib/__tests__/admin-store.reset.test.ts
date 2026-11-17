@@ -190,7 +190,13 @@ describe("resetEvent", () => {
     expect(mocks.upstashEval.mock.calls.map((c) => c[0])).toEqual([RESET_BEGIN_SCRIPT, RESET_SCRIPT]);
     const [script, keys, args] = finalEval();
     expect(script).toContain("'paused', '1'");
-    expect(keys).toEqual(["ctf:admin:settings", "ctf:admin:audit", "ctf:admin:pauses"]);
+    expect(keys).toEqual([
+      "ctf:admin:settings",
+      "ctf:admin:audit",
+      "ctf:admin:pauses",
+      "ctf:admin:discord:webhook-generation",
+      "ctf:announce:milestone",
+    ]);
     expect(args[0]).toBe("alice"); // updatedBy: the actor's name
     const auditLine = JSON.parse(String(args[3]));
     expect(auditLine).toMatchObject({ by: ALICE.id, name: "alice", action: "reset", cleared: { solves: 2, teams: 2 } });

@@ -187,13 +187,25 @@ describe("flush", () => {
     expect(init.redirect).toBe("manual");
   });
 
-  it("skips an entry whose switch went off since enqueue ('stop disabled immediately')", async () => {
+  it("skips an entry whose switch went off and advanced its epoch since enqueue", async () => {
     mocks.getAnnounceConfig.mockResolvedValue(configured({ firstBlood: false }));
-    mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
+    mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood", "pending", 0, 0, -1) }]);
     await flush();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.outboxSkip).toHaveBeenCalledWith("1");
     expect(mocks.outboxComplete).not.toHaveBeenCalled();
+  });
+
+  it("leaves a current-epoch entry for the claim when the config snapshot says disabled", async () => {
+    // An enable can race this pass's config read. The claim script re-checks
+    // the current switch atomically, so a stale false must not skip the entry.
+    mocks.getAnnounceConfig.mockResolvedValue(configured({ firstBlood: false }));
+    mocks.outboxPending.mockResolvedValue([{ id: "1", entry: entry("first-blood") }]);
+    await flush();
+    expect(mocks.outboxClaim).toHaveBeenCalledWith("1", expect.objectContaining({ kind: "first-blood" }));
+    expect(mocks.outboxSkip).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.outboxComplete).toHaveBeenCalledWith("1", "sent", "lease-token");
   });
 
   it("leaves an entry with a newer switch epoch pending for a fresh-config pass", async () => {

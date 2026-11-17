@@ -35,6 +35,22 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
   beforeEach(() => {
     LOGIN = freshId("alice");
   });
+  // Production keys solves/attempts by player id. The default login uses the
+  // fixed keys above so the assertions stay readable; another login gets its
+  // own hashes and must not see the first solver's rows.
+  const extraKeys = new Set<string>();
+  function attemptsKeyFor(login: string): string {
+    if (login === LOGIN) return K.attempts;
+    const key = liveKey("classic", `attempts-${login}`);
+    extraKeys.add(key);
+    return key;
+  }
+  function solvesKeyFor(login: string): string {
+    if (login === LOGIN) return K.solves;
+    const key = liveKey("classic", `solves-${login}`);
+    extraKeys.add(key);
+    return key;
+  }
 
   let script: string;
   let upstashEval: (typeof import("@/lib/upstash"))["upstashEval"];
@@ -49,7 +65,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
   }
 
   afterAll(async () => {
-    if (pipeline) await pipeline([["DEL", ...Object.values(K)]]);
+    if (pipeline) await pipeline([["DEL", ...Object.values(K), ...extraKeys]]);
   });
 
   /** Seeds a challenge the way `upsertChallenge` does: the comparison form of
@@ -83,7 +99,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     await load();
     return upstashEval(
       script,
-      [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt, ...lockKeys, K.first],
+      [attemptsKeyFor(login), solvesKeyFor(login), K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt, ...lockKeys, K.first],
       [
         id,
         keys.normalizeFlag(flag),
@@ -132,10 +148,10 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     expect(await submit(id, "flag{one}", { cooldownMs: 0, dry: true })).toEqual(["correct", "20", "dry"]);
     expect(await hget(K.first, `classic:${id}`)).toBeNull();
     expect(await submit(id, "flag{one}", { cooldownMs: 0 })).toEqual(["correct", "20"]);
-    expect(JSON.parse(String(await hget(K.first, `classic:${id}`)))).toEqual({ login: LOGIN, at: iso(T0) });
+    expect(JSON.parse(String(await hget(K.first, `classic:${id}`)))).toEqual({ login: LOGIN, playerId: LOGIN, at: iso(T0) });
     expect(await submit(id, "flag{one}", { nowMs: T0 + 1_000, cooldownMs: 0 })).toEqual(["already"]);
     expect(await submit(id, "flag{one}", { nowMs: T0 + 2_000, cooldownMs: 0, login: other })).toEqual(["correct", "20"]);
-    expect(JSON.parse(String(await hget(K.first, `classic:${id}`)))).toEqual({ login: LOGIN, at: iso(T0) });
+    expect(JSON.parse(String(await hget(K.first, `classic:${id}`)))).toEqual({ login: LOGIN, playerId: LOGIN, at: iso(T0) });
   });
 
   it("returns missing for an unknown challenge and writes no attempts row", async () => {

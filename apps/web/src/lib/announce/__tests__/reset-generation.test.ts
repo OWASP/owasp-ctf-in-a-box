@@ -28,7 +28,7 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
   };
 });
 
-import { resetEvent } from "@/lib/admin-store";
+import { RESET_SCRIPT, resetEvent } from "@/lib/admin-store";
 import { flushRetries } from "@/lib/announce/sender";
 import {
   ANNOUNCE_OUTBOX_KEY,
@@ -97,6 +97,10 @@ beforeEach(() => {
   mocks.beginScoreLowering.mockReset();
   mocks.endScoreLowering.mockReset();
   mocks.upstashEval.mockImplementation(async (script, keys, args) => {
+    if (script === RESET_SCRIPT) {
+      state.generation += 1;
+      return [1, 1, "", 0];
+    }
     if (script === WEBHOOK_TARGET_SCRIPT) return [URL, String(state.generation)];
     if (script === OUTBOX_ENQUEUE_SCRIPT) {
       expect(keys).toEqual([ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY]);
@@ -127,15 +131,16 @@ describe("reset and the webhook generation", () => {
 
     const callsBeforeReset = mocks.upstashPipeline.mock.calls.length;
     await resetEvent({ id: "admin-id", name: "admin" });
-    // Twice: the first increment outruns producers that read the generation
-    // BEFORE the reset, the second (post-wipe) outruns a tick that read the
-    // new generation but the previous event's settings before RESET_SCRIPT
-    // cleared them.
+    // Twice: the pipeline increment outruns producers that read the
+    // generation BEFORE the reset, and RESET_SCRIPT's trailing increment
+    // (atomic with the milestone-claim wipe) outruns a tick that read the new
+    // generation but the previous event's settings before the script cleared
+    // them.
     expect(state.generation).toBe(2);
     const resetCalls = mocks.upstashPipeline.mock.calls.map((call) => call[0][0]).slice(callsBeforeReset);
     expect(resetCalls[0]).toEqual(["INCR", ANNOUNCE_WEBHOOK_GENERATION_KEY]);
-    expect(resetCalls[resetCalls.length - 1]).toEqual(["INCR", ANNOUNCE_WEBHOOK_GENERATION_KEY]);
     expect(resetCalls.findIndex((cmd) => cmd[0] === "SCAN")).toBeGreaterThan(0);
+    expect(mocks.upstashEval.mock.calls.some(([script, keys]) => script === RESET_SCRIPT && keys.includes("ctf:announce:milestone"))).toBe(true);
 
     // The producer's outbox write lands after the reset advanced the
     // generation, but it still carries the generation its config read

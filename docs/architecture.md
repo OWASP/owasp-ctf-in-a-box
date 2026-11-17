@@ -877,12 +877,15 @@ readable and writable while the stack is running, without a restart:
   hash of the non-secret per-kind switches and options, including the
   milestone marks and the per-kind switch epochs an outbox entry fences
   against.
-  **`ctf:admin:discord:webhook`** holds the webhook URL alone, deliberately
-  outside that hash so the config read that feeds `/admin` never contains the
-  secret. **`ctf:admin:discord:webhook-generation`** is a counter advanced when
-  the webhook is cleared and around a master reset (once before the sweep,
-  once after it), so an outbox entry enqueued from a pre-change config
-  snapshot cannot be delivered to a later URL. **`ctf:announce:*`** is the run
+  **`ctf:admin:discord:webhook`** holds the webhook URL alone. The server-side
+  config read (`getAnnounceConfig`) includes it in its internal result, and
+  `publicConfig` strips it before any API response, so the secret never crosses
+  the client boundary. **`ctf:admin:discord:webhook-generation`** is a counter
+  advanced when the webhook is cleared and around a master reset (once before
+  the sweep, once after it), so an outbox entry enqueued from a pre-change
+  config snapshot cannot be delivered to a later URL. Replacing a configured
+  URL without clearing it preserves the generation: pending entries follow the
+  new URL, and only a clear or reset fences them. **`ctf:announce:*`** is the run
   state — first-solver records and first-blood/milestone claims, the
   lifecycle observation, `ctf:announce:seq`, the delivery outbox with its
   per-id leases and rate-limit cooldown, and the status counters. The master

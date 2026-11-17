@@ -37,6 +37,22 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
   beforeEach(() => {
     LOGIN = freshId("octocat");
   });
+  // Production keys attempts/answers by player id. The default login uses the
+  // fixed keys above so the assertions stay readable; another login gets its
+  // own hashes and must not see the first solver's rows.
+  const extraKeys = new Set<string>();
+  function attemptsKeyFor(login: string): string {
+    if (login === LOGIN) return K.attempts;
+    const key = liveKey("quiz", `attempts-${login}`);
+    extraKeys.add(key);
+    return key;
+  }
+  function answersKeyFor(login: string): string {
+    if (login === LOGIN) return K.answers;
+    const key = liveKey("quiz", `answers-${login}`);
+    extraKeys.add(key);
+    return key;
+  }
 
   let script: string;
   let upstashEval: (typeof import("@/lib/upstash"))["upstashEval"];
@@ -49,7 +65,7 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
   }
 
   afterAll(async () => {
-    if (pipeline) await pipeline([["DEL", ...Object.values(K)]]);
+    if (pipeline) await pipeline([["DEL", ...Object.values(K), ...extraKeys]]);
   });
 
   async function seed(id: string, points: number) {
@@ -68,7 +84,7 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
     await load();
     return upstashEval(
       script,
-      [K.attempts, K.answers, K.key, K.questions, K.points, K.answered, K.lastAt, K.first],
+      [attemptsKeyFor(login), answersKeyFor(login), K.key, K.questions, K.points, K.answered, K.lastAt, K.first],
       [id, submitted, iso(nowMs), login, maxAttempts, cooldownMs, nowMs, dry ? "1" : "0", `quiz:${id}`],
     );
   }
@@ -100,10 +116,10 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
     expect(await answer(id, CORRECT, { dry: true })).toEqual(["correct", "20", "dry"]);
     expect(await hget(K.first, `quiz:${id}`)).toBeNull();
     expect(await answer(id, CORRECT)).toEqual(["correct", "20"]);
-    expect(JSON.parse(String(await hget(K.first, `quiz:${id}`)))).toEqual({ login: LOGIN, at: iso(T0) });
+    expect(JSON.parse(String(await hget(K.first, `quiz:${id}`)))).toEqual({ login: LOGIN, playerId: LOGIN, at: iso(T0) });
     expect(await answer(id, CORRECT, { nowMs: T0 + 1 })).toEqual(["already"]);
     expect(await answer(id, CORRECT, { nowMs: T0 + 2, login: other })).toEqual(["correct", "20"]);
-    expect(JSON.parse(String(await hget(K.first, `quiz:${id}`)))).toEqual({ login: LOGIN, at: iso(T0) });
+    expect(JSON.parse(String(await hget(K.first, `quiz:${id}`)))).toEqual({ login: LOGIN, playerId: LOGIN, at: iso(T0) });
   });
 
   it("returns missing for an unknown question", async () => {

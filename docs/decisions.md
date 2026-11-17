@@ -4575,8 +4575,9 @@ work an event without the feature must never pay for.
   a POST that succeeded but whose `sent` write was lost will be retried,
   because a rare duplicate announcement beats a silent drop — and the lease
   bounds that window to a crashed owner's lease expiry. The kind switch is
-  re-checked atomically in the claim script: turning a type off stops its
-  pending posts immediately, without draining them. The in-process queue is
+  re-checked atomically in the claim script: turning a type off stops every
+  unclaimed pending post immediately, without draining them; a post already
+  claimed by a sender may still reach Discord. The in-process queue is
   bounded independently and drops only its own queue ids on overflow; the
   Redis entry stays pending for the retry sweep, so the bound never weakens
   the at-least-once guarantee.

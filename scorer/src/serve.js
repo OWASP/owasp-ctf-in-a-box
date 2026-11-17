@@ -108,7 +108,7 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
   async function solveTime(at) {
     if (at === undefined || at === null) {
       if (await store.isPaused()) return { status: 503, body: { error: "scoring is paused" } };
-      return { iso: now() };
+      return { iso: now(), resetAt: "" };
     }
     let atMs = typeof at === "string" ? Date.parse(at) : NaN;
     if (!Number.isFinite(atMs)) return { status: 400, body: { error: "invalid at" } };
@@ -118,7 +118,8 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     const verdict = policy ? judgeScoreTime(atMs, policy) : null;
     if (verdict?.retry) return { status: 503, body: { error: "scoring is paused" } };
     if (verdict) return { status: 422, body: { error: verdict.error, refused: verdict.refused } };
-    return { iso: new Date(atMs).toISOString() };
+    const resetAt = typeof policy?.resetAt === "string" ? policy.resetAt : "";
+    return { iso: new Date(atMs).toISOString(), resetAt };
   }
 
   async function score(req, res) {
@@ -164,12 +165,19 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     );
     const solvedAt = await solveTime(at);
     if (solvedAt.status) return json(res, solvedAt.status, solvedAt.body);
-    // The hold check, the link check and the write are one script: a delete
-    // or unlink in progress, or a link that changed since sync resolved it,
-    // answers 503 (sync retries and resolves the login again), a deleted
-    // player 422 (final, ADR 67). A store error throws to the 500 below, so
-    // sync retries and nothing is lost.
-    const written = await store.recordSolves(target, player, ids, solvedAt.iso, login ?? "");
+    // The reset check, the hold check, the link check and the write are one
+    // script: a score timed before the CURRENT reset epoch answers 422
+    // pre-reset (a reset that landed after the judge above read the
+    // settings), a delete or unlink in progress, a link that changed since
+    // sync resolved it, or a non-numeric epoch that changed since the judge
+    // read it answers 503 (sync retries and judges again), a deleted player
+    // 422 (final, ADR 67). A store error throws to the 500 below, so sync
+    // retries and nothing is lost.
+    const written = await store.recordSolves(target, player, ids, solvedAt.iso, login ?? "", solvedAt.resetAt);
+    if (written === "pre-reset") {
+      return json(res, 422, { error: "the score predates the last master reset", refused: "pre-reset" });
+    }
+    if (written === "stale") return json(res, 503, { error: "the master reset changed while the score was judged" });
     if (written === "pending") return json(res, 503, { error: "player scores on hold" });
     if (written === "unlinked") return json(res, 503, { error: "the login no longer links to this player" });
     if (written === "deleted") return json(res, 422, { error: "player deleted", refused: "player-deleted" });

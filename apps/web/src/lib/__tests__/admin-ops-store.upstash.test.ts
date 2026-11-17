@@ -8,6 +8,7 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { RUN, freshId, liveConfigured, liveKey } from "./live-redis";
 import { destructiveLiveRedisAllowed } from "./live-redis-guard";
+import { scorerSolveWrite } from "./scorer-solve-write";
 
 vi.mock("server-only", () => ({}));
 
@@ -727,20 +728,6 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
   });
 });
 
-/** The scorer's own solve script (scorer/src/store.js), run against this
- *  Redis with the keys and args the scorer's recordSolves hands it. */
-async function scorerSolveWrite(target: string, id: string, at: string, challenge: string, login = ""): Promise<unknown> {
-  const storeUrl = new URL("../../../../../scorer/src/store.js", import.meta.url).href;
-  const { RECORD_SOLVES_SCRIPT } = (await import(/* @vite-ignore */ storeUrl)) as { RECORD_SOLVES_SCRIPT: string };
-  const { upstashEval } = await import("@/lib/upstash");
-  const lower = login.toLowerCase();
-  return upstashEval(
-    RECORD_SOLVES_SCRIPT,
-    [`ctf:solves:${target}`, `ctf:score-hold:${id}`, "ctf:auth:user", `ctf:link:github:${lower}`],
-    [id, at, lower, challenge],
-  );
-}
-
 // deleteAllAccounts against the real keyspace. It runs the master reset and
 // wipes the account namespaces, so it is the LAST suite in this file and
 // every assertion is about what this run seeded: the live suites run
@@ -832,6 +819,9 @@ describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("deleteAllAcc
     expect((await scanAll("ctf:auth:*")).length).toBeGreaterThan(0);
     expect((await scanAll("ctf:link:*")).length).toBeGreaterThan(0);
 
+    // The time a score sync is about to send was judged at: before the reset.
+    const judgedAt = new Date().toISOString();
+    await new Promise((r) => setTimeout(r, 5));
     const actor = { id: admin, name: "organizer" };
     const { cleared } = await deleteAllAccounts("delete all accounts", actor);
     expect(cleared.auth).toBeGreaterThan(0);
@@ -861,11 +851,24 @@ describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("deleteAllAcc
     // reads the grant, and it is gone.
     expect(await isAdminGrantee(admin)).toBe(false);
     for (const id of ids) expect(await ctx.internalAdapter.findUserById(id)).toBeNull();
-    // A score sync resolved through a link before the sweep, written after it:
-    // no hold is set, and the link check refuses it with nothing written.
+    // Scores judged before the delete-all and written after it: no hold is
+    // set, and the reset epoch the solve script reads in its own EVAL refuses
+    // each one with nothing written, with the login, without one, and after
+    // the same login linked to the same id again.
     const target = `vtall-${RUN}`.toLowerCase().replace(/[^a-z0-9-]/g, "");
-    expect(await scorerSolveWrite(target, ids[1], new Date().toISOString(), "late", ghs[1])).toBe("unlinked");
+    expect(await scorerSolveWrite(target, ids[1], judgedAt, "late", ghs[1])).toBe("pre-reset");
+    expect(await scorerSolveWrite(target, ids[1], judgedAt, "loginless")).toBe("pre-reset");
+    const relinked = await pipeline([["SET", `ctf:link:github:${ghs[1]}`, ids[1]]]);
+    expect(relinked.filter((r) => r.error)).toEqual([]);
+    try {
+      expect(await scorerSolveWrite(target, ids[1], judgedAt, "relinked", ghs[1])).toBe("pre-reset");
+    } finally {
+      await pipeline([["DEL", `ctf:link:github:${ghs[1]}`]]);
+    }
     const [late] = await pipeline([["EXISTS", `ctf:solves:${target}`]]);
     expect(late.result).toBe(0);
+    // A score timed after the reset epoch whose login link is gone is still
+    // the link check's: unlinked, nothing written.
+    expect(await scorerSolveWrite(target, ids[1], new Date(Date.now() + 1000).toISOString(), "after", ghs[1])).toBe("unlinked");
   });
 });

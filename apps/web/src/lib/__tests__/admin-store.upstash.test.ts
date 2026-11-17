@@ -13,6 +13,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { freshId, liveConfigured, liveKey } from "./live-redis";
 import { actor } from "./audit-actor";
+import { scorerSolveWrite } from "./scorer-solve-write";
 
 vi.mock("server-only", () => ({}));
 
@@ -279,6 +280,49 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
         ["DEL", `ctf:link:github:${login}`, `ctf:link:user:${player}`],
         ["HDEL", "ctf:link:at", player],
       ]);
+    }
+  });
+
+  // A score the scorer judged before a master reset and writes after the
+  // reset swept the solves: the solve script reads the CURRENT `resetAt` in
+  // the same EVAL as the write and refuses it, with or without a login, and
+  // nothing comes back.
+  it("a score judged before resetEvent and written after its sweep is refused pre-reset and writes nothing", async () => {
+    const { resetEvent } = await import("@/lib/admin-store");
+    const login = `pre${crypto.randomUUID().replace(/-/g, "")}`.slice(0, 30);
+    const player = crypto.randomUUID();
+    const target = `vtreset-${crypto.randomUUID().slice(0, 8)}`;
+    const seeded = await upstashPipeline([["SET", `ctf:link:github:${login}`, player]]);
+    expect(seeded.filter((r) => r.error)).toEqual([]);
+    try {
+      const judgedAt = new Date().toISOString();
+      expect(await scorerSolveWrite(target, player, judgedAt, "before", login)).toBe("ok");
+      await new Promise((r) => setTimeout(r, 5));
+      const { cleared, resetAt } = await resetEvent(actor("alice"));
+      expect(cleared.solves).toBeGreaterThanOrEqual(1);
+      expect(await settingsField("resetAt")).toBe(resetAt);
+      expect(await scorerSolveWrite(target, player, judgedAt, "late", login)).toBe("pre-reset");
+      expect(await scorerSolveWrite(target, player, judgedAt, "loginless")).toBe("pre-reset");
+      const [solves] = await upstashPipeline([["EXISTS", `ctf:solves:${target}`]]);
+      expect(solves.result).toBe(0);
+      // A score timed after the epoch still writes: the check refuses only the past.
+      expect(await scorerSolveWrite(target, player, new Date(Number(resetAt) + 1).toISOString(), "after", login)).toBe("ok");
+    } finally {
+      await upstashPipeline([["DEL", `ctf:link:github:${login}`, `ctf:solves:${target}`]]);
+    }
+  });
+
+  it("the solve script compares a non-numeric resetAt with the value the score was judged against", async () => {
+    const target = `vtreset-${crypto.randomUUID().slice(0, 8)}`;
+    const player = crypto.randomUUID();
+    await upstashPipeline([["HSET", "ctf:admin:settings", "resetAt", "2026-01-01T00:00:00Z"]]);
+    try {
+      const at = new Date().toISOString();
+      expect(await scorerSolveWrite(target, player, at, "a", "", "2025-01-01T00:00:00Z")).toBe("stale");
+      expect(await scorerSolveWrite(target, player, at, "a", "", "")).toBe("stale");
+      expect(await scorerSolveWrite(target, player, at, "a", "", "2026-01-01T00:00:00Z")).toBe("ok");
+    } finally {
+      await upstashPipeline([["DEL", `ctf:solves:${target}`]]);
     }
   });
 

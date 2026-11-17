@@ -47,13 +47,16 @@ test("redis store: one EVAL of the solve script via SRH pipeline, bearer token",
     [
       "EVAL",
       RECORD_SOLVES_SCRIPT,
-      4,
+      5,
       "ctf:solves:dvwa",
       "ctf:score-hold:octocat",
       "ctf:auth:user",
       "ctf:link:github:",
+      "ctf:admin:settings",
       "octocat",
       T0,
+      "",
+      String(Date.parse(T0)),
       "",
       "sqli-low",
       "xss-dom",
@@ -63,24 +66,25 @@ test("redis store: one EVAL of the solve script via SRH pipeline, bearer token",
   // With the login sync resolved the player from: its link key, lowercased.
   assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0, "OctoCat"), "ok");
   const [withLogin] = JSON.parse(calls[1].opts.body);
-  assert.deepEqual(withLogin.slice(0, 7), [
+  assert.deepEqual(withLogin.slice(0, 8), [
     "EVAL",
     RECORD_SOLVES_SCRIPT,
-    4,
+    5,
     "ctf:solves:dvwa",
     "ctf:score-hold:octocat",
     "ctf:auth:user",
     "ctf:link:github:octocat",
+    "ctf:admin:settings",
   ]);
-  assert.deepEqual(withLogin.slice(7), ["octocat", T0, "octocat", "sqli-low"]);
+  assert.deepEqual(withLogin.slice(8), ["octocat", T0, "octocat", String(Date.parse(T0)), "", "sqli-low"]);
   calls.length = 1;
 
   assert.equal(await store.recordSolves("dvwa", "octocat", [], T1), "ok");
   assert.equal(calls.length, 1); // nothing to write, no round-trip
 });
 
-test("redis store: recordSolves passes the script's pending/deleted/unlinked verdict through", async () => {
-  for (const verdict of ["pending", "deleted", "unlinked"]) {
+test("redis store: recordSolves passes the script's refusal verdicts through", async () => {
+  for (const verdict of ["pending", "deleted", "unlinked", "pre-reset", "stale"]) {
     const store = createRedisStore({
       url: "http://srh:80",
       token: "redis-token",
@@ -135,6 +139,19 @@ test("memory store: a score hold refuses the write — pending while the row exi
   assert.deepEqual(await store.getSolves("dvwa"), {});
   assert.equal(await store.recordSolves("dvwa", "hubot", ["sqli-low"], T0), "ok");
   assert.deepEqual(await store.getSolves("dvwa"), { "hubot:sqli-low": T0 });
+});
+
+test("memory store: a score timed before the current reset epoch is pre-reset, whatever the hold and link", async () => {
+  const store = createMemoryStore();
+  store.__setPolicy({ resetAt: String(Date.parse(T1)) });
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0), "pre-reset");
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0, "octo"), "pre-reset");
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T1), "ok");
+  // A non-numeric epoch is honoured only as the value the judge read.
+  store.__setPolicy({ resetAt: "2026-08-14T10:30:00Z" });
+  assert.equal(await store.recordSolves("dvwa", "hubot", ["sqli-low"], T1, "", "older"), "stale");
+  assert.equal(await store.recordSolves("dvwa", "hubot", ["sqli-low"], T1, "", "2026-08-14T10:30:00Z"), "ok");
 });
 
 test("redis store: HGETALL parses the flat field/value array", async (t) => {

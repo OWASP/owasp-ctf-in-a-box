@@ -1109,7 +1109,10 @@ have deduped them was just cleared), so the epoch is also the ingestion
 **watermark** (#551): a bot comment whose `updated_at` predates `resetAt` is
 marked seen and skipped (tallied once as `preReset` in the poll summary), while
 a re-run that edits the comment past the epoch is a new revision and lands as
-normal. The scorer applies the same watermark to each score's `at`, and the
+normal. The scorer applies the same watermark to each score's `at`, when it
+judges the score and again inside the solve write's own script, and the reset
+writes the epoch before it sweeps a solve, so a score judged before the reset
+and written after the sweep is refused rather than restored (#791). The
 reset clears the freeze log and opens its own freeze, so a PR scored between
 the reset and the un-freeze is refused too. The epoch is epoch-milliseconds from `resetEvent` (an ISO string from
 an older state file is read too); an unparseable value is no watermark —

@@ -173,6 +173,40 @@ describe("resetEvent", () => {
     expect(auditLine).toMatchObject({ by: ALICE.id, name: "alice", action: "reset", cleared: { solves: 2, teams: 2 } });
   });
 
+  // The scorer's solve script refuses a score timed before the CURRENT
+  // `resetAt`, read in the same EVAL as its write. The epoch therefore lands
+  // before any solve is swept, or a score judged before the reset could be
+  // written after the sweep and survive it.
+  it("writes the reset epoch and the freeze before the first SCAN, and the same epoch in the final eval", async () => {
+    mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
+    const out = await resetEvent(actor("alice"));
+    const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0][0]);
+    const firstScan = calls.findIndex((c) => c[0] === "SCAN");
+    const epoch = calls.findIndex((c) => c[0] === "HSET");
+    expect(epoch).toBeGreaterThanOrEqual(0);
+    expect(epoch).toBeLessThan(firstScan);
+    const hset = calls[epoch];
+    expect(hset[1]).toBe("ctf:admin:settings");
+    const fields = Object.fromEntries(
+      Array.from({ length: (hset.length - 2) / 2 }, (_, i) => [hset[2 + 2 * i], hset[3 + 2 * i]]),
+    );
+    expect(fields).toMatchObject({ paused: "1", resetAt: out.resetAt, updatedBy: "alice" });
+    const [, , args] = mocks.upstashEval.mock.calls[0];
+    expect(args[2]).toBe(out.resetAt);
+    expect(args[1]).toBe(fields.pausedSince);
+  });
+
+  it("deletes nothing when the epoch write fails", async () => {
+    mocks.upstashPipeline.mockImplementation(async (cmds: (string | number)[][]) => {
+      if (String(cmds[0][0]) === "HSET") return [{ error: "READONLY" }];
+      return pipelineImpl(() => [["k1"]])(cmds);
+    });
+    await expect(resetEvent(actor("alice"))).rejects.toThrow(/reset epoch/);
+    const verbs = mocks.upstashPipeline.mock.calls.map((c) => String(c[0][0][0]));
+    expect(verbs).toEqual(["HSET"]);
+    expect(mocks.endScoreLowering).toHaveBeenCalledTimes(1);
+  });
+
   // #464: a master reset returns the event to NOT LAUNCHED — the scoring
   // start is cleared in the same atomic script that freezes and audits.
   it("relocks the event: clears scoringStartsAt in the same eval", async () => {

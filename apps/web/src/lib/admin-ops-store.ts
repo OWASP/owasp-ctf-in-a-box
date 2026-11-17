@@ -761,12 +761,13 @@ const ACCOUNT_PREFIXES: readonly [string, string][] = [
  * code: `requireAdmin` reads the grants, so a cached session that survives the
  * sweep is still refused.
  *
- * It sets no score hold. The link sweep finishes before the reset sweeps a
- * solve, and the scorer writes a score only while the link sync resolved it
- * through still names the player (the same EVAL as the write), so a score in
- * flight either lands before its link goes, and the reset sweeps it, or is
- * answered 503 and held by sync's retry; the reset's `resetAt` then refuses it
- * for good when it is released.
+ * It sets no score hold. The reset writes its `resetAt` epoch before it
+ * sweeps a solve, and the scorer's solve script reads that epoch in the same
+ * EVAL as its write and refuses a score timed before it (422 pre-reset). So a
+ * score in flight, with or without a login and whatever the links do
+ * meanwhile, either lands before the epoch and the reset sweeps it, or is
+ * refused with nothing written. The link sweep first makes sync hold every
+ * linked login's later scores rather than resolve them to a deleted player.
  *
  * Requires the exact typed confirmation. Fails closed: any failed step throws
  * with what came before it standing, and re-running finishes the sweep. If the

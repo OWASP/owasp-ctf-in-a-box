@@ -838,8 +838,10 @@ redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
  * settings. Server-only — callers gate on requireAdmin.
  *
  * Poll-mode note: freezing + the `resetAt` epoch (honoured by sync, which drops
- * its cursor) is what makes the wipe stick; a later unfreeze re-ingests from
- * live PR comments, so a post-event wipe also needs those comments gone.
+ * its cursor, and by the scorer's solve script, which refuses a score timed
+ * before it at write time) is what makes the wipe stick; a later unfreeze
+ * re-ingests from live PR comments, so a post-event wipe also needs those
+ * comments gone.
  */
 export async function resetEvent(actor: AuditActor): Promise<{ cleared: Record<string, number>; resetAt: string }> {
   const cleared: Record<string, number> = {};
@@ -853,11 +855,25 @@ export async function resetEvent(actor: AuditActor): Promise<{ cleared: Record<s
   // (`scanDelByPrefix` does not undo).
   await beginScoreLowering();
   try {
+    const now = Date.now();
+    const at = new Date(now).toISOString();
+    const resetAt = String(now);
+    // The epoch and the freeze land BEFORE the first solve is swept: the
+    // scorer's solve script reads `resetAt` in the same EVAL as its write and
+    // refuses a score timed before it, so a score judged before the reset and
+    // written after the sweep cannot bring a solve back. RESET_SCRIPT below
+    // writes the same values again with the relock, the pause-log reset and
+    // the audit line. A sweep that throws leaves the event frozen at the new
+    // epoch with no audit line; re-running the reset finishes it.
+    assertPipelineOk(
+      await upstashPipeline([
+        ["HSET", ADMIN_SETTINGS_KEY, "paused", "1", "pausedSince", at, "resetAt", resetAt, "updatedBy", actor.name, "updatedAt", at],
+      ]),
+      "reset epoch",
+    );
     for (const [label, pattern] of RESET_PREFIXES) {
       cleared[label] = await scanDelByPrefix(pattern);
     }
-    const at = new Date().toISOString();
-    const resetAt = String(Date.now());
     const audit = JSON.stringify({ at, by: actor.id, name: actor.name, action: "reset", cleared });
     await upstashEval(
       RESET_SCRIPT,

@@ -760,6 +760,43 @@ test("a score whose login no longer links to the player answers 503 and writes n
   assert.deepEqual(await store.getSolves("dvwa"), { [pid("octocat") + ":sqli-low"]: "2026-08-14T10:00:00.000Z" });
 });
 
+// The reset check at write time: a master reset that lands after the judge
+// read the settings and before the write is applied by the write's own
+// script, so the score is refused like any other pre-reset score.
+
+test("a score judged before a master reset and written after it answers 422 pre-reset and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t);
+  const original = store.recordSolves.bind(store);
+  store.recordSolves = async (...args) => {
+    // After NOW, which also times a score sent with no `at`.
+    store.__setPolicy({ ...LAUNCHED, resetAt: String(Date.parse("2026-08-14T12:30:00Z")) });
+    return original(...args);
+  };
+  for (const body of [timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"), { player: pid("octocat"), target: "dvwa", solved: ["sqli-low"] }]) {
+    store.__setPolicy(LAUNCHED);
+    const res = await post(body);
+    assert.equal(res.status, 422);
+    assert.deepEqual(await res.json(), { error: "the score predates the last master reset", refused: "pre-reset" });
+  }
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+});
+
+test("a non-numeric reset epoch that changed after the judge read it answers 503 and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t, { policy: { ...LAUNCHED, resetAt: "2026-08-14T09:30:00Z" } });
+  const original = store.recordSolves.bind(store);
+  store.recordSolves = async (...args) => {
+    store.__setPolicy({ ...LAUNCHED, resetAt: "2026-08-14T11:00:00Z" });
+    return original(...args);
+  };
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: "the master reset changed while the score was judged" });
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+  // Unchanged since the judge read it: the judge already applied it.
+  store.recordSolves = original;
+  assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T11:30:00Z"))).status, 202);
+});
+
 test("a malformed login is a 400 and writes nothing", async (t) => {
   const { store, post } = await bootWith(t);
   for (const login of ["", "-x", "a b", 7, "ctf:link:github:x"]) {

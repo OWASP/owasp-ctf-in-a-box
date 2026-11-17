@@ -24,32 +24,56 @@ export const AUTH_USER_ROWS_KEY = "ctf:auth:user";
 // and sync/src/redis.js resolve the same key, the login lowercased.
 export const LINK_GITHUB_PREFIX = "ctf:link:github:";
 
-// The solve write, judged against the score hold in the same EVAL so no
-// delete or unlink can land between the check and the HSETNX. A hold with the
-// account row still present is a delete or unlink in progress ('pending':
-// write nothing, the caller retries and re-resolves the link); a hold with the
-// row gone is a deleted player ('deleted': refused for good). Then, when the
-// caller names the login it resolved the player from (ARGV[3] non-empty), the
-// link must still name this player: one that moved or went since the
-// resolution (an unlink or delete that finished, a master reset's link
-// sweep) is 'unlinked', nothing written, and the caller retries and
-// re-resolves. Otherwise each `<player>:<id>` is written with HSETNX, so the
-// first solve time wins and a replay is a no-op.
+// The solve write, judged against the master-reset epoch and the score hold
+// in the same EVAL, so no reset, delete or unlink can land between the checks
+// and the HSETNX.
+//
+// The reset check comes first and reads `resetAt` from the settings hash at
+// write time, not the value the judge read: a score timed before the CURRENT
+// epoch is 'pre-reset' (final, nothing written), so a score judged before a
+// master reset and written after its sweep cannot bring a solve back, with or
+// without a login and whatever the links did meanwhile. resetEvent writes the
+// epoch before it sweeps a solve. The app writes the epoch as epoch
+// milliseconds (all digits), compared here with the score's time in ms. Any
+// other non-empty value is compared as the string the caller judged against
+// (ARGV[5]): unchanged means the judge already applied it; changed is 'stale'
+// (nothing written, the caller retries and judges again).
+//
+// Then the hold: a hold with the account row still present is a delete or
+// unlink in progress ('pending': write nothing, the caller retries and
+// re-resolves the link); a hold with the row gone is a deleted player
+// ('deleted': refused for good). Then, when the caller names the login it
+// resolved the player from (ARGV[3] non-empty), the link must still name this
+// player: one that moved or went since the resolution (an unlink or delete
+// that finished, a delete-all's link sweep) is 'unlinked', nothing written,
+// and the caller retries and re-resolves. Otherwise each `<player>:<id>` is
+// written with HSETNX, so the first solve time wins and a replay is a no-op.
 // KEYS: [1] ctf:solves:<target>, [2] ctf:score-hold:<player>, [3] ctf:auth:user,
-// [4] ctf:link:github:<login> (any key when ARGV[3] is empty)
-// ARGV: [1] player, [2] at, [3] lowercased login or '', [4..] challenge ids
+// [4] ctf:link:github:<login> (any key when ARGV[3] is empty),
+// [5] ctf:admin:settings
+// ARGV: [1] player, [2] at (ISO), [3] lowercased login or '', [4] at as epoch
+// ms, [5] the resetAt the caller judged the score against or '', [6..]
+// challenge ids
 export const RECORD_SOLVES_SCRIPT = `
+local reset = redis.call('HGET', KEYS[5], 'resetAt')
+if reset and reset ~= '' then
+  if string.match(reset, '^%d+$') then
+    if tonumber(ARGV[4]) < tonumber(reset) then return 'pre-reset' end
+  elseif reset ~= ARGV[5] then
+    return 'stale'
+  end
+end
 if redis.call('EXISTS', KEYS[2]) == 1 then
   if redis.call('HEXISTS', KEYS[3], ARGV[1]) == 1 then return 'pending' end
   return 'deleted'
 end
 if ARGV[3] ~= '' and redis.call('GET', KEYS[4]) ~= ARGV[1] then return 'unlinked' end
-for i = 4, #ARGV do
+for i = 6, #ARGV do
   redis.call('HSETNX', KEYS[1], ARGV[1] .. ':' .. ARGV[i], ARGV[2])
 end
 return 'ok'
 `;
-const SOLVE_VERDICTS = new Set(["ok", "pending", "deleted", "unlinked"]);
+const SOLVE_VERDICTS = new Set(["ok", "pending", "deleted", "unlinked", "pre-reset", "stale"]);
 
 // Generic scheduled window: true when `now` is before start / after end.
 // Absent or unparseable bounds are ignored (no bound) — the registration
@@ -117,8 +141,14 @@ export function createMemoryStore({ teams = [] } = {}) {
     holds,
     users,
     links,
-    async recordSolves(target, player, ids, at, login = "") {
+    async recordSolves(target, player, ids, at, login = "", judgedResetAt = "") {
       if (ids.length === 0) return "ok";
+      const reset = typeof policy?.resetAt === "string" ? policy.resetAt : "";
+      if (/^\d+$/.test(reset)) {
+        if (Date.parse(at) < Number(reset)) return "pre-reset";
+      } else if (reset !== "" && reset !== judgedResetAt) {
+        return "stale";
+      }
       if (holds.has(player)) return users.has(player) ? "pending" : "deleted";
       const lower = String(login).toLowerCase();
       if (lower !== "" && links.get(lower) !== player) return "unlinked";
@@ -210,17 +240,21 @@ export function createRedisStore({
   }
 
   return {
-    /** "ok" | "pending" | "deleted" | "unlinked" — see RECORD_SOLVES_SCRIPT.
-     *  `login` is the GitHub login the player was resolved from, or "" for a
-     *  caller that resolved none. A script error or any other reply throws,
-     *  so the caller answers 5xx and sync retries. */
-    async recordSolves(target, player, ids, at, login = "") {
+    /** "ok" | "pending" | "deleted" | "unlinked" | "pre-reset" | "stale" — see
+     *  RECORD_SOLVES_SCRIPT. `at` is the ISO solve time. `login` is the GitHub
+     *  login the player was resolved from, or "" for a caller that resolved
+     *  none; `judgedResetAt` is the settings' `resetAt` the score was judged
+     *  against, or "". A script error or any other reply throws, so the
+     *  caller answers 5xx and sync retries. */
+    async recordSolves(target, player, ids, at, login = "", judgedResetAt = "") {
       if (ids.length === 0) return "ok";
+      const atMs = Date.parse(at);
+      if (!Number.isFinite(atMs)) throw new Error("recordSolves: unparseable at");
       const lower = String(login).toLowerCase();
       const verdict = await evalScript(
         RECORD_SOLVES_SCRIPT,
-        [solvesKey(target), scoreHoldKey(player), AUTH_USER_ROWS_KEY, `${LINK_GITHUB_PREFIX}${lower}`],
-        [player, at, lower, ...ids],
+        [solvesKey(target), scoreHoldKey(player), AUTH_USER_ROWS_KEY, `${LINK_GITHUB_PREFIX}${lower}`, ADMIN_SETTINGS_KEY],
+        [player, at, lower, String(atMs), judgedResetAt ?? "", ...ids],
       );
       if (!SOLVE_VERDICTS.has(verdict)) {
         throw new Error(`recordSolves: unexpected script reply ${JSON.stringify(verdict)}`);

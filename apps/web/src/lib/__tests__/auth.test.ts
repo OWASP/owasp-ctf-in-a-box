@@ -68,8 +68,8 @@ vi.hoisted(() => {
   // gaps, so a real .env.local still wins locally.
   process.env.BETTER_AUTH_URL ??= "http://localhost:3000";
   process.env.BETTER_AUTH_SECRET ??= "0123456789abcdef0123456789abcdef";
-  process.env.GITHUB_CLIENT_ID ??= "test-client-id";
-  process.env.GITHUB_CLIENT_SECRET ??= "test-client-secret";
+  process.env.GITHUB_CLIENT_ID ||= "test-client-id";
+  process.env.GITHUB_CLIENT_SECRET ||= "test-client-secret";
 });
 
 import {
@@ -82,6 +82,7 @@ import {
   refuseSignUpFields,
 } from "@/lib/auth";
 import { isPlaceholderEmail } from "@/lib/placeholder-email";
+import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 import { APIError } from "better-auth/api";
 
 /**
@@ -441,14 +442,13 @@ describe("refuseDisabledProvider (/sign-in/social and /link-social)", () => {
 
   it("fails closed when the settings cannot be read, logging only the label", async () => {
     keyed();
-    getAdminSettings.mockRejectedValue(new Error("HGETALL failed: NOAUTH"));
+    getAdminSettings.mockRejectedValue(decoratedError("HGETALL failed: NOAUTH"));
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const err = await refused(refuseDisabledProvider(ctx("/sign-in/social", { provider: "github" })));
-    const logged = errors.mock.calls.map((c) => c.map(String).join(" ")).join("\n");
-    errors.mockRestore();
     expect(err.status).toBe("SERVICE_UNAVAILABLE");
     expect(err.body?.code).toBe("SIGN_IN_SETTINGS_UNREADABLE");
-    expect(logged).toContain("NOAUTH");
+    expectLabelOnly(errors, { label: "HGETALL failed: NOAUTH" });
+    errors.mockRestore();
   });
 
   it("lets a GitHub link through with the GitHub switch off, without reading the switches", async () => {

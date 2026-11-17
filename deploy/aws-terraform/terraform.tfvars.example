@@ -64,9 +64,11 @@ acm_certificate_arn = ""
 
 # The GitHub OAuth app's client id (public — the `.env`'s GITHUB_CLIENT_ID).
 # Its secret goes in SSM as GITHUB_CLIENT_SECRET. REQUIRED whenever
-# enable_secure_development is true; optional otherwise, when Google or
-# Discord can be the sign-in.
-github_client_id = "Iv1.0000000000000000"
+# enable_secure_development is true (the variable's validation refuses a blank
+# one then); optional otherwise, when Google or Discord can be the sign-in.
+# Leave it unset on an event without GitHub sign-in: any non-blank id puts
+# GITHUB_CLIENT_SECRET in the task, which cannot start without that parameter.
+# github_client_id = "Iv1.0000000000000000"
 
 # Optional sign-in providers: the client id is public (the `.env`'s
 # GOOGLE_CLIENT_ID / DISCORD_CLIENT_ID); each secret goes in SSM as

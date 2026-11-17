@@ -39,8 +39,8 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
 vi.hoisted(() => {
   process.env.BETTER_AUTH_URL ??= "http://localhost:3000";
   process.env.BETTER_AUTH_SECRET ??= "0123456789abcdef0123456789abcdef";
-  process.env.GITHUB_CLIENT_ID ??= "test-client-id";
-  process.env.GITHUB_CLIENT_SECRET ??= "test-client-secret";
+  process.env.GITHUB_CLIENT_ID ||= "test-client-id";
+  process.env.GITHUB_CLIENT_SECRET ||= "test-client-secret";
 });
 
 type User = { id: string; email: string; login?: string };

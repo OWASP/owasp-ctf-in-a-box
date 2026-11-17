@@ -138,7 +138,8 @@ stock upstream image and fails if anything scores above zero
 ## Quickstart
 
 The full, canonical sequence — tooling check, scorer image, the four `.env`
-bootstrap keys, the sync GitHub App, the sign-in OAuth app, org provisioning,
+bootstrap keys, the sync GitHub App, the GitHub OAuth app (Secure Development
+only), org provisioning,
 and bringing the box up — lives in
 [Hosting → Quickstart: zero to a scored event](hosting.md#quickstart-zero-to-a-scored-event).
 
@@ -210,7 +211,8 @@ Pick the doc for what you're doing right now:
 **Standing the kit up**
 
 - [Hosting](hosting.md) — the guided wizard, prerequisites, how scores reach
-  the box, the GitHub OAuth app, and the `.env` bootstrap.
+  the box, player accounts and sign-in providers, the `.env` bootstrap, and
+  upgrading from v1.
 - [Deploy on AWS](aws.md) — single-shot Terraform deploy onto ECS Fargate with
   ElastiCache behind an ALB (`apply` up, `destroy` down).
 - [Deploy on fly.io](fly.md) — the whole stack as one Fly machine, running the

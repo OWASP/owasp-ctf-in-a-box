@@ -7,8 +7,8 @@ title: Hosting
 # Hosting
 
 Everything you need to stand the kit up: prerequisites,
-[how scores reach the box](#how-scores-reach-the-box), the GitHub
-OAuth app contestants sign in with, and how event config reaches the app. For the happy-path command sequence see the
+[how scores reach the box](#how-scores-reach-the-box), player accounts and
+the optional sign-in providers, and how event config reaches the app. For the happy-path command sequence see the
 [README Quickstart](https://github.com/OWASP/owasp-ctf-in-a-box#quickstart); for
 running the event once it is up see [docs/operations.md](operations.md).
 
@@ -183,8 +183,9 @@ docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
 #    Add --installation-id <n> to pin the install; otherwise sync
 #    auto-discovers it at runtime.
 
-# 7. Sign-in OAuth app (separate from the App above). Opens the page and
-#    prints the exact field values:
+# 7. GitHub OAuth app (separate from the App above), needed only with
+#    Secure Development (SCORE_IMAGE set); the wizard skips it otherwise.
+#    Opens the page and prints the exact field values:
 ./setup/ctf-setup.sh oauth-app
 #    UI-ONLY: fill the fields with callback <EVENT_URL>/api/auth/callback/github
 #    → Register → Generate a client secret → copy Client ID + secret. Then:
@@ -602,16 +603,18 @@ You can also set all three by hand instead of using the helpers.
 ## Player accounts
 
 Players create accounts on the box itself: `/sign-in` offers *Sign in* and
-*Create an account* (a username and a password) beside the GitHub button.
+*Create an account* (a username and a password), beside a button for each
+sign-in provider the organizer turned on.
 Usernames are 3 to 30 characters of letters, digits, `_` and `.`, unique
 regardless of case and shown as typed; passwords are 12 to 128 characters
 with no composition rules. Account creation is always open — the
 registration window gates creating and joining teams, not accounts — and
-needs no GitHub account, so a Quiz or Jeopardy event can run with none
-beyond the organizers'. A player who signs in with GitHub and has no
-username is asked to pick one first, and can add a password from `/profile`.
-There is no password change or recovery yet; a player who loses a password
-signs in with GitHub if the account has one, or makes a new account.
+needs no GitHub account, so a Quiz or Jeopardy event can run with no GitHub
+at all. A player who signs in through a provider and has no username is
+asked to pick one first, and can add a password from `/profile`. There is
+no email and no self-service recovery: a player who forgets a password asks
+an organizer for a reset code (Support tab, see
+[Accounts](operations.md#accounts)) and redeems it at `/reset`.
 
 ## Sign-in providers
 
@@ -686,6 +689,34 @@ register the OAuth app on your personal account rather than the org.
 > sniffable by design. It is not for TLS terminated upstream — in that setup
 > the public URL is still `https://`, so `EVENT_URL` should say `https://` and
 > the check passes on its own.
+
+## Upgrading from v1
+
+v2 is a clean break. v1 identified a player by their GitHub login; v2 keys
+every record by a kit player id
+([ADR 74](decisions.md#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development)),
+so v1 accounts, scores, teams and hints do not carry over. Upgrade between
+events, not during one.
+
+1. **Export the v1 event** from the v1 box: `/admin` → Event →
+   [Event archive](operations.md#archiving-and-replaying-an-event) →
+   **Export**. Keep the file as the record of that event. It is the event's
+   settings and content, with no player data; v2 does not migrate it.
+2. **Update `.env`.** Delete the `ADMIN_LOGINS` line (nothing reads it).
+   Generate the admin claim code: `./setup/ctf-setup.sh admin-code` on a
+   Compose box, or `deploy.sh --new-admin-code` on Fly or AWS. Each prints
+   the code once and stores only its hash in `ADMIN_CLAIM_CODE_HASH`. The
+   `GITHUB_CLIENT_*` keys stay required with Secure Development; without it
+   they are optional, like the Google and Discord keys
+   ([Sign-in providers](#sign-in-providers)).
+3. **Deploy v2** the same way you deployed v1.
+4. **Claim `/admin`**: create an account at `/sign-in`, then enter the code
+   at `/admin/claim`.
+5. **Run the master reset** (`/admin` → Event → danger zone). It wipes the
+   v1 progress left in Redis and keeps the accounts made in step 4.
+6. **Set the event up again** in `/admin` (identity, schedule, modules,
+   content), and have players create accounts. With Secure Development on,
+   each player links GitHub from `/profile` so their PRs score.
 
 ## Monitoring
 

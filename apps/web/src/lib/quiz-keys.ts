@@ -110,7 +110,7 @@ export function slugifyPrompt(prompt: string): string {
 /** Builds a question id from its prompt, so an organizer never has to invent
  *  one. The id is storage plumbing — it is the field name in
  *  `ctf:quiz:questions` and `ctf:quiz:key`, and the reference every
- *  contestant's `ctf:quiz:answers:<login>` row is written against — and
+ *  contestant's `ctf:quiz:answers:<playerId>` row is written against — and
  *  nothing about it needs a human's judgement, only a value that is stable,
  *  unique, and legible enough to recognise in an audit line.
  *

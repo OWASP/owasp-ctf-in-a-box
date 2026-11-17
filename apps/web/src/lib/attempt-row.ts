@@ -1,8 +1,8 @@
 /**
  * The attempt-row shape, and the ONE parser for it.
  *
- * Quiz and classic each keep a per-login attempts hash (`ctf:quiz:attempts:<login>`,
- * `ctf:classic:attempts:<login>`) whose field is the item id and whose VALUE is
+ * Quiz and classic each keep a per-player attempts hash (`ctf:quiz:attempts:<playerId>`,
+ * `ctf:classic:attempts:<playerId>`) whose field is the item id and whose VALUE is
  * a JSON object written by their respective Lua scripts:
  *
  *     {"attempts":2,"firstAt":"<iso>","lastAt":"<iso>","lastAtMs":1234567890}

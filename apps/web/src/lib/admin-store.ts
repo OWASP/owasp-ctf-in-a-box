@@ -723,9 +723,9 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: AuditActo
 // record + API response reports as a cleared count. Deliberately excludes
 // ctf:admin:settings (kept), ctf:admin:audit (appended, not cleared), and
 // ctf:sync:status (sync owns it). ctf:user:* covers both the team-membership
-// hash and ctf:user:<login>:hints; ctf:team:* covers <slug> and <slug>:members.
+// hash and ctf:user:<playerId>:hints; ctf:team:* covers <slug> and <slug>:members.
 //
-// Quiz scope (spec Q1): wipes contestant PROGRESS (per-login answers/attempts,
+// Quiz scope (spec Q1): wipes contestant PROGRESS (per-player answers/attempts,
 // plus the two running-total aggregate hashes and the award-time hash) and deliberately KEEPS
 // `ctf:quiz:questions` / `ctf:quiz:key` — those are organizer CONTENT, like
 // `ctf:admin:settings`, not something a reset should ever destroy. The
@@ -738,7 +738,7 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: AuditActo
 // Classic scope mirrors quiz's exactly, for the same reason (see
 // deleteChallenge's doc comment in classic-store.ts for the same contract
 // stated from the single-challenge-delete side): wipes contestant PROGRESS —
-// per-login solves/attempts, plus the three aggregate hashes
+// per-player solves/attempts, plus the three aggregate hashes
 // (`ctf:classic:points`/`ctf:classic:solved`/`ctf:classic:solvecount`) and
 // the award-time hash (`ctf:classic:lastAt`) the leaderboard reads — and deliberately KEEPS `ctf:classic:challenges` /
 // `ctf:classic:flag` / `ctf:classic:flagnorm` / `ctf:classic:categories`,

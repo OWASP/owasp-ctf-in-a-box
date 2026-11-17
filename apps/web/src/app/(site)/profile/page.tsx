@@ -139,7 +139,7 @@ export default async function ProfilePage({
   const linkMessage =
     githubLink === undefined ? null : linkNotice(firstParam(params?.error), firstParam(params?.linked), githubLink !== null);
 
-  // Quiz/classic totals and item lists are per-login and cheap to fetch
+  // Quiz/classic totals and item lists are per-player and cheap to fetch
   // here regardless of board size (two HGETALLs each — see getQuizTotals /
   // getClassicTotals), but only when the module is enabled:
   // this must never read `ctf:quiz:*` when quiz is off, nor `ctf:classic:*`
@@ -298,7 +298,7 @@ export default async function ProfilePage({
       }
     } else {
       // No team: no fold read is needed for the records half — they are the
-      // same per-login hash this page already read for the Show-N lists, so a
+      // same per-player hash this page already read for the Show-N lists, so a
       // challenge they solved and an organizer has since deleted keeps its
       // banked points in the ceiling.
       for (const [id, solve] of Object.entries(viewerSolved)) {

@@ -76,11 +76,11 @@ import {
  *                                 against.
  *   ctf:classic:categories       string, JSON array of category names in the
  *                                 organizer's chosen display order.
- *   ctf:classic:solves:<login>   hash, id -> JSON {points, at} — records ONLY
+ *   ctf:classic:solves:<playerId>   hash, id -> JSON {points, at} — records ONLY
  *                                 solves. Points are captured at solve time,
  *                                 so a later re-pricing of a challenge never
  *                                 rewrites history.
- *   ctf:classic:attempts:<login> hash, id -> JSON {attempts, firstAt, lastAt, lastAtMs}
+ *   ctf:classic:attempts:<playerId> hash, id -> JSON {attempts, firstAt, lastAt, lastAtMs}
  *        firstAt is the FIRST submission's time and is carried forward across
  *        rewrites; absent on rows written before it existed.
  *                                 — every submission, right or wrong; the
@@ -133,7 +133,7 @@ import {
 // Key names/builders live in ./classic-keys (a dependency-free module) rather
 // than as local consts here — see classic-keys.ts's header comment for why.
 // POINTS_KEY/SOLVED_KEY/SOLVECOUNT_KEY are running totals, updated atomically
-// by SUBMIT_SCRIPT alongside the per-login solve row, so a leaderboard overlay
+// by SUBMIT_SCRIPT alongside the per-player solve row, so a leaderboard overlay
 // costs one HGETALL each regardless of board size.
 
 /** Default seconds a login must wait between submissions on the SAME
@@ -869,14 +869,14 @@ export async function exportBundle(): Promise<ClassicBundle> {
  *  the challenge (contestants stop seeing it, and it cannot be
  *  submitted against — SUBMIT_SCRIPT's step 1 returns `missing` without the
  *  `flagnorm` row), but it deliberately does NOT touch contestant history.
- *  `ctf:classic:solves:<login>` / `ctf:classic:attempts:<login>` rows for the
+ *  `ctf:classic:solves:<playerId>` / `ctf:classic:attempts:<playerId>` rows for the
  *  deleted id stay put, and the aggregate counters are not decremented — so
  *  points already banked for this challenge REMAIN on the leaderboard.
  *  Clearing banked points is the master reset's job (admin-store's
  *  `resetEvent`).
  *
  *  That's a deliberate contract, mirroring `deleteQuestion`: cascading a
- *  delete across every per-login hash plus aggregate decrements is a fan-out
+ *  delete across every per-player hash plus aggregate decrements is a fan-out
  *  destructive write with no atomic story and no undo, and retiring a
  *  challenge is a far more common need than un-awarding points for it.
  *  Because the aggregates outlive the challenge, a login can hold more solves
@@ -1000,7 +1000,7 @@ export async function getSolveCounts(): Promise<Map<string, number>> {
 /** One login's (or one team's) classic aggregate, as consumed by the
  *  leaderboard overlay. */
 /** `itemIds` is present only on the TEAM path, whose fold already dedupes by
- *  item id — the aggregate per-login path has running counters with no memory
+ *  item id — the aggregate per-player path has running counters with no memory
  *  of which items produced them. Where it is present a caller can union it
  *  with the live catalogue for a denominator that survives an organizer
  *  deleting a solved item; where it is absent the caller clamps. */
@@ -1009,7 +1009,7 @@ export type ClassicTotal = { points: number; solved: number; lastAt: string | nu
 /** Per-login classic totals for every login that has solved at least one
  *  challenge — three HGETALLs in one pipeline (`ctf:classic:points`,
  *  `ctf:classic:solved`, `ctf:classic:lastAt`), maintained atomically by
- *  SUBMIT_SCRIPT alongside the per-login solve row. The cost does not grow
+ *  SUBMIT_SCRIPT alongside the per-player solve row. The cost does not grow
  *  with the board.
  *
  *  `lastAt` is the login's latest award time, the leaderboard's
@@ -1043,7 +1043,7 @@ export async function getClassicTotals(): Promise<Map<string, ClassicTotal>> {
  *  teammates both solved. The aggregates can't serve a team: they're running
  *  totals with no memory of WHICH challenges contributed, so there is no way
  *  to dedupe from them. Instead this reads each member's
- *  `ctf:classic:solves:<login>` hash directly and dedupes by challenge id,
+ *  `ctf:classic:solves:<playerId>` hash directly and dedupes by challenge id,
  *  keeping the EARLIEST solve's stored points for any challenge two or more
  *  members hold (a later solve by a teammate — or a since-changed price
  *  recorded on someone else's row — never changes what the team already

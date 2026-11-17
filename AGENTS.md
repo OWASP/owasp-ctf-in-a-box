@@ -388,7 +388,8 @@ suggestions.
   `ctf:link:github:<lowercased login>` (player id) and
   `ctf:link:user:<id>` (login) when a player signs in with GitHub or, with
   Secure Development on, links GitHub from their profile (one GitHub account
-  per kit account, no unlink), sync resolves the score marker's `author`
+  per kit account; a player cannot unlink, and an organizer can unlink only
+  a link that has not scored), sync resolves the score marker's `author`
   through the first, and an unlinked author's score is held
   (`ctf:sd:held:*`) until they link. GitHub logins are unique only
   case-insensitively, so the link key lowercases both sides. Admin-ness is
@@ -470,7 +471,8 @@ suggestions.
 - [`docs/scorer.md`](docs/scorer.md) — the scorer engine: serve + judge
   modes, both rubric grammars, authoring and building rubrics.
 - [`docs/hosting.md`](docs/hosting.md) — standing the kit up: prerequisites,
-  how scores reach the box, OAuth app, the `.env` bootstrap.
+  how scores reach the box, player accounts and sign-in providers, the `.env`
+  bootstrap, upgrading from v1.
 - [`docs/operations.md`](docs/operations.md) — running the event once it is
   up: admin panel and runtime overrides, teams, the event archive, per-module
   runbooks, pre-event verification, dev-stack, the pre-launch lock.

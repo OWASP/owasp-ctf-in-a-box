@@ -1,4 +1,4 @@
-// The union-by-item team fold, shared by every module that banks per-login
+// The union-by-item team fold, shared by every module that banks per-player
 // "I earned this item, for these points, at this time" rows.
 //
 // Deliberately NOT server-only and deliberately dependency-free: it is pure
@@ -22,7 +22,7 @@ type FoldedTotal = {
 };
 
 /** The earned-item record every module stores as the JSON value of its
- *  per-login hash: `{ points, at }`. Extra fields are ignored, and anything
+ *  per-player hash: `{ points, at }`. Extra fields are ignored, and anything
  *  that isn't an object with those two typed fields is skipped. */
 type Earned = { points: number; at: string };
 
@@ -46,10 +46,10 @@ function parseEarned(raw: unknown): Earned | null {
 
 /**
  * Folds one team's members' `HGETALL` replies into a single total, taking the
- * UNION of the items they hold — never the sum of their per-login aggregates.
+ * UNION of the items they hold — never the sum of their per-player aggregates.
  *
  * A team's total is the union because summing would double count any item two
- * teammates both earned, which is exactly the double-count bug the per-login
+ * teammates both earned, which is exactly the double-count bug the per-player
  * aggregate counters exist to avoid at the individual level. The aggregates
  * cannot serve a team either way: they are running totals with no memory of
  * WHICH items contributed to them, so there is nothing in them to dedupe by.

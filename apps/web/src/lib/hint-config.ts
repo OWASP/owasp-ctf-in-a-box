@@ -7,7 +7,7 @@ import { upstashPipeline } from "@/lib/upstash";
 /**
  * The hint policy reads that the LEADERBOARD needs as well as the store:
  * whether hints can work here at all, the organizer's effective config, and
- * the per-login penalty map.
+ * the per-player penalty map.
  *
  * Split out of `hint-store.ts` (#553) because the folded leaderboard's last
  * stage (`leaderboard/hint-penalties.ts`) imports these, and the store now

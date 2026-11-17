@@ -3,10 +3,14 @@
 // app's real better-auth instance. The keys are the real ones (`ctf:admin:`,
 // `ctf:auth:`) because the functions build them; every id and code is fresh
 // per test, and afterAll removes what the suite wrote. See live-redis.ts.
+// Those writes land in the real audit list (trimmed to its cap) and the real
+// account store, so the suite runs only against a throwaway Redis
+// (destructiveLiveRedisAllowed in live-redis-guard.ts).
 
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { liveConfigured } from "./live-redis";
+import { destructiveLiveRedisAllowed } from "./live-redis-guard";
 
 vi.mock("server-only", () => ({}));
 
@@ -20,7 +24,7 @@ vi.hoisted(() => {
 
 const PW = "correct horse battery";
 
-describe.skipIf(!liveConfigured)("password reset codes against a live Redis", () => {
+describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("password reset codes against a live Redis", () => {
   const users: string[] = [];
   const admins: string[] = [];
 

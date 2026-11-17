@@ -303,12 +303,17 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
       expect(await settingsField("resetAt")).toBe(resetAt);
       const [audit] = await upstashPipeline([["LRANGE", "ctf:admin:audit", 0, 1]]);
       expect((audit.result as string[]).map((l) => JSON.parse(l).action)).toEqual(["reset", "reset:start"]);
-      expect(await scorerSolveWrite(target, player, judgedAt, "late", login)).toBe("pre-reset");
-      expect(await scorerSolveWrite(target, player, judgedAt, "loginless")).toBe("pre-reset");
+      // Judged against the settings before the reset, which had no epoch.
+      expect(await scorerSolveWrite(target, player, judgedAt, "late", login, "")).toBe("pre-reset");
+      expect(await scorerSolveWrite(target, player, judgedAt, "loginless", "", "")).toBe("pre-reset");
+      // A score timed past the new epoch but judged before the reset (a
+      // clock-skewed `at`) is judged again rather than written.
+      const skewed = new Date(Number(resetAt) + 60_000).toISOString();
+      expect(await scorerSolveWrite(target, player, skewed, "skewed", login, "")).toBe("stale");
       const [solves] = await upstashPipeline([["EXISTS", `ctf:solves:${target}`]]);
       expect(solves.result).toBe(0);
-      // A score timed after the epoch still writes: the check refuses only the past.
-      expect(await scorerSolveWrite(target, player, new Date(Number(resetAt) + 1).toISOString(), "after", login)).toBe("ok");
+      // A score timed after the epoch and judged against it still writes.
+      expect(await scorerSolveWrite(target, player, new Date(Number(resetAt) + 1).toISOString(), "after", login, resetAt)).toBe("ok");
     } finally {
       await upstashPipeline([["DEL", `ctf:link:github:${login}`, `ctf:solves:${target}`]]);
     }

@@ -34,10 +34,12 @@ export const LINK_GITHUB_PREFIX = "ctf:link:github:";
 // master reset and written after its sweep cannot bring a solve back, with or
 // without a login and whatever the links did meanwhile. resetEvent writes the
 // epoch before it sweeps a solve. The app writes the epoch as epoch
-// milliseconds (all digits), compared here with the score's time in ms. Any
-// other non-empty value is compared as the string the caller judged against
-// (ARGV[5]): unchanged means the judge already applied it; changed is 'stale'
-// (nothing written, the caller retries and judges again).
+// milliseconds (all digits), compared here with the score's time in ms. Then
+// any epoch other than the one the caller judged the score against (ARGV[5])
+// is 'stale' (nothing written, the caller retries and judges again): a score
+// timed after a reset that landed since the judge, which a clock-skewed `at`
+// up to five minutes ahead can be, is judged against the new event's freeze
+// and window rather than written into it.
 //
 // Then the hold: a hold with the account row still present is a delete or
 // unlink in progress ('pending': write nothing, the caller retries and
@@ -57,11 +59,8 @@ export const LINK_GITHUB_PREFIX = "ctf:link:github:";
 export const RECORD_SOLVES_SCRIPT = `
 local reset = redis.call('HGET', KEYS[5], 'resetAt')
 if reset and reset ~= '' then
-  if string.match(reset, '^%d+$') then
-    if tonumber(ARGV[4]) < tonumber(reset) then return 'pre-reset' end
-  elseif reset ~= ARGV[5] then
-    return 'stale'
-  end
+  if string.match(reset, '^%d+$') and tonumber(ARGV[4]) < tonumber(reset) then return 'pre-reset' end
+  if reset ~= ARGV[5] then return 'stale' end
 end
 if redis.call('EXISTS', KEYS[2]) == 1 then
   if redis.call('HEXISTS', KEYS[3], ARGV[1]) == 1 then return 'pending' end
@@ -144,10 +143,9 @@ export function createMemoryStore({ teams = [] } = {}) {
     async recordSolves(target, player, ids, at, login = "", judgedResetAt = "") {
       if (ids.length === 0) return "ok";
       const reset = typeof policy?.resetAt === "string" ? policy.resetAt : "";
-      if (/^\d+$/.test(reset)) {
-        if (Date.parse(at) < Number(reset)) return "pre-reset";
-      } else if (reset !== "" && reset !== judgedResetAt) {
-        return "stale";
+      if (reset !== "") {
+        if (/^\d+$/.test(reset) && Date.parse(at) < Number(reset)) return "pre-reset";
+        if (reset !== judgedResetAt) return "stale";
       }
       if (holds.has(player)) return users.has(player) ? "pending" : "deleted";
       const lower = String(login).toLowerCase();

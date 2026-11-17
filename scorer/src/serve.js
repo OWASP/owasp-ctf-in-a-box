@@ -108,7 +108,10 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
   async function solveTime(at) {
     if (at === undefined || at === null) {
       if (await store.isPaused()) return { status: 503, body: { error: "scoring is paused" } };
-      return { iso: now(), resetAt: "" };
+      // The epoch the write checks against: a failed read is "", which the
+      // solve script answers 503 once any reset has happened, so sync retries.
+      const policy = await store.readScoringPolicy();
+      return { iso: now(), resetAt: typeof policy?.resetAt === "string" ? policy.resetAt : "" };
     }
     let atMs = typeof at === "string" ? Date.parse(at) : NaN;
     if (!Number.isFinite(atMs)) return { status: 400, body: { error: "invalid at" } };
@@ -169,8 +172,9 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     // script: a score timed before the CURRENT reset epoch answers 422
     // pre-reset (a reset that landed after the judge above read the
     // settings), a delete or unlink in progress, a link that changed since
-    // sync resolved it, or a non-numeric epoch that changed since the judge
-    // read it answers 503 (sync retries and judges again), a deleted player
+    // sync resolved it, or an epoch that changed since the judge read it (or
+    // that the judge could not read) answers 503 (sync retries and judges
+    // again), a deleted player
     // 422 (final, ADR 67). A store error throws to the 500 below, so sync
     // retries and nothing is lost.
     const written = await store.recordSolves(target, player, ids, solvedAt.iso, login ?? "", solvedAt.resetAt);

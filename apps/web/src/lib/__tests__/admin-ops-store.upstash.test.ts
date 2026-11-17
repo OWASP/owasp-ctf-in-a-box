@@ -819,8 +819,10 @@ describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("deleteAllAcc
     expect((await scanAll("ctf:auth:*")).length).toBeGreaterThan(0);
     expect((await scanAll("ctf:link:*")).length).toBeGreaterThan(0);
 
-    // The time a score sync is about to send was judged at: before the reset.
+    // A score judged before the reset: its time and the epoch it was judged against.
     const judgedAt = new Date().toISOString();
+    const [epochBefore] = await pipeline([["HGET", "ctf:admin:settings", "resetAt"]]);
+    const judgedReset = typeof epochBefore.result === "string" ? epochBefore.result : "";
     await new Promise((r) => setTimeout(r, 5));
     const actor = { id: admin, name: "organizer" };
     const { cleared } = await deleteAllAccounts("delete all accounts", actor);
@@ -856,12 +858,12 @@ describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("deleteAllAcc
     // each one with nothing written, with the login, without one, and after
     // the same login linked to the same id again.
     const target = `vtall-${RUN}`.toLowerCase().replace(/[^a-z0-9-]/g, "");
-    expect(await scorerSolveWrite(target, ids[1], judgedAt, "late", ghs[1])).toBe("pre-reset");
-    expect(await scorerSolveWrite(target, ids[1], judgedAt, "loginless")).toBe("pre-reset");
+    expect(await scorerSolveWrite(target, ids[1], judgedAt, "late", ghs[1], judgedReset)).toBe("pre-reset");
+    expect(await scorerSolveWrite(target, ids[1], judgedAt, "loginless", "", judgedReset)).toBe("pre-reset");
     const relinked = await pipeline([["SET", `ctf:link:github:${ghs[1]}`, ids[1]]]);
     expect(relinked.filter((r) => r.error)).toEqual([]);
     try {
-      expect(await scorerSolveWrite(target, ids[1], judgedAt, "relinked", ghs[1])).toBe("pre-reset");
+      expect(await scorerSolveWrite(target, ids[1], judgedAt, "relinked", ghs[1], judgedReset)).toBe("pre-reset");
     } finally {
       await pipeline([["DEL", `ctf:link:github:${ghs[1]}`]]);
     }

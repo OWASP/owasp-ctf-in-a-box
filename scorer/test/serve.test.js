@@ -781,6 +781,20 @@ test("a score judged before a master reset and written after it answers 422 pre-
   assert.deepEqual(await store.getSolves("dvwa"), {});
 });
 
+test("a future-skewed score judged before a reset and written after it, timed past the new epoch, answers 503 to be judged again", async (t) => {
+  const { store, post } = await bootWith(t);
+  const original = store.recordSolves.bind(store);
+  store.recordSolves = async (...args) => {
+    store.__setPolicy({ ...LAUNCHED, resetAt: String(Date.parse("2026-08-14T12:00:30Z")) });
+    return original(...args);
+  };
+  // NOW is 12:00; an `at` one minute ahead is within the skew allowance.
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T12:01:00Z"));
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: "the master reset changed while the score was judged" });
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+});
+
 test("a non-numeric reset epoch that changed after the judge read it answers 503 and writes nothing", async (t) => {
   const { store, post } = await bootWith(t, { policy: { ...LAUNCHED, resetAt: "2026-08-14T09:30:00Z" } });
   const original = store.recordSolves.bind(store);

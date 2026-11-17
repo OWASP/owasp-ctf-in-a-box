@@ -141,13 +141,15 @@ test("memory store: a score hold refuses the write — pending while the row exi
   assert.deepEqual(await store.getSolves("dvwa"), { "hubot:sqli-low": T0 });
 });
 
-test("memory store: a score timed before the current reset epoch is pre-reset, whatever the hold and link", async () => {
+test("memory store: a score timed before the current reset epoch is pre-reset, whatever the hold and link, and one judged against another epoch is stale", async () => {
   const store = createMemoryStore();
   store.__setPolicy({ resetAt: String(Date.parse(T1)) });
   assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0), "pre-reset");
   assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0, "octo"), "pre-reset");
   assert.deepEqual(await store.getSolves("dvwa"), {});
-  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T1), "ok");
+  // At or after the epoch, the write lands only when judged against it.
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T1), "stale");
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T1, "", String(Date.parse(T1))), "ok");
   // A non-numeric epoch is honoured only as the value the judge read.
   store.__setPolicy({ resetAt: "2026-08-14T10:30:00Z" });
   assert.equal(await store.recordSolves("dvwa", "hubot", ["sqli-low"], T1, "", "older"), "stale");

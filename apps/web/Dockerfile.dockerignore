@@ -1,3 +1,7 @@
-node_modules
-.next
-.env.local
+# The app build (apps/web/Dockerfile, context = repo root) reads THIS file,
+# not the root .dockerignore: a Dockerfile-specific ignore file replaces it.
+# Patterns are relative to the context root, so keep the `**/` prefixes.
+**/node_modules
+**/.next
+**/.env
+**/.env.*

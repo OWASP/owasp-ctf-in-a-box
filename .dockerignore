@@ -34,8 +34,8 @@ apps/web/out
 # means a careless `COPY . .` in some future Dockerfile cannot pick them up.
 # `.env.example` is the committed template and harmless, but nothing needs it
 # in an image either.
-.env
-.env.*
+**/.env
+**/.env.*
 
 # Local scratch and test artefacts.
 state/

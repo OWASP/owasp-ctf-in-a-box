@@ -87,7 +87,10 @@ export async function POST(request: Request) {
 
   if (body.action === "reset-code") {
     try {
-      return NextResponse.json(await issuePasswordResetCode(body.id, actor));
+      // The body carries the plaintext code: no cache may keep it.
+      return NextResponse.json(await issuePasswordResetCode(body.id, actor), {
+        headers: { "Cache-Control": "no-store" },
+      });
     } catch (err) {
       return fail(err, "reset-code");
     }

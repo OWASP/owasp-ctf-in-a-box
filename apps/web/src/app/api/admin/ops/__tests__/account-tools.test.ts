@@ -95,6 +95,7 @@ describe("reset-code", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ code: "aaaa-bbbb", expiresAt: "2026-11-16T10:15:00.000Z" });
     expect(issuePasswordResetCode).toHaveBeenCalledWith(OCTO, ACTOR);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
   it("maps a validation error to 400 with its field", async () => {
     issuePasswordResetCode.mockRejectedValueOnce(new OpsValidationError("id", "No player with that id"));

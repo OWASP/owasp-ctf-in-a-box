@@ -20,6 +20,7 @@
 import { useRef, useState } from "react";
 import type { ConfirmState } from "./types";
 import AdminAdjustments from "./admin-adjustments";
+import { USERNAME_MAX } from "@/lib/username-rules";
 import { adminTime } from "@/lib/event-time";
 
 /** The shape `GET /api/admin/ops/user` answers with — mirrors `UserDetail` in
@@ -555,6 +556,7 @@ export default function AdminSupportTab({
             </label>
             <input
               id="support-rename"
+              maxLength={USERNAME_MAX}
               value={renameTo}
               onChange={(e) => setRenameTo(e.target.value)}
               className="w-48 rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 font-mono text-sm text-white focus-visible:border-[#d4a017]/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"

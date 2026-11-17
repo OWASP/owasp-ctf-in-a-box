@@ -43,6 +43,7 @@ import {
 } from "@/lib/password-reset";
 import { currentWriteFence } from "@/lib/auth-store/write-fence";
 import { ALICE, actor } from "./audit-actor";
+import { decoratedError, expectLabelOnly } from "./log-redaction";
 
 const BOB = actor("bob");
 const CODE = "0123-4567-89ab-cdef-0123-4567-89ab-cdef";
@@ -260,10 +261,13 @@ describe("redeemPasswordResetCode", () => {
     codeFor(BOB.id);
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     m.ia.updateAccount.mockRejectedValue(new Error("write fence gone"));
-    m.ia.deleteUserSessions.mockRejectedValue(new Error("revoke down"));
+    // The revoke failure carries a planted secret in `command` and `cause`,
+    // as a driver error would: only its label may reach the log.
+    m.ia.deleteUserSessions.mockRejectedValue(decoratedError("revoke down"));
     try {
       await expect(redeemPasswordResetCode(CODE, PW)).rejects.toThrow("write fence gone");
       expect(log.mock.calls.some((c) => String(c[0]).includes("revoking sessions after a failed password write failed"))).toBe(true);
+      expectLabelOnly(log, { label: "Error: revoke down" });
     } finally {
       log.mockRestore();
     }

@@ -206,7 +206,7 @@ export function ResetCodeDialog({
       className="flex flex-col gap-2 rounded-md border border-[#d4a017]/40 bg-[#d4a017]/10 p-3"
     >
       <p className="font-mono text-lg tracking-wider text-white">{code}</p>
-      <p className="text-sm text-zinc-300">Expires at {adminTime(expiresAt, "UTC", { year: true })} UTC</p>
+      <p className="text-sm text-zinc-300">Expires at {adminTime(expiresAt, "UTC", { year: true })}</p>
       <p className="text-sm text-zinc-300">Hand this to the player in person. It works once, for 15 minutes.</p>
       <div className="flex gap-2">
         <button

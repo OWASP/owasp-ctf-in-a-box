@@ -1,5 +1,5 @@
 import { betterAuth } from "better-auth";
-import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
+import { APIError, createAuthMiddleware, getOAuthState, getSessionFromCtx } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import { username } from "better-auth/plugins";
 import type { BetterAuthOptions } from "better-auth";
@@ -89,26 +89,16 @@ function isSignInProvider(value: unknown): value is SignInProviderId {
   return typeof value === "string" && (SIGN_IN_PROVIDERS as readonly string[]).includes(value);
 }
 
-/**
- * The `/sign-in/social` and `/link-social` before hook. Sign-in takes only a
- * provider that has keys and whose admin switch is on; an unreadable switch
- * fails closed, since an organizer may have switched a provider off for a
- * reason. A link is to GitHub alone (it is what ties a player to a PR author)
- * and ignores the switch: an organizer can close GitHub sign-in and still let
- * Secure Development players link.
- */
-export async function refuseDisabledProvider(ctx: AuthCtx): Promise<void> {
-  if (ctx.path !== "/sign-in/social" && ctx.path !== "/link-social") return;
-  const body: unknown = ctx.body;
-  const provider = typeof body === "object" && body !== null ? (body as Record<string, unknown>).provider : undefined;
-  if (ctx.path === "/link-social") {
-    if (provider !== "github") {
-      throw new APIError("BAD_REQUEST", { code: "LINK_PROVIDER_NOT_ALLOWED", message: "Only a GitHub account can be linked." });
-    }
-    return;
-  }
-  const disabled = () => new APIError("FORBIDDEN", { code: "PROVIDER_DISABLED", message: "That sign-in option is not available." });
-  if (!isSignInProvider(provider)) throw disabled();
+const providerDisabled = () =>
+  new APIError("FORBIDDEN", { code: "PROVIDER_DISABLED", message: "That sign-in option is not available." });
+const linkNotAllowed = () =>
+  new APIError("BAD_REQUEST", { code: "LINK_PROVIDER_NOT_ALLOWED", message: "Only a GitHub account can be linked." });
+
+/** Throws unless `provider` has keys and its admin switch is on. An unreadable
+ *  switch fails closed: an organizer may have switched a provider off for a
+ *  reason. */
+async function assertSignInEnabled(provider: unknown): Promise<void> {
+  if (!isSignInProvider(provider)) throw providerDisabled();
   let enabled: SignInProviderId[];
   try {
     enabled = enabledSignInProviders(await getAdminSettings(), process.env);
@@ -119,7 +109,69 @@ export async function refuseDisabledProvider(ctx: AuthCtx): Promise<void> {
       message: "Sign-in options could not be loaded. Try again.",
     });
   }
-  if (!enabled.includes(provider)) throw disabled();
+  if (!enabled.includes(provider)) throw providerDisabled();
+}
+
+/**
+ * The `/sign-in/social` and `/link-social` before hook. Sign-in takes only a
+ * provider that has keys and whose admin switch is on. A link is to GitHub
+ * alone (it is what ties a player to a PR author) and ignores the switch: an
+ * organizer can close GitHub sign-in and still let Secure Development players
+ * link. This gates only the start of a flow; gateOAuthCallback gates its
+ * completion.
+ */
+export async function refuseDisabledProvider(ctx: AuthCtx): Promise<void> {
+  if (ctx.path !== "/sign-in/social" && ctx.path !== "/link-social") return;
+  const body: unknown = ctx.body;
+  const provider = typeof body === "object" && body !== null ? (body as Record<string, unknown>).provider : undefined;
+  if (ctx.path === "/link-social") {
+    if (provider !== "github") throw linkNotAllowed();
+    return;
+  }
+  await assertSignInEnabled(provider);
+}
+
+/** What a database hook on the callback is about to write. */
+export type CallbackWrite = "user" | "account" | "session";
+
+type HookCtx = { path?: string; params?: Record<string, unknown> } | null | undefined;
+
+// One verdict per callback request: the parsed state object is the request's
+// own, so every write of one callback shares a single settings read.
+const callbackVerdicts = new WeakMap<object, Promise<void>>();
+
+/**
+ * Gates the completion of an OAuth flow, from the user, account and session
+ * database hooks on `/callback/:id`. The OAuth state does not name a provider
+ * and the callback takes it from the URL, so a state minted by an allowed
+ * sign-in or by a GitHub link can be completed at any configured provider's
+ * callback; refuseDisabledProvider alone would not stop that. So, judged by
+ * the provider in the URL and by the state the callback parsed (better-auth
+ * takes the link branch on a truthy `link`, and so does this):
+ *   - a link writes only a GitHub account and never creates a session;
+ *   - a sign-in writes nothing unless that provider's switch is on.
+ * On a sign-in the thrown APIError's code becomes the callback's error
+ * redirect, and a refused create inside the user-and-account transaction
+ * rolls both rows back. The link branch does not catch it, so a refused link
+ * is the endpoint's own 400.
+ */
+export async function gateOAuthCallback(ctx: HookCtx, write: CallbackWrite): Promise<void> {
+  if (ctx?.path !== "/callback/:id") return;
+  const provider = ctx.params?.id;
+  // Outside a request's state (never on a real callback) this reads as no
+  // state, which is judged as a sign-in: the stricter of the two.
+  const state = await getOAuthState().catch(() => null);
+  if (state?.link) {
+    if (write === "session" || provider !== "github") throw linkNotAllowed();
+    return;
+  }
+  if (!state) return assertSignInEnabled(provider);
+  let verdict = callbackVerdicts.get(state);
+  if (!verdict) {
+    verdict = assertSignInEnabled(provider);
+    callbackVerdicts.set(state, verdict);
+  }
+  return verdict;
 }
 
 /**
@@ -327,13 +379,29 @@ export const authOptions = {
     // mapping mints a fresh one). better-auth merges the returned data over its
     // own, so the fields are set to undefined, which its adapter skips on
     // update, rather than left out.
+    //
+    // Every user, account and session write on the callback passes
+    // gateOAuthCallback first.
     user: {
-      create: { after: async (user) => linkOnUserWrite(user) },
-      update: {
-        before: async (data, ctx) =>
-          ctx?.path === "/callback/:id" ? { data: { ...data, email: undefined, name: undefined, image: undefined } } : undefined,
+      create: {
+        before: async (_user, ctx) => gateOAuthCallback(ctx, "user"),
         after: async (user) => linkOnUserWrite(user),
       },
+      update: {
+        before: async (data, ctx) => {
+          if (ctx?.path !== "/callback/:id") return;
+          await gateOAuthCallback(ctx, "user");
+          return { data: { ...data, email: undefined, name: undefined, image: undefined } };
+        },
+        after: async (user) => linkOnUserWrite(user),
+      },
+    },
+    account: {
+      create: { before: async (_account, ctx) => gateOAuthCallback(ctx, "account") },
+      update: { before: async (_account, ctx) => gateOAuthCallback(ctx, "account") },
+    },
+    session: {
+      create: { before: async (_session, ctx) => gateOAuthCallback(ctx, "session") },
     },
   },
   hooks: {

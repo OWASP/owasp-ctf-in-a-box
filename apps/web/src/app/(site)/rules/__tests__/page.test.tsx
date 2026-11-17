@@ -45,7 +45,7 @@ describe("/rules on a secure-development event", () => {
 
   it("keeps the module's rules, verbatim", () => {
     expect(html).toContain(
-      "Points for a patch credit the pull request&#x27;s author. Link your GitHub account from your profile and open every PR from that account, or your score is held until its author links it.",
+      "Points for a patch credit the pull request&#x27;s author. Link your GitHub account from your profile and open every PR from that account, or your score is held until its author links it before scoring closes.",
     );
     expect(html).toContain(
       "Only the 6 challenge targets (Juice Shop, DVWA, WebGoat, Security Shepherd, VulnerableApp, and VAmPI) are in scope. Do not attack the CI scoring pipeline, the leaderboard, or other contestants&#x27; forks.",

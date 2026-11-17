@@ -88,7 +88,7 @@ export const SECURE_DEVELOPMENT_DEF: ModuleDef = {
     steps: (ctx) => [
       {
         title: "Sign in and link GitHub",
-        body: "Use the sign-in button in the header to create an account or sign in, then link your GitHub account from your profile. The scorer credits points to the GitHub account that authors the pull request, and the link is what ties those points to you. A PR from an unlinked GitHub account is held until its author links it.",
+        body: "Use the sign-in button in the header to create an account or sign in, then link your GitHub account from your profile. The scorer credits points to the GitHub account that authors the pull request, and the link is what ties those points to you. A PR from an unlinked GitHub account is held until its author links it before scoring closes.",
       },
       {
         // Scores for this module arrive from GitHub through the poller, so
@@ -270,7 +270,7 @@ git push -u origin fix/<short-description>`,
     // PULL REQUEST'S author, which is not automatically the signed-in
     // session.
     teams: [
-      "Points for a patch credit the pull request's author. Link your GitHub account from your profile and open every PR from that account, or your score is held until its author links it.",
+      "Points for a patch credit the pull request's author. Link your GitHub account from your profile and open every PR from that account, or your score is held until its author links it before scoring closes.",
     ],
     fairPlay: [
       `Only the ${ctx.appCount} challenge ${ctx.appCount === 1 ? "target" : "targets"} (${ctx.appList}) ${ctx.appCount === 1 ? "is" : "are"} in scope. Do not attack the CI scoring pipeline, the leaderboard, or other contestants' forks.`,
@@ -338,7 +338,7 @@ git push -u origin fix/<short-description>`,
       },
       {
         q: "How is my progress tracked?",
-        a: "Sign in and link your GitHub account from your profile to claim your row on the live leaderboard and see a full per-app, per-challenge breakdown on your profile. Points are credited to the GitHub account that authored the pull request, so open your PRs from the account you linked. A score from an unlinked GitHub account is held until its author links it.",
+        a: "Sign in and link your GitHub account from your profile to claim your row on the live leaderboard and see a full per-app, per-challenge breakdown on your profile. Points are credited to the GitHub account that authored the pull request, so open your PRs from the account you linked. A score from an unlinked GitHub account is held until its author links it before scoring closes.",
       },
       {
         q: "Are there hints?",

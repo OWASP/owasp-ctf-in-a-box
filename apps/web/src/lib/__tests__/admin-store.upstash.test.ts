@@ -319,6 +319,83 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     }
   });
 
+  // The scorer's own POST /score (scorer/src/serve.js) over this Redis, for a
+  // score sent with neither `at` nor `login`: the master reset lands between
+  // the scorer's settings snapshot and its solve write, after the snapshot
+  // or after the solve time is taken. Either way nothing is written.
+  it("a score without at or login, with resetEvent between the scorer's snapshot and its write, writes nothing", async () => {
+    const { resetEvent } = await import("@/lib/admin-store");
+    const scorerSrc = (f: string) => new URL(`../../../../../scorer/src/${f}`, import.meta.url).href;
+    const { createHandler } = (await import(/* @vite-ignore */ scorerSrc("serve.js"))) as {
+      createHandler: (o: object) => (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void;
+    };
+    const { createRedisStore } = (await import(/* @vite-ignore */ scorerSrc("store.js"))) as {
+      createRedisStore: () => Record<string, (...a: unknown[]) => Promise<unknown>>;
+    };
+    const { createServer } = await import("node:http");
+    const target = `vtreset-${crypto.randomUUID().slice(0, 8)}`;
+    const player = crypto.randomUUID();
+    const post = async (store: Record<string, (...a: unknown[]) => Promise<unknown>>) => {
+      const server = createServer(createHandler({ store, token: "t" }));
+      await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+      try {
+        const { port } = server.address() as { port: number };
+        const res = await fetch(`http://127.0.0.1:${port}/score`, {
+          method: "POST",
+          headers: { authorization: "Bearer t", "content-type": "application/json" },
+          body: JSON.stringify({ player, target, solved: ["c1"] }),
+        });
+        return { status: res.status, body: (await res.json()) as unknown };
+      } finally {
+        server.close();
+      }
+    };
+    const launch = () => upstashPipeline([["HSET", "ctf:admin:settings", "scoringStartsAt", "2000-01-01T00:00:00.000Z", "paused", "0"]]);
+    try {
+      // The reset right after the scorer's first settings read, whichever
+      // read that is: the solve time is taken after it, so it is not before
+      // the new epoch, and a second read would see the new epoch without the
+      // freeze. One snapshot carries the old epoch, which the write refuses.
+      await launch();
+      const afterSnapshot = createRedisStore();
+      let resetDone = false;
+      for (const name of ["isPaused", "readScoringPolicy"]) {
+        const read = afterSnapshot[name];
+        afterSnapshot[name] = async (...args: unknown[]) => {
+          const value = await read(...args);
+          if (!resetDone) {
+            resetDone = true;
+            await resetEvent(actor("alice"));
+          }
+          return value;
+        };
+      }
+      expect(await post(afterSnapshot)).toEqual({ status: 503, body: { error: "the master reset changed while the score was judged" } });
+      expect(resetDone).toBe(true);
+
+      // The reset right before the write: the solve time predates the epoch.
+      await launch();
+      const beforeWrite = createRedisStore();
+      const write = beforeWrite.recordSolves;
+      beforeWrite.recordSolves = async (...args: unknown[]) => {
+        await new Promise((r) => setTimeout(r, 5));
+        await resetEvent(actor("alice"));
+        return write(...args);
+      };
+      expect(await post(beforeWrite)).toEqual({
+        status: 422,
+        body: { error: "the score predates the last master reset", refused: "pre-reset" },
+      });
+      const [solves] = await upstashPipeline([["EXISTS", `ctf:solves:${target}`]]);
+      expect(solves.result).toBe(0);
+
+      // Unlaunched by the reset: a plain request is the legacy 503.
+      expect(await post(createRedisStore())).toEqual({ status: 503, body: { error: "scoring is paused" } });
+    } finally {
+      await upstashPipeline([["DEL", `ctf:solves:${target}`]]);
+    }
+  });
+
   it("the solve script compares a non-numeric resetAt with the value the score was judged against", async () => {
     const target = `vtreset-${crypto.randomUUID().slice(0, 8)}`;
     const player = crypto.randomUUID();

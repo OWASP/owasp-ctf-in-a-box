@@ -107,11 +107,19 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
    */
   async function solveTime(at) {
     if (at === undefined || at === null) {
-      if (await store.isPaused()) return { status: 503, body: { error: "scoring is paused" } };
-      // The epoch the write checks against: a failed read is "", which the
-      // solve script answers 503 once any reset has happened, so sync retries.
+      // One settings snapshot answers both the arrival-time freeze and the
+      // epoch the write checks against, so a reset cannot land between them:
+      // a snapshot taken after the reset's first write sees its freeze, and
+      // one taken before carries the old epoch, which the solve script then
+      // refuses. A failed read falls back to isPaused (open on error) with no
+      // epoch, which the solve script answers 503 once any reset has happened.
       const policy = await store.readScoringPolicy();
-      return { iso: now(), resetAt: typeof policy?.resetAt === "string" ? policy.resetAt : "" };
+      const iso = now();
+      const paused = policy
+        ? policy.paused || outsideScoringWindow(Date.parse(iso), policy.startsAt, policy.endsAt)
+        : await store.isPaused();
+      if (paused) return { status: 503, body: { error: "scoring is paused" } };
+      return { iso, resetAt: typeof policy?.resetAt === "string" ? policy.resetAt : "" };
     }
     let atMs = typeof at === "string" ? Date.parse(at) : NaN;
     if (!Number.isFinite(atMs)) return { status: 400, body: { error: "invalid at" } };

@@ -795,6 +795,37 @@ test("a future-skewed score judged before a reset and written after it, timed pa
   assert.deepEqual(await store.getSolves("dvwa"), {});
 });
 
+test("a score without `at` reads one settings snapshot for the freeze and the epoch", async (t) => {
+  const { store, post } = await bootWith(t);
+  let reads = 0;
+  const read = store.readScoringPolicy.bind(store);
+  store.readScoringPolicy = async () => {
+    reads++;
+    const snapshot = await read();
+    // A reset lands right after the snapshot: frozen, new epoch.
+    store.__setPolicy({ ...LAUNCHED, paused: true, pausedSince: NOW, resetAt: String(Date.parse(NOW)) });
+    return snapshot;
+  };
+  store.isPaused = async () => {
+    throw new Error("the snapshot decides the freeze");
+  };
+  const res = await post({ player: pid("octocat"), target: "dvwa", solved: ["sqli-low"] });
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: "the master reset changed while the score was judged" });
+  assert.equal(reads, 1);
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+});
+
+test("a score without `at` is 503 when its one snapshot is frozen or outside the window", async (t) => {
+  for (const policy of [{ ...LAUNCHED, paused: true }, { ...LAUNCHED, startsAt: null }]) {
+    const { store, post } = await bootWith(t, { policy });
+    const res = await post({ player: pid("octocat"), target: "dvwa", solved: ["sqli-low"] });
+    assert.equal(res.status, 503);
+    assert.deepEqual(await res.json(), { error: "scoring is paused" });
+    assert.deepEqual(await store.getSolves("dvwa"), {});
+  }
+});
+
 test("a non-numeric reset epoch that changed after the judge read it answers 503 and writes nothing", async (t) => {
   const { store, post } = await bootWith(t, { policy: { ...LAUNCHED, resetAt: "2026-08-14T09:30:00Z" } });
   const original = store.recordSolves.bind(store);

@@ -728,3 +728,44 @@ test("an unreadable scoring policy fails OPEN: the score is recorded at its comm
   assert.equal((await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"))).status, 202);
   assert.deepEqual(await store.getSolves("dvwa"), { [pid("octocat") + ":sqli-low"]: "2026-08-14T10:00:00.000Z" });
 });
+
+// A deleted player's score. The app marks ctf:deleted:<id> before it
+// deletes anything; the solve write checks that marker atomically, so a score
+// that lands mid-delete waits (503, sync retries) and one after the account
+// row is gone is refused for good (422).
+
+test("a score for a player whose delete is in progress answers 503 and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t);
+  store.deleted.set(pid("octocat"), "pending:x");
+  store.users.add(pid("octocat"));
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: "player delete in progress" });
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+});
+
+test("a score for a deleted player answers 422 player-deleted and writes nothing", async (t) => {
+  const { store, post } = await bootWith(t);
+  store.deleted.set(pid("octocat"), "pending:x");
+  const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
+  assert.equal(res.status, 422);
+  assert.deepEqual(await res.json(), { error: "player deleted", refused: "player-deleted" });
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+  assert.equal((await post(timed("hubot", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"))).status, 202);
+});
+
+test("a store error on the solve write answers 5xx, never 202 or 422", async (t) => {
+  const store = createMemoryStore();
+  store.__setPolicy(LAUNCHED);
+  store.recordSolves = async () => {
+    throw new Error("upstash: ERR Error running script");
+  };
+  const server = await startServer({ rubric: RUBRIC, store, token: TOKEN, now: () => NOW });
+  t.after(() => server.close());
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/score`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+    body: JSON.stringify(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z")),
+  });
+  assert.ok(res.status >= 500 && res.status < 600, `expected 5xx, got ${res.status}`);
+});

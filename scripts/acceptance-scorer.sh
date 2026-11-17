@@ -391,4 +391,39 @@ redis_freeze HSET ctf:admin:settings resetAt 1640995200000
 expect_code 422 "$(score_at pre-reset 2021-06-01T00:00:00Z)" "a score posted before the reset epoch"
 expect_code 202 "$(score_at post-reset 2022-06-01T00:00:00Z)" "a score posted after the reset epoch"
 
+# A deleted player's score: the app sets ctf:deleted:<id> before it
+# deletes anything, and the solve script checks it in the same EVAL as the
+# write. While the account row in ctf:auth:user still exists the delete is in
+# progress (503, sync retries); once it is gone the refusal is final (422).
+score_deleted_body() { # $1 = player label, $2 = file for the body -> status code
+  curl -s -o "$2" -w '%{http_code}' -X POST "http://127.0.0.1:$FREEZE_PORT/score" \
+    -H "authorization: Bearer test-token" -H 'content-type: application/json' \
+    -d "{\"player\":\"$(player_for "$1")\",\"target\":\"juice-shop\",\"solved\":[\"reflected-xss-search\"],\"at\":\"2022-06-01T00:00:00Z\"}"
+}
+expect_no_solve() { # $1 = player label, $2 = what
+  has=$(docker exec "$FREEZE_REDIS_CTR" redis-cli HEXISTS ctf:solves:juice-shop "$(player_for "$1"):reflected-xss-search")
+  [ "$has" = "0" ] || { echo "FAIL: $2: the solve field for $1 was written (HEXISTS=$has)"; exit 1; }
+}
+DELETED_BODY="$TMP/deleted-body.json"
+
+echo "--- deleted player: a score mid-delete (marker set, account row present) answers 503 and writes nothing"
+redis_freeze SET "ctf:deleted:$(player_for doomed)" pending:x
+redis_freeze HSET ctf:auth:user "$(player_for doomed)" '{}'
+expect_code 503 "$(score_deleted_body doomed "$DELETED_BODY")" "a score while the player's delete is in progress"
+grep -q '"player delete in progress"' "$DELETED_BODY" \
+  || { echo "FAIL: the 503 body did not say the delete is in progress: $(cat "$DELETED_BODY")"; exit 1; }
+expect_no_solve doomed "a score while the player's delete is in progress"
+
+echo "--- deleted player: once the account row is gone the score is refused for good (422 player-deleted)"
+redis_freeze HDEL ctf:auth:user "$(player_for doomed)"
+expect_code 422 "$(score_deleted_body doomed "$DELETED_BODY")" "a score for a deleted player"
+grep -q '"refused":"player-deleted"' "$DELETED_BODY" \
+  || { echo "FAIL: the 422 body did not name player-deleted: $(cat "$DELETED_BODY")"; exit 1; }
+expect_no_solve doomed "a score for a deleted player"
+
+echo "--- deleted player: another player's score still records (202)"
+expect_code 202 "$(score_deleted_body survivor "$DELETED_BODY")" "a score for a player with no deletion marker"
+has=$(docker exec "$FREEZE_REDIS_CTR" redis-cli HEXISTS ctf:solves:juice-shop "$(player_for survivor):reflected-xss-search")
+[ "$has" = "1" ] || { echo "FAIL: the surviving player's solve field is missing (HEXISTS=$has)"; exit 1; }
+
 echo "ACCEPTANCE PASS"

@@ -11,6 +11,32 @@ const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
 // The manual freeze's closed intervals, newest first, one JSON {from, to} per
 // entry. apps/web admin-store.ts writes it atomically with the `paused` flag.
 const ADMIN_PAUSES_KEY = "ctf:admin:pauses";
+// A player's deletion marker, `pending:<token>`, which apps/web's deleteUser
+// sets before it deletes anything and never expires.
+export const deletedKey = (player) => `ctf:deleted:${player}`;
+// The better-auth user rows hash, field = player id: apps/web
+// auth-store/keys.ts rowsKey(AUTH_PREFIX, "user"). Both sides pin this literal.
+export const AUTH_USER_ROWS_KEY = "ctf:auth:user";
+
+// The solve write, judged against the deletion marker in the same EVAL so no
+// delete can land between the check and the HSETNX. A marker with the account
+// row still present is a delete in progress ('pending': write nothing, the
+// caller retries); a marker with the row gone is a deleted player ('deleted':
+// refused for good). No marker writes each `<player>:<id>` with HSETNX, so the
+// first solve time wins and a replay is a no-op.
+// KEYS: [1] ctf:solves:<target>, [2] ctf:deleted:<player>, [3] ctf:auth:user
+// ARGV: [1] player, [2] at, [3..] challenge ids
+export const RECORD_SOLVES_SCRIPT = `
+if redis.call('EXISTS', KEYS[2]) == 1 then
+  if redis.call('HEXISTS', KEYS[3], ARGV[1]) == 1 then return 'pending' end
+  return 'deleted'
+end
+for i = 3, #ARGV do
+  redis.call('HSETNX', KEYS[1], ARGV[1] .. ':' .. ARGV[i], ARGV[2])
+end
+return 'ok'
+`;
+const SOLVE_VERDICTS = new Set(["ok", "pending", "deleted"]);
 
 // Generic scheduled window: true when `now` is before start / after end.
 // Absent or unparseable bounds are ignored (no bound) — the registration
@@ -69,14 +95,22 @@ export function createMemoryStore({ teams = [] } = {}) {
   // No event settings to judge a score's time against until a test sets
   // some — the same answer the Redis store gives when it cannot read them.
   let policy = null;
+  // Test seams mirroring ctf:deleted:<player> and the ctf:auth:user rows.
+  const deleted = new Map();
+  const users = new Set();
   return {
+    deleted,
+    users,
     async recordSolves(target, player, ids, at) {
+      if (ids.length === 0) return "ok";
+      if (deleted.has(player)) return users.has(player) ? "pending" : "deleted";
       let hash = hashes.get(solvesKey(target));
       if (!hash) hashes.set(solvesKey(target), (hash = new Map()));
       for (const id of ids) {
         const field = solveField(player, id);
         if (!hash.has(field)) hash.set(field, at); // HSETNX: replays no-op
       }
+      return "ok";
     },
     async getSolves(target) {
       return Object.fromEntries(hashes.get(solvesKey(target)) ?? []);
@@ -121,9 +155,9 @@ export function redisErrorText(error) {
 
 /** The Redis-backed solve store: POST /pipeline with a JSON array of command
  *  arrays, bearer token; results come back positionally as { result } or
- *  { error }. Solve persistence uses HSETNX + HGETALL; the pause reads use
- *  HMGET and LRANGE, and the team read SCAN, HGET and SMEMBERS — all within the subset
- *  SRH's env mode supports. `fetchImpl`, `log` and `timeoutMs` are seams. */
+ *  { error }. Solve persistence uses EVAL (RECORD_SOLVES_SCRIPT) + HGETALL;
+ *  the pause reads use HMGET and LRANGE, and the team read SCAN, HGET and
+ *  SMEMBERS — all within the subset SRH's env mode supports. `fetchImpl`, `log` and `timeoutMs` are seams. */
 export function createRedisStore({
   url = process.env.UPSTASH_REDIS_REST_URL,
   token = process.env.UPSTASH_REDIS_REST_TOKEN,
@@ -150,10 +184,27 @@ export function createRedisStore({
     return results.map((r) => r.result);
   }
 
+  /** One EVAL through the pipeline, in the wire shape apps/web upstashEval
+   *  sends; throws like `pipeline` on any error. */
+  async function evalScript(script, keys, args) {
+    const [result] = await pipeline([["EVAL", script, keys.length, ...keys, ...args]]);
+    return result;
+  }
+
   return {
+    /** "ok" | "pending" | "deleted" — see RECORD_SOLVES_SCRIPT. A script error
+     *  or any other reply throws, so the caller answers 5xx and sync retries. */
     async recordSolves(target, player, ids, at) {
-      if (ids.length === 0) return;
-      await pipeline(ids.map((id) => ["HSETNX", solvesKey(target), solveField(player, id), at]));
+      if (ids.length === 0) return "ok";
+      const verdict = await evalScript(
+        RECORD_SOLVES_SCRIPT,
+        [solvesKey(target), deletedKey(player), AUTH_USER_ROWS_KEY],
+        [player, at, ...ids],
+      );
+      if (!SOLVE_VERDICTS.has(verdict)) {
+        throw new Error(`recordSolves: unexpected script reply ${JSON.stringify(verdict)}`);
+      }
+      return verdict;
     },
     async getSolves(target) {
       const [raw] = await pipeline([["HGETALL", solvesKey(target)]]);

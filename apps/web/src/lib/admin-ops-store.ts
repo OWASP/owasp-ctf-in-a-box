@@ -528,7 +528,7 @@ return 1`;
  *
  * Re-runnable: every step tolerates what an earlier, failed run already
  * removed, so a delete that threw part way completes on the next call. One
- * gap: a retry no longer sees the released login, so held scores a failed run
+ * gap: a retry cannot see the released login, so held scores a failed run
  * left behind stay until the next master reset; the login is blocked, so no
  * account can collect them. A cached session can keep working for up to the
  * cookie cache's lifetime.

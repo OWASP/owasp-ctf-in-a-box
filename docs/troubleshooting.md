@@ -148,7 +148,8 @@ Work down this list — each item is a different subsystem:
    before the launch or after the end **never counts**, not even after you
    unfreeze or set a start — the poller logs it as `refused (paused)` or
    `refused (outside-window)`. A score timed before the last master reset
-   never counts either, logged `refused (pre-reset)`. The contestant has to
+   never counts either, logged `refused (pre-reset)`. `refused
+   (player-deleted)` is a deleted contestant's PR: nothing to do. The contestant has to
    push again once scoring is live. One exception: a freeze set straight on
    the settings hash (`HSET … paused 1`, no recorded `pausedSince`) has an unknown start, so the
    scorer holds the scores it reads during it and judges them once the freeze

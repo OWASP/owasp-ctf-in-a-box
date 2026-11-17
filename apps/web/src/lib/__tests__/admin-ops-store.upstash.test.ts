@@ -355,8 +355,10 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     const gh = `vt7${tag}`.slice(0, 39);
     const id = await makePlayer(gh);
 
-    const mine = await markDeleting(id);
-    const theirs = await markDeleting(id);
+    const mine = crypto.randomUUID();
+    const theirs = crypto.randomUUID();
+    await markDeleting(id, mine);
+    await markDeleting(id, theirs);
     await expect(restoreAfterFailedDelete(id, mine)).resolves.toBe("in-flight");
     const [left] = await pipeline([["SMEMBERS", `ctf:deleted:${id}`]]);
     expect(left.result).toEqual([theirs]);
@@ -374,7 +376,8 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
 
     // B marks; A marks, fails before its row step and restores. B's token is
     // still there, so the scorer keeps answering pending.
-    const b = await markDeleting(id);
+    const b = crypto.randomUUID();
+    await markDeleting(id, b);
     const original = ctx.internalAdapter.deleteAccounts.bind(ctx.internalAdapter);
     const spy = vi.spyOn(ctx.internalAdapter, "deleteAccounts").mockRejectedValueOnce(new Error("auth store: down"));
     try {

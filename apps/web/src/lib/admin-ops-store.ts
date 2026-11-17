@@ -590,13 +590,15 @@ export async function deleteUser(
   // The deleted marker goes first, before any write: from here the scorer
   // answers this player's in-flight score "pending" (503, sync retries) while
   // the account row exists and "deleted" (422, final) once it is gone, so no
-  // score lands between the progress reset below and the row delete. A failed
-  // mark throws here with nothing written.
-  const token = await markDeleting(player);
+  // score lands between the progress reset below and the row delete. The token
+  // exists before the mark so a mark of unknown outcome (a timeout) is still
+  // lifted by the restore below; SREM of a non-member is harmless.
+  const token = crypto.randomUUID();
   // Set once the re-read confirms the row is gone: marker plus no row is the
   // finished state, so a later throw has nothing to restore.
   let rowGone = false;
   try {
+    await markDeleting(player, token);
     // The link goes, blocked, before any progress write: from here sync reads
     // the login as unlinked and holds its scores instead of scoring them into
     // the reset below, and a failure later leaves an account a retry deletes,

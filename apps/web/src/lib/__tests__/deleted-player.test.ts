@@ -31,19 +31,16 @@ describe("deleted-player keys", () => {
 });
 
 describe("markDeleting", () => {
-  it("adds a fresh token to the marker set and returns it", async () => {
+  it("adds the caller's token to the marker set", async () => {
     mocks.upstashEval.mockResolvedValue(1);
-    const a = await markDeleting(ID);
-    const b = await markDeleting(ID);
-    expect(a).toMatch(/^[0-9a-f-]{36}$/);
-    expect(b).not.toBe(a);
-    expect(mocks.upstashEval).toHaveBeenNthCalledWith(1, MARK_DELETING_SCRIPT, [`ctf:deleted:${ID}`], [a]);
+    await expect(markDeleting(ID, "tok-a")).resolves.toBeUndefined();
+    expect(mocks.upstashEval).toHaveBeenCalledWith(MARK_DELETING_SCRIPT, [`ctf:deleted:${ID}`], ["tok-a"]);
     expect(MARK_DELETING_SCRIPT).toContain("SADD");
   });
 
   it("throws on an unconfirmed mark", async () => {
     mocks.upstashEval.mockResolvedValue(null);
-    await expect(markDeleting(ID)).rejects.toThrow(/not set/);
+    await expect(markDeleting(ID, "tok")).rejects.toThrow(/not set/);
   });
 });
 

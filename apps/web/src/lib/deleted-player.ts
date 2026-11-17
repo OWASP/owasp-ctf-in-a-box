@@ -13,7 +13,8 @@ import { AUTH_PREFIX, rowsKey } from "@/lib/auth-store/keys";
  * delete's token stays for good.
  *
  * The key has no expiry and is not in RESET_PREFIXES: a master reset keeps
- * it, so a deleted player's PR stays refused across events. The scorer pins
+ * it, so the old player id stays refused (a login can link a new account after
+ * a master reset and score as that new id). The scorer pins
  * the same prefix and rows key on its side; a change here changes both.
  */
 export const DELETED_PREFIX = "ctf:deleted:";
@@ -43,13 +44,12 @@ return 'kept'`;
 
 export type RestoreOutcome = "restored" | "in-flight" | "kept";
 
-/** Adds this delete's token to `player`'s marker and returns it. Throws if
- *  the add is not confirmed, so the delete stops before any write. */
-export async function markDeleting(player: string): Promise<string> {
-  const token = crypto.randomUUID();
+/** Adds the caller's `token` to `player`'s marker. Throws if the add is not
+ *  confirmed, so the delete stops before any write. The caller owns the token
+ *  so a mark whose outcome is unknown can still be lifted with it. */
+export async function markDeleting(player: string, token: string): Promise<void> {
   const reply = await upstashEval(MARK_DELETING_SCRIPT, [deletedKey(player)], [token]);
   if (reply !== 1) throw new Error("delete user: the deleted marker was not set");
-  return token;
 }
 
 /** Lifts this delete's token when the account row survived the failure.

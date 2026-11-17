@@ -161,7 +161,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   linkDeps.getGithubLink.mockResolvedValue(null);
   linkDeps.releaseGithubLink.mockResolvedValue(null);
-  deletedDeps.markDeleting.mockResolvedValue("tok-1");
+  deletedDeps.markDeleting.mockResolvedValue(undefined);
   deletedDeps.restoreAfterFailedDelete.mockResolvedValue("restored");
   grantDeps.isAdminGrantee.mockResolvedValue(false);
   // The auth row exists until deleteUser removes it.
@@ -971,7 +971,7 @@ describe("deleteUser: the deleted marker (#775)", () => {
     mocks.upstashEval.mockResolvedValueOnce(1); // held clear
     await deleteUser(OCTO, ADMIN);
 
-    expect(deletedDeps.markDeleting).toHaveBeenCalledWith(OCTO);
+    expect(deletedDeps.markDeleting).toHaveBeenCalledWith(OCTO, expect.stringMatching(/^[0-9a-f-]{36}$/));
     const order = [
       grantDeps.isAdminGrantee.mock.invocationCallOrder[0],
       deletedDeps.markDeleting.mock.invocationCallOrder[0],
@@ -984,8 +984,9 @@ describe("deleteUser: the deleted marker (#775)", () => {
     expect(deletedDeps.restoreAfterFailedDelete).not.toHaveBeenCalled();
   });
 
-  it("a failed mark throws before any write", async () => {
+  it("a failed mark writes nothing and restores with the token it tried to add", async () => {
     deletedDeps.markDeleting.mockRejectedValueOnce(new Error("Upstash EVAL failed: READONLY"));
+    deletedDeps.restoreAfterFailedDelete.mockResolvedValueOnce("restored");
     mocks.upstashPipeline.mockResolvedValueOnce(
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
@@ -995,7 +996,8 @@ describe("deleteUser: the deleted marker (#775)", () => {
     expect(foldCache.beginScoreLowering).not.toHaveBeenCalled();
     expect(allCommands().some((c) => c[0] === "DEL" || c[0] === "SREM" || c[0] === "LPUSH")).toBe(false);
     expect(mocks.upstashEval).not.toHaveBeenCalled();
-    expect(deletedDeps.restoreAfterFailedDelete).not.toHaveBeenCalled();
+    expect(deletedDeps.restoreAfterFailedDelete).toHaveBeenCalledTimes(1);
+    expect(deletedDeps.restoreAfterFailedDelete).toHaveBeenCalledWith(OCTO, deletedDeps.markDeleting.mock.calls[0][1]);
   });
 
   it("a throw before the account row is gone restores with this delete's token and rethrows the original", async () => {
@@ -1003,7 +1005,7 @@ describe("deleteUser: the deleted marker (#775)", () => {
     authDeps.deleteAccounts.mockRejectedValueOnce(new Error("auth store: deleteMany account failed"));
     await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("auth store: deleteMany account failed");
     expect(deletedDeps.restoreAfterFailedDelete).toHaveBeenCalledTimes(1);
-    expect(deletedDeps.restoreAfterFailedDelete).toHaveBeenCalledWith(OCTO, "tok-1");
+    expect(deletedDeps.restoreAfterFailedDelete).toHaveBeenCalledWith(OCTO, deletedDeps.markDeleting.mock.calls[0][1]);
     expect(deletedDeps.restoreAfterFailedDelete.mock.invocationCallOrder[0]).toBeGreaterThan(
       authDeps.deleteAccounts.mock.invocationCallOrder[0],
     );
@@ -1016,14 +1018,14 @@ describe("deleteUser: the deleted marker (#775)", () => {
     );
     mockNoSecureDevKeys();
     await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("github link: release failed");
-    expect(deletedDeps.restoreAfterFailedDelete).toHaveBeenCalledWith(OCTO, "tok-1");
+    expect(deletedDeps.restoreAfterFailedDelete).toHaveBeenCalledWith(OCTO, deletedDeps.markDeleting.mock.calls[0][1]);
   });
 
   it("a user row that survives the delete restores", async () => {
     authDeps.deleteUser.mockResolvedValueOnce(undefined);
     queueThroughTail();
     await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/account row is still there/);
-    expect(deletedDeps.restoreAfterFailedDelete).toHaveBeenCalledWith(OCTO, "tok-1");
+    expect(deletedDeps.restoreAfterFailedDelete).toHaveBeenCalledWith(OCTO, deletedDeps.markDeleting.mock.calls[0][1]);
   });
 
   it("a failed restore is logged with the re-run instruction and the original error is rethrown", async () => {

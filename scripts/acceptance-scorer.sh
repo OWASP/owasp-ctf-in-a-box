@@ -401,7 +401,8 @@ score_deleted_body() { # $1 = player label, $2 = file for the body -> status cod
     -d "{\"player\":\"$(player_for "$1")\",\"target\":\"juice-shop\",\"solved\":[\"reflected-xss-search\"],\"at\":\"2022-06-01T00:00:00Z\"}"
 }
 expect_no_solve() { # $1 = player label, $2 = what
-  has=$(docker exec "$FREEZE_REDIS_CTR" redis-cli HEXISTS ctf:solves:juice-shop "$(player_for "$1"):reflected-xss-search")
+  has=$(docker exec "$FREEZE_REDIS_CTR" redis-cli HEXISTS ctf:solves:juice-shop "$(player_for "$1"):reflected-xss-search") \
+    || { echo "FAIL: $2: could not read the solve field for $1 (docker exec redis-cli HEXISTS failed)"; exit 1; }
   [ "$has" = "0" ] || { echo "FAIL: $2: the solve field for $1 was written (HEXISTS=$has)"; exit 1; }
 }
 DELETED_BODY="$TMP/deleted-body.json"
@@ -423,7 +424,8 @@ expect_no_solve doomed "a score for a deleted player"
 
 echo "--- deleted player: another player's score still records (202)"
 expect_code 202 "$(score_deleted_body survivor "$DELETED_BODY")" "a score for a player with no deletion marker"
-has=$(docker exec "$FREEZE_REDIS_CTR" redis-cli HEXISTS ctf:solves:juice-shop "$(player_for survivor):reflected-xss-search")
+has=$(docker exec "$FREEZE_REDIS_CTR" redis-cli HEXISTS ctf:solves:juice-shop "$(player_for survivor):reflected-xss-search") \
+  || { echo "FAIL: could not read the surviving player's solve field (docker exec redis-cli HEXISTS failed)"; exit 1; }
 [ "$has" = "1" ] || { echo "FAIL: the surviving player's solve field is missing (HEXISTS=$has)"; exit 1; }
 
 echo "ACCEPTANCE PASS"

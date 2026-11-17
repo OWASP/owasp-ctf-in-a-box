@@ -1223,8 +1223,9 @@ new account. The deleted username is free again.
 A Secure Development score for that player still in flight is refused, so it
 cannot restore their solves: the scorer answers it with a final `422`
 (`player-deleted`), and with a retryable `503` while the delete is running. A
-delete that fails leaves scoring as it was. If its cleanup itself failed, the
-player's scores wait until you run the delete again.
+delete that fails partway lifts its hold on the player's scores; run it again
+to finish it. If that cleanup itself failed, the scores stay held until the
+delete is run again.
 
 **Delete all accounts** (Event tab, danger zone). Type `delete all accounts`
 to confirm. It deletes every account, **including yours**, every admin grant

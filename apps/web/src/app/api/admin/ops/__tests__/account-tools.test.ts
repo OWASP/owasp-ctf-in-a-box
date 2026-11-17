@@ -147,6 +147,12 @@ describe("unlink-github", () => {
     expect(await res.json()).toEqual({ error: "Secure Development is off." });
     expect(unlinkGithub).not.toHaveBeenCalled();
   });
+  it("answers 503 and unlinks nothing when the module read throws", async () => {
+    getEnabledModuleIds.mockRejectedValueOnce(new Error("NOAUTH"));
+    const res = await POST(req("POST", { id: OCTO, action: "unlink-github" }));
+    expect(res.status).toBe(503);
+    expect(unlinkGithub).not.toHaveBeenCalled();
+  });
   it("maps the store's refusal copy to 400", async () => {
     unlinkGithub.mockRejectedValueOnce(new OpsValidationError("id", "This GitHub link has scored and cannot be removed."));
     const res = await POST(req("POST", { id: OCTO, action: "unlink-github" }));

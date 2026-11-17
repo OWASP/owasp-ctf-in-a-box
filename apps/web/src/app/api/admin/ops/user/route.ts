@@ -62,7 +62,9 @@ export async function GET(request: Request) {
   try {
     const detail = await lookupUser(id);
     // The login is a Secure Development fact; with the module off it is not
-    // shown and nothing on the card offers to act on it.
+    // shown and nothing on the card offers to act on it. The module read fails
+    // open to the deployment default, which only decides whether the card
+    // shows a login the admin may already see.
     const sdOn = (await getEnabledModuleIds()).has("secure-development");
     return NextResponse.json(sdOn ? detail : { ...detail, github: null });
   } catch (err) {
@@ -107,6 +109,10 @@ export async function POST(request: Request) {
   }
   if (body.action === "unlink-github") {
     try {
+      // The module read fails open to the deployment's default set (see
+      // getEnabledModuleIds): this gate only refuses an action with the
+      // module off, and the store's scored-link and sign-in refusals, which
+      // decide whether an unlink is safe, fail closed on their own reads.
       if (!(await getEnabledModuleIds()).has("secure-development")) {
         return NextResponse.json({ error: "Secure Development is off." }, { status: 400 });
       }

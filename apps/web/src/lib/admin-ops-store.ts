@@ -526,6 +526,13 @@ export const ORPHAN_GRANT_REMOVED = "An admin grant left by an earlier failed de
 // KEYS: [1]=ctf:sd:held:by:<login> [2]=ctf:sd:held:authors  ARGV: [1]=login.
 // The hash first: a DEL that errors stops the script, so the author stays
 // indexed and sync can still find the entries.
+/** Set by `deleteUser` before it deletes the account and removed with the
+ *  player's record, the delete's last write: a re-run finds the player by it
+ *  once the account and every visible trace of their progress are gone. Under
+ *  `ctf:admin:`, so a master reset keeps it; delete all accounts sweeps it. */
+export const DELETING_PREFIX = "ctf:admin:deleting:";
+const deletingKey = (player: string) => `${DELETING_PREFIX}${player}`;
+
 export const CLEAR_HELD_SCRIPT = `redis.call('DEL', KEYS[1])
 redis.call('SREM', KEYS[2], ARGV[1])
 return 1`;
@@ -559,7 +566,10 @@ return 1`;
  * progress and the record: a failed delete loses no progress or held score
  * while the account row stands. Re-runnable: every step tolerates what an
  * earlier, failed run already removed, so a delete that threw part way
- * completes on the next call; a re-run that finds the account row clears
+ * completes on the next call. A marker (`ctf:admin:deleting:<id>`) set
+ * before the account delete and removed with the record lets a re-run find a
+ * player whose account and counted progress are already gone. A re-run that
+ * finds the account row clears
  * the held scores of the login the row carries once that login is blocked
  * and linked to nobody. One gap: a re-run after the account row is gone
  * cannot see the released login, so held scores left by a run that failed at
@@ -578,6 +588,10 @@ export async function deleteUser(
   const granted = await isAdminGrantee(player);
   const row = (await internalAdapter.findUserById(player)) as { login?: unknown } | null;
   const hasAccount = Boolean(row);
+  // A delete that failed after the account went can leave state the lookup
+  // does not count (an aggregate field): its marker is what finds it.
+  const [marker] = assertPipelineOk(await upstashPipeline([["EXISTS", deletingKey(player)]]), "delete user marker");
+  const unfinished = Number(marker.result) === 1;
   // A grant on an id whose account row is gone is what a delete that failed
   // at its grant removal leaves, and nobody can sign in as it: the retry goes
   // on to remove it. A grant with the row in place is a live organizer.
@@ -591,7 +605,7 @@ export async function deleteUser(
       `${detail.name} is captain of "${detail.team.name}". Transfer the captaincy or disband the team first.`,
     );
   }
-  if (!detail.known && !hasAccount && !orphanGrant) {
+  if (!detail.known && !hasAccount && !orphanGrant && !unfinished) {
     throw new OpsValidationError("id", "No such player.");
   }
 
@@ -631,6 +645,7 @@ export async function deleteUser(
       // fails here leaves all of them as they were, with the row in place
       // (the catch below lifts this call's token) or gone (the scorer answers
       // "deleted"), and a re-run completes it.
+      assertPipelineOk(await upstashPipeline([["SET", deletingKey(player), "1"]]), "delete user marker");
       await internalAdapter.deleteUserSessions(player);
       await internalAdapter.deleteAccounts(player);
       await internalAdapter.deleteUser(player);
@@ -667,8 +682,9 @@ export async function deleteUser(
       if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), player]);
       cmds.push(["DEL", userKey(player)]);
       for (const key of rateLimitKeysFor(player)) cmds.push(["DEL", key]);
+      cmds.push(["DEL", deletingKey(player)]);
       // Checked: a refused DEL reported as a delete leaves the player on the
-      // team with their record in place.
+      // team with their record in place, and the marker for a re-run.
       assertPipelineOk(await upstashPipeline(cmds), "delete user");
 
       const warnings = [...reset.warnings];
@@ -725,6 +741,7 @@ const ACCOUNT_PREFIXES: readonly [string, string][] = [
   ["auth", `${AUTH_PREFIX}:*`],
   ["adminCodes", `${ADMIN_CODE_PREFIX}*`],
   ["resetCodes", `${RESET_CODE_PREFIX}*`],
+  ["deleting", `${DELETING_PREFIX}*`],
 ];
 
 /**

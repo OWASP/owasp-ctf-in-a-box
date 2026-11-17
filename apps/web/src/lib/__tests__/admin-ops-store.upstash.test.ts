@@ -338,6 +338,24 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     expect(blocked.result).toBe(1);
   });
 
+  it("a re-run finds a delete that failed after the account went by its marker, and finishes it", async () => {
+    const { ctx, pipeline, ops } = await load();
+    const gh = `vm1${tag}`.slice(0, 39);
+    const id = await makePlayer(gh);
+    // What a run that failed part way through the reset leaves: no account,
+    // nothing the lookup counts, an aggregate field, and the marker.
+    await ctx.internalAdapter.deleteUserSessions(id);
+    await ctx.internalAdapter.deleteAccounts(id);
+    await ctx.internalAdapter.deleteUser(id);
+    await pipeline([["HSET", "ctf:quiz:points", id, 10], ["SET", `ctf:admin:deleting:${id}`, "1"]]);
+    const actor = { id: crypto.randomUUID(), name: "organizer" };
+    await expect(ops.deleteUser(id, actor)).resolves.toMatchObject({ leftTeam: null });
+    const [points, marker] = await pipeline([["HEXISTS", "ctf:quiz:points", id], ["EXISTS", `ctf:admin:deleting:${id}`]]);
+    expect([points.result, marker.result]).toEqual([0, 0]);
+    // Finished: the same id again is No such player.
+    await expect(ops.deleteUser(id, actor)).rejects.toThrow("No such player.");
+  });
+
   it("a finished delete leaves its score-hold token and no account row, so the scorer answers deleted", async () => {
     const { pipeline, ops } = await load();
     const gh = `vd5${tag}`.slice(0, 39);

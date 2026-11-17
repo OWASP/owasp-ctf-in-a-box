@@ -425,9 +425,12 @@ reviews:
         /api/sponsors/logo/[id], GET /api/attachments/[id], GET
         /api/event/logo and GET /api/event/icon are the ONLY
         sanctioned unauthenticated GET routes, and POST /api/stats/visit (the
-        no-PII per-country reach counter, always 204) the ONLY sanctioned
-        unauthenticated POST — the same seven docs/reviewing.md invariant 11
-        names (the pre-event password
+        no-PII per-country reach counter, always 204) and POST
+        /api/reset-password (a signed-out player redeems an organizer's
+        reset code: single-use 128-bit code consumed in Lua before any write,
+        one uniform invalid answer, fail-closed per-address rate limit,
+        origin check, no-store) the ONLY sanctioned unauthenticated POSTs —
+        the same eight docs/reviewing.md invariant 11 names (the pre-event password
         check, POST /api/gate, was removed in #464; do not restore it). The
         GETs must stay read-only, policy or public-by-design content out and
         never facts in, with
@@ -449,7 +452,7 @@ reviews:
         hero logo and favicon, public before launch on purpose, one fixed
         slot per route and only bytes sniffed at upload (never SVG).
         Flag any OTHER new unauthenticated route, any secret appearing in any
-        of the seven payloads, and anything letting a fork report facts to
+        of the eight payloads, and anything letting a fork report facts to
         the box rather than only read policy from it.
 
         Origin assertion bypass — a mutating route opting out of the

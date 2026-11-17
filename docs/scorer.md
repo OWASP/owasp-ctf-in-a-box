@@ -34,7 +34,8 @@ One image (`scorer/Dockerfile`), two modes:
   hand-set on the settings hash, with no recorded start, holds it with a
   retryable `503` instead). It also refuses a deleted player's score: a final
   `422` with `refused: "player-deleted"` once the delete has finished, and a
-  retryable `503` (`player delete in progress`) while it is still running
+  retryable `503` (`player scores on hold`) while a delete or a GitHub unlink
+  of that player is still running
   ([ADR 67](decisions.md#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)). Backed by Redis via the Upstash-REST
   proxy when `UPSTASH_REDIS_REST_URL` is set, an in-memory store otherwise.
 

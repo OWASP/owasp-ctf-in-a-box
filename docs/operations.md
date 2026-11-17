@@ -1207,12 +1207,16 @@ with GitHub, first set a username for them in Support (type it in the
 **Username** box and press **Save**), then give them a reset code so they can
 set a password. The refusal names whichever of the two steps is missing.
 
-The scored check runs after the link is released: from that moment sync
-holds the login's new scores instead of scoring them, and if a solve is
-found the link is put back exactly as it was and the unlink is refused. A
-score that sync had already attributed before the release and that the
-scorer writes after the check can still land on an unlinked player; it shows
-on their card as a Secure Development solve.
+The unlink runs under a hold on the player's scores (`ctf:score-hold:<player
+id>`), the same one a delete uses: while it is on, the scorer answers every
+Secure Development score for the player with a retryable `503` and writes
+nothing. The link is released and the scored check runs inside that hold, so
+a score sync attributed just before the release either landed before the
+hold (the check finds it and the unlink is refused) or is retried once the
+hold lifts. On the retry sync looks the login up again: after an unlink it is
+unlinked and the score is held; after a refused unlink the link is back
+exactly as it was and the score lands. A player deleted while the unlink runs
+gets no link back, and the login is blocked as the delete would have done.
 
 **Delete contestant.** Removes the account, its sessions, progress, team
 membership and held scores. A team captain is refused, and so is an
@@ -1221,11 +1225,12 @@ added to a blocklist (`ctf:relink:blocked`) and cannot link to any account
 until the next master reset, so a deleted player's PRs cannot be claimed by a
 new account. The deleted username is free again.
 A Secure Development score for that player still in flight is refused, so it
-cannot restore their solves: the scorer answers it with a final `422`
-(`player-deleted`), and with a retryable `503` while the delete is running. A
-delete that fails partway lifts its hold on the player's scores; run it again
-to finish it. If that cleanup itself failed, the scores stay held until the
-delete is run again.
+cannot restore their solves: the delete puts the player's scores on hold
+(`ctf:score-hold:<player id>`) before it clears anything, and the scorer
+answers a held score with a retryable `503` while the account exists and a
+final `422` (`player-deleted`) once it is gone. A delete that fails partway
+lifts its hold on the player's scores; run it again to finish it. If that
+cleanup itself failed, the scores stay held until the delete is run again.
 
 **Delete all accounts** (Event tab, danger zone). Type `delete all accounts`
 to confirm. It deletes every account, **including yours**, every admin grant

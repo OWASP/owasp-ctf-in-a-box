@@ -183,6 +183,13 @@ Work down this list — each item is a different subsystem:
    builds is this `held` count. The poller never logs the login. Sync also
    refuses to start without Redis
    (`ctf-sync: Secure Development needs Redis to attribute PRs to players`).
+   A tick that keeps logging `scorer 503` for one player's PRs, with the
+   event launched and not frozen, can mean a delete or a GitHub unlink of that player left its
+   token on `ctf:score-hold:<player id>` (the scorer's reply body is
+   `player scores on hold`, and the app log names the failed lift). For a delete, run it again. With no delete or unlink of the
+   player still running, `DEL ctf:score-hold:<player id>` releases their
+   scores, but only while the player's account still exists; a deleted
+   player's hold is what refuses their PRs.
 4. **Is the score comment authored by `github-actions[bot]`?** Only that
    author is trusted — a comment posted any other way (including by you) is
    dropped by design.

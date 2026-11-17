@@ -938,7 +938,7 @@ describe("deleteAllAccounts", () => {
     expect(allCommands()).toContainEqual(["DEL", "ctf:admin:grants", "ctf:admin:grant-gen"]);
     // The spent bootstrap code stays spent.
     expect(allCommands().some((c) => c.includes("ctf:admin:claim:spent"))).toBe(false);
-    expect(storeDeps.scanDelByPrefix.mock.calls.some((c) => "ctf:admin:claim:spent".startsWith(String(c[0]).replace("*", "")))).toBe(false);
+    expect(storeDeps.scanDelByPrefix.mock.calls.some((c) => "ctf:admin:claim:spent".startsWith(String(c[0]).replaceAll("*", "")))).toBe(false);
     expect(cleared).toEqual({
       solves: 3,
       users: 2,

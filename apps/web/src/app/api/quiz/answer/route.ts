@@ -113,7 +113,7 @@ export async function POST(request: Request) {
     // First blood (#590): non-blocking, fresh solves only — same contract
     // as classic/submit's hook.
     if (!result.already) {
-      void notifyFirstBlood({ module: "quiz", challengeId: questionId, login: player.githubLogin ?? player.name });
+      void notifyFirstBlood({ module: "quiz", challengeId: questionId, playerId });
     }
     // `already` (this login had banked this question before — see
     // AnswerResult) rides along so the client can say so, instead of

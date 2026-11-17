@@ -30,7 +30,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/error-label", () => ({ errorLabel: () => "label" }));
 vi.mock("@/lib/announce/store", () => ({
   getAnnounceConfig: async () => structuredClone(mocks.state.config),
-  readLedgerField: async () => JSON.stringify({ login: "alice", at: "2026-10-14T12:00:00Z" }),
+  readLedgerField: async () => JSON.stringify({ playerId: "alice", at: "2026-10-14T12:00:00Z" }),
   newOutboxId: (kind: string) => `id-${kind}`,
   // The atomic claim+enqueue contract: write only while the captured
   // counters still match the live config and the switch is on.
@@ -87,7 +87,7 @@ describe("first-blood enqueue race", () => {
         }),
     );
 
-    const notify = notifyFirstBlood({ module: "classic", challengeId: "web-1", login: "alice" });
+    const notify = notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
     await vi.waitFor(() => expect(mocks.listTeams).toHaveBeenCalledTimes(1));
 
     // Disable and re-enable while the producer is suspended in listTeams().

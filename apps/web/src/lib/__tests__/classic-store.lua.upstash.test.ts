@@ -28,6 +28,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     solvecount: liveKey("classic", "solvecount"),
     solved: liveKey("classic", "solved"),
     lastAt: liveKey("classic", "lastAt"),
+    first: liveKey("classic", "first"),
   };
   // Per test, so no total asserted here can be inflated by an earlier test.
   let LOGIN = "";
@@ -82,7 +83,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     await load();
     return upstashEval(
       script,
-      [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt, ...lockKeys],
+      [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt, ...lockKeys, K.first],
       [
         id,
         keys.normalizeFlag(flag),
@@ -94,6 +95,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
         dry ? "1" : "0",
         prereq, // ARGV[9] — #463 story prerequisite ("" = none)
         team, // ARGV[10] — #602 the viewer's team slug ("" = team of one)
+        `classic:${id}`, // last ARGV — first-solver ledger field
       ],
     );
   }
@@ -119,6 +121,21 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0));
     expect(await submit(second, "flag{two}", { nowMs: T0 + 4_000, cooldownMs: 0 })).toEqual(["correct", "10"]);
     expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0 + 4_000));
+  });
+
+  it("records the first solver atomically, and only the first correct solve writes it", async () => {
+    const id = freshId("first");
+    const other = freshId("bob");
+    await seed(id, "flag{one}", 20);
+    expect(await hget(K.first, `classic:${id}`)).toBeNull();
+    expect(await submit(id, "flag{nope}", { cooldownMs: 0 })).toEqual(["incorrect", "1"]);
+    expect(await submit(id, "flag{one}", { cooldownMs: 0, dry: true })).toEqual(["correct", "20", "dry"]);
+    expect(await hget(K.first, `classic:${id}`)).toBeNull();
+    expect(await submit(id, "flag{one}", { cooldownMs: 0 })).toEqual(["correct", "20"]);
+    expect(JSON.parse(String(await hget(K.first, `classic:${id}`)))).toEqual({ login: LOGIN, at: iso(T0) });
+    expect(await submit(id, "flag{one}", { nowMs: T0 + 1_000, cooldownMs: 0 })).toEqual(["already"]);
+    expect(await submit(id, "flag{one}", { nowMs: T0 + 2_000, cooldownMs: 0, login: other })).toEqual(["correct", "20"]);
+    expect(JSON.parse(String(await hget(K.first, `classic:${id}`)))).toEqual({ login: LOGIN, at: iso(T0) });
   });
 
   it("returns missing for an unknown challenge and writes no attempts row", async () => {

@@ -139,11 +139,11 @@ describe("switch epochs", () => {
     expect(before.firstBlood).toBe(true);
     expect(before.kindEpochs["first-blood"]).toBe(0);
 
-    await updateAnnounceConfig("admin", { firstBlood: false });
+    await updateAnnounceConfig({ id: "admin-id", name: "admin" }, { firstBlood: false });
     expect(state.config.get("firstBlood")).toBe("0");
     expect(state.config.get("epoch:first-blood")).toBe("1");
 
-    await updateAnnounceConfig("admin", { firstBlood: true });
+    await updateAnnounceConfig({ id: "admin-id", name: "admin" }, { firstBlood: true });
     const after = await getAnnounceConfig();
     expect(after.firstBlood).toBe(true);
     expect(after.kindEpochs["first-blood"]).toBe(1);

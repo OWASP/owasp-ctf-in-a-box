@@ -7,21 +7,23 @@
 // — this function never throws, so an unawaited rejection cannot fail a
 // solve that already banked its points.
 //
-// The dedup discipline here is claim-then-post, on purpose:
-//   configured+switch off → no claim, nothing (enabling later does not
+// The dedup discipline is record-then-notify, on purpose:
+//   configured+switch off → no read, nothing (enabling later does not
 //     replay history; only solves from then on can be first bloods);
-//   configured+switch on  → HSETNX the claim FIRST, then enqueue. Exactly
-//     one caller across replicas, retries and the ticker can win the claim,
-//     so a teammate double-submitting or two replicas grading concurrently
-//     cannot produce two posts.
+//   configured+switch on  → read the first-solver record the award script
+//     wrote atomically with the solve, and proceed only when it names this
+//     caller. The announcement claim is then checked and written in the
+//     SAME Lua script that enqueues the post, so a teammate double-
+//     submitting or two replicas grading concurrently cannot produce two
+//     posts.
 //
-// The claim comes before every content decision: once a first blood is
-// claimable, the claim is spent whether or not this caller ends up posting,
-// so a failing lookup can never hand the "first" to a later solver.
+// The record, not a notification race, decides who may post: a later
+// solver's notification can never steal the first-blood post, and a hidden
+// challenge returns before any claim is spent.
 //
 // Title and points are looked up HERE from the module's public list (never
 // from the admin surface, never from the request body), so the solve routes
-// need pass nothing but the ids — and a quiz/ai challenge deleted in the
+// need pass nothing but the ids — and a quiz challenge deleted in the
 // seconds between solve and lookup still announces under its id rather than
 // being silently dropped. A CLASSIC challenge that is not on the VISIBLE
 // board at lookup time (hidden, not yet released, or deleted after the
@@ -36,16 +38,15 @@ import "server-only";
 import { errorLabel } from "@/lib/error-label";
 // Resolved from listTeams + a case-insensitive membership join, NOT
 // getViewerTeam: getViewerTeam reads the mock-team COOKIE in demo mode,
-// which would make the ai solve routes (structurally cookie-blind, see
-// api/ai/__tests__/contract.test.ts) cookie-dependent the moment this hook
+// which would make the solve routes cookie-dependent the moment this hook
 // ran. The team store's own membership list is also the right source — the
 // announcement describes the solving TEAM, server-side, not a browser's
 // current view of it.
+import { getPlayerProfiles } from "@/lib/player";
 import { listTeams } from "@/lib/team-store";
 import { listStories, readChallengeRecords } from "@/lib/classic-store";
 import { visibleNow } from "@/lib/classic-release";
 import { listQuestions } from "@/lib/quiz-store";
-import { listAiChallenges } from "@/lib/ai-store";
 import { isLocked, storyPositions } from "@/lib/story-lock";
 import { buildFirstBloodMessage } from "./messages";
 import { enqueueLedgerAnnouncement } from "./sender";
@@ -54,27 +55,23 @@ import { ANNOUNCE_FIRST_ANNOUNCED_KEY, ANNOUNCE_FIRST_KEY } from "./keys";
 import { challengeField } from "./detect";
 
 export type FirstBloodInput = {
-  module: "classic" | "quiz" | "ai";
+  module: "classic" | "quiz";
   challengeId: string;
-  /** The solving login — the session's, never the body's. Displayed as the
-   *  TEAM name when the solver has one, else the bare login. */
-  login: string;
+  /** The solving player's id — the session's, never the body's. Displayed as
+   *  the TEAM name when the solver has one, else the player's display name. */
+  playerId: string;
 };
 
-/** Public prompt + points for one quiz/ai item, from the module's PUBLIC
+/** Public prompt + points for one quiz item, from the module's PUBLIC
  *  list (the same one the board reads — no flags, no answers ride along).
  *  Null when the challenge no longer exists or is no longer public: a hidden
  *  challenge's TITLE must never ride an announcement (the caller then falls
  *  back to the bare id, which leaks nothing). Classic goes through the
  *  secrecy gate below instead, because a story step must be judged before
  *  even its id is safe to name. */
-async function lookupItem(module: "quiz" | "ai", id: string): Promise<{ title: string; points: number } | null> {
-  if (module === "quiz") {
-    const q = (await listQuestions()).find((x) => x.id === id);
-    return q ? { title: q.prompt, points: q.points } : null;
-  }
-  const c = (await listAiChallenges()).find((x) => x.id === id);
-  return c ? { title: c.title, points: c.points } : null;
+async function lookupItem(id: string): Promise<{ title: string; points: number } | null> {
+  const q = (await listQuestions()).find((x) => x.id === id);
+  return q ? { title: q.prompt, points: q.points } : null;
 }
 
 /** Resolves an absolute HTTP(S) URL for a challenge/board link from
@@ -82,7 +79,7 @@ async function lookupItem(module: "quiz" | "ai", id: string): Promise<{ title: s
  *  not an absolute URL, or uses a non-HTTP(S) protocol so an invalid
  *  URL is never sent in an announcement embed. */
 export function challengeEmbedUrl(
-  module: "classic" | "quiz" | "ai",
+  module: "classic" | "quiz",
   challengeId: string,
   authUrl?: string | null,
 ): string | undefined {
@@ -92,7 +89,7 @@ export function challengeEmbedUrl(
     const parsed = new URL(target);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
     const origin = parsed.origin;
-    const path = module === "quiz" ? "/quiz" : `/${module === "classic" ? "flags" : "ai"}/${challengeId}`;
+    const path = module === "quiz" ? "/quiz" : `/flags/${challengeId}`;
     return `${origin}${path}`;
   } catch {
     return undefined;
@@ -100,7 +97,7 @@ export function challengeEmbedUrl(
 }
 
 /** Announces first blood for one fresh solve, if the announcer is armed for
- *  it. Never throws; never logs the login or any challenge content beyond
+ *  it. Never throws; never logs the player id or any challenge content beyond
  *  the public title the message itself carries. */
 export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
   try {
@@ -113,21 +110,18 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
     if (!config.webhookConfigured || !config.firstBlood) return;
 
     // The award script names the true first solver atomically with the
-    // solve. Only that login may announce, so a later solver's notification
+    // solve. Only that player may announce, so a later solver's notification
     // can never race ahead and steal the first-blood post.
     const field = challengeField(input.module, input.challengeId);
     const recorded = await readLedgerField(ANNOUNCE_FIRST_KEY, field);
     if (!recorded) return;
-    let firstSolver: { login?: unknown } | null = null;
+    let firstSolver: { playerId?: unknown } | null = null;
     try {
-      firstSolver = JSON.parse(recorded) as { login?: unknown } | null;
+      firstSolver = JSON.parse(recorded) as { playerId?: unknown } | null;
     } catch {
       return;
     }
-    if (
-      typeof firstSolver?.login !== "string" ||
-      firstSolver.login.toLowerCase() !== input.login.toLowerCase()
-    ) {
+    if (typeof firstSolver?.playerId !== "string" || firstSolver.playerId !== input.playerId) {
       return;
     }
 
@@ -162,25 +156,24 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
       // That leaks nothing: these lists are the public boards (never admin
       // data or a flag), so a title/points can only come from an item that
       // is actually public, and the fallback is only the id the submit
-      // route already knows. The claim above is already spent, so not
-      // posting would silently consume the first blood instead. (Classic
-      // never lands here: an invisible record returned above.)
-      item = await lookupItem(input.module, input.challengeId).catch(() => null);
+      // route already knows. The record already names this solver, so not
+      // posting would silently drop that first blood; no claim has been
+      // spent yet. (Classic never lands here: an invisible record returned
+      // above.)
+      item = await lookupItem(input.challengeId).catch(() => null);
     }
 
-    // Case-insensitive join, like every other login join in this codebase:
-    // the scorer records the PR author's spelling, the team store the
-    // session's, and GitHub logins are unique only case-insensitively.
-    const lower = input.login.toLowerCase();
+    // Team membership and display names are keyed by player id, never login.
     const teams = await listTeams().catch(() => []);
-    const team = teams.find((t) => t.members.some((m) => m.toLowerCase() === lower));
-    const who = team?.name || input.login;
+    const team = teams.find((t) => t.members.includes(input.playerId));
+    const profiles = await getPlayerProfiles([input.playerId]).catch(() => new Map());
+    const who = team?.name || profiles.get(input.playerId)?.name || input.playerId;
     const url = challengeEmbedUrl(input.module, input.challengeId);
 
     await enqueueLedgerAnnouncement(
       "first-blood",
       buildFirstBloodMessage({
-        // A quiz/ai challenge deleted between solve and lookup still
+        // A quiz challenge deleted between solve and lookup still
         // announces — under its id, with zero points — rather than vanishing.
         challengeTitle: item?.title ?? input.challengeId,
         points: item?.points ?? 0,

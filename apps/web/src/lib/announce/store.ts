@@ -28,6 +28,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { upstashPipeline, upstashEval } from "@/lib/upstash";
 import { adminErrorLabel, getAdminSettings, writeAdminAudit } from "@/lib/admin-store";
+import type { AuditActor } from "@/lib/admin-audit-keys";
 import {
   ANNOUNCEMENT_KINDS,
   DISCORD_DEFAULTS,
@@ -208,7 +209,7 @@ return 1
  *  is FIXED — it names the field position and the rule, never the submitted
  *  value or key, so a secret-like marker in a request cannot be echoed back
  *  through an admin-visible error. */
-export async function updateAnnounceConfig(actor: string, patch: DiscordConfigPatch): Promise<DiscordPublicConfig> {
+export async function updateAnnounceConfig(actor: AuditActor, patch: DiscordConfigPatch): Promise<DiscordPublicConfig> {
   const boolKeys = ["firstBlood", "launch", "pause", "milestones"] as const;
   const known = new Set<string>([...boolKeys, "marks"]);
   for (const key of Object.keys(patch)) {
@@ -297,7 +298,7 @@ return generation
 
 /** Stores or clears the webhook URL. `null` clears. The audit trail records
  *  ONLY "set"/"cleared" — never the URL, which is a live credential. */
-export async function setAnnounceWebhook(actor: string, raw: unknown): Promise<{ webhookConfigured: boolean }> {
+export async function setAnnounceWebhook(actor: AuditActor, raw: unknown): Promise<{ webhookConfigured: boolean }> {
   if (raw === null) {
     // Clearing the URL must cancel everything already retained, for the same
     // reason a switch-off does: a later set would deliver it to the new URL.
@@ -548,8 +549,9 @@ export async function ledgerFields(ledgerKey: string): Promise<Set<string>> {
 /** The compare-and-swap result: `code` 2 = first observation (the state was
  *  seeded silently, nothing to announce), 1 = the observed transition is
  *  ours to announce, 0 = someone else got there first (or the state has
- *  already moved on since our read). `prev` is the pack we swapped FROM, so
- *  the caller can describe the edge. */
+ *  already moved on since our read), 3 = a webhook save appeared during the
+ *  reconcile (reconciliation only) and the live ticker owns the observation.
+ *  `prev` is the pack we swapped FROM, so the caller can describe the edge. */
 export type StateCasResult = { code: 0 | 1 | 2 | 3; seq: number; prev: string };
 
 /** The CAS script itself, exported for the live-Redis suite, which runs it

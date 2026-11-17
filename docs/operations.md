@@ -1050,9 +1050,8 @@ The four switches cover five announcement kinds:
   step still locked behind its story gate is withheld entirely. Turning the
   switch on after solves have happened does not replay them.
 - **Event launch** — posts "The event is live!" once when scoring opens (the
-  scheduled scoring start is reached). A box that has not observed the
-  pre-launch state seeds silently, so enabling announcements after the event
-  has already launched does not send a retroactive launch.
+  scheduled scoring start is reached). Enabling after launch is silent until
+  the next real edge.
 - **Scoring paused / resumed** — both edges of one freeze switch. A live,
   unclosed event that enters a held pause posts "Scoring is paused"; lifting
   that pause posts "Scoring resumed" once. A pause that begins while scoring

@@ -390,7 +390,7 @@ describe("the first-blood hook (#590)", () => {
     storeReturns({ ok: true, correct: true, points: 50 });
     await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(announceNotify.notifyFirstBlood).toHaveBeenCalledTimes(1);
-    expect(announceNotify.notifyFirstBlood).toHaveBeenCalledWith({ module: "classic", challengeId: "c-1", login: "alice" });
+    expect(announceNotify.notifyFirstBlood).toHaveBeenCalledWith({ module: "classic", challengeId: "c-1", playerId: ALICE_ID });
   });
 
   it("does NOT announce an idempotent re-submission (it banked nothing)", async () => {
@@ -402,7 +402,7 @@ describe("the first-blood hook (#590)", () => {
 
   it("does NOT announce a dry run (an admin preview is not a solve)", async () => {
     session("boss");
-    adminAuth.isAdminLogin.mockResolvedValue(true);
+    adminAuth.isAdminPlayer.mockResolvedValue(true);
     adminView.adminSeesHidden.mockResolvedValueOnce(true);
     storeReturns({ ok: true, correct: true, points: 50, dryRun: true });
     await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));

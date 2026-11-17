@@ -96,7 +96,7 @@ describe("resetEvent", () => {
       if (String(cmd[0]) === "INCR") return [{ error: "NOAUTH" }];
       return [{ result: [] }];
     });
-    await expect(resetEvent("alice")).rejects.toThrow(/reset webhook generation/);
+    await expect(resetEvent(actor("alice"))).rejects.toThrow(/reset webhook generation/);
     const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
     expect(commands.some((cmd) => cmd[0] === "SCAN" || cmd[0] === "DEL")).toBe(false);
     for (const [, pattern] of RESET_PREFIXES) {
@@ -266,7 +266,7 @@ describe("resetEvent", () => {
   // reset would silently disconnect an event the organizer already wired up.
   it("KEEPS the Discord webhook configuration across a reset, while wiping announcement state", async () => {
     mocks.upstashPipeline.mockImplementation(pipelineImpl(() => [["k1"]]));
-    await resetEvent("alice");
+    await resetEvent(actor("alice"));
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
       .map((c) => c[0][0][3]);

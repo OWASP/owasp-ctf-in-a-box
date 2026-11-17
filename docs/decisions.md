@@ -4538,17 +4538,20 @@ work an event without the feature must never pay for.
   scoring start (ADR 59) or a manual freeze never announces "time
   remaining".
 
-- **Dedup is claim-first, and the claims are atomic.** First blood is
+- **Dedup is record-first, and the claims are atomic.** First blood is
   trigger-driven (the submit routes call a non-blocking `notifyFirstBlood`
-  after a fresh solve) but still claim-first: `HSETNX` on
-  `ctf:announce:first-announced` decides the single winner of the post
-  across replicas, retries and races, and a box with the feature off never
-  claims — so enabling later cannot replay history. `ctf:announce:first` is
-  a separate record of the true first solver, written by the awarding Lua
-  script whether or not the feature is on; the notifier reads it and only
-  that player's notification may claim the post. Lifecycle edges advance through one tiny Lua
-  compare-and-swap (read pack, swap-if-expected, bump a seq id): exactly one
-  replica announces each edge, the loser's stale read simply does not match.
+  after a fresh solve): the awarding Lua script writes the true first solver
+  to `ctf:announce:first` atomically with the solve, and only that player's
+  notification proceeds. The announcement claim on
+  `ctf:announce:first-announced` is checked and written in the same Lua
+  script that enqueues the post, so replicas, retries and races produce one
+  post, and a box with the feature off never claims — enabling later cannot
+  replay history. Lifecycle edges advance through one tiny Lua
+  compare-and-swap (read pack and its revision, swap-if-expected, bump a seq
+  id and the revision): the revision matters because a pause/resume cycle
+  restores the same pack string, so the pack alone cannot fence a delayed
+  observer; exactly one replica announces each edge, and the loser's stale
+  read simply does not match.
   That pass runs only while launch or pause is switched on; with both off
   the stored observation freezes, so an opted-out box does no state work,
   and the first observation a box ever makes (fresh boot, post-reset) seeds
@@ -4559,7 +4562,7 @@ work an event without the feature must never pay for.
   time marks are `HSETNX` claims on `<closeInstant>:<markMs>` (keyed by the
   scoring-close instant, so moving Scoring closes re-arms the marks for the
   new window); on the tick that first sees marks crossed, ALL of them are
-  claimed in one pipeline and at most ONE post — the current time left —
+  claimed in one Lua script and at most ONE post — the current time left —
   goes out, so a restart, a duplicate tick or a mid-event enable can never
   burst a backlog of "1h left" / "15m left" checks.
 

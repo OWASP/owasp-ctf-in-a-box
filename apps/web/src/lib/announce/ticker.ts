@@ -33,7 +33,7 @@
 //      the event is LAUNCHED and NOT paused/closed — the same
 //      launched / not-paused / inside-window state detect.ts derives, so a
 //      pre-launch close time or a manual freeze never posts "time
-//      remaining"): claim every crossed mark in one pipeline, post at most
+//      remaining"): claim every crossed mark in one Lua script, post at most
 //      one time check — a restart, a duplicate tick or a mid-event enable
 //      never bursts.
 //   5. outbox prune + retry sweep
@@ -337,7 +337,7 @@ async function tickLifecycle(
 }
 
 /** Remaining-time marks, claim-first: every crossed mark is claimed on the
- *  tick that first sees it (all of them in one pipeline), and however many
+ *  tick that first sees it (all of them in one Lua script), and however many
  *  the gap swallowed the caller posts ONE time check carrying the current
  *  time left. That is what keeps a restart, a duplicate tick or a mid-event
  *  enable to at most one post instead of a burst of "1h left" / "15m left"

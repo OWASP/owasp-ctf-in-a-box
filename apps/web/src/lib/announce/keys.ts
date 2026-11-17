@@ -22,11 +22,12 @@ export const DISCORD_CONFIG_KEY = "ctf:admin:discord";
  *  audited by value — writeAdminAudit records only "set"/"cleared". */
 export const DISCORD_WEBHOOK_KEY = "ctf:admin:discord:webhook";
 
-/** Bumped atomically when the webhook is cleared and at the start of a master
- *  reset. An entry whose `webhookGeneration` predates the current value is
- *  stale: its producer read the old config before the change and enqueued
- *  after the cancellation scan. It lives OUTSIDE `ctf:announce:*` so a reset
- *  cannot delete it back to a value a pre-reset entry still carries. */
+/** Bumped atomically when the webhook is cleared and before and after the
+ *  wipe in a master reset. An entry whose `webhookGeneration` predates the
+ *  current value is stale: its producer read the old config before the
+ *  change and enqueued after the cancellation scan. It lives OUTSIDE
+ *  `ctf:announce:*` so a reset cannot delete it back to a value a pre-reset
+ *  entry still carries. */
 export const ANNOUNCE_WEBHOOK_GENERATION_KEY = "ctf:admin:discord:webhook-generation";
 
 // --- announcement state (all wiped by the master reset) ---------------------
@@ -49,11 +50,11 @@ export const ANNOUNCE_FIRST_ANNOUNCED_KEY = "ctf:announce:first-announced";
 export const ANNOUNCE_MILESTONE_KEY = "ctf:announce:milestone";
 
 /** The observed lifecycle state (`v2|L<0|1>P<0|1>C<0|1>A<0|1>`), advanced
- *  atomically by ANNOUNCE_STATE_SCRIPT so exactly one replica announces
- *  each transition. */
+ *  atomically by STATE_CAS_SCRIPT or STATE_CAS_ENQUEUE_SCRIPT so exactly one
+ *  replica announces each transition. */
 export const ANNOUNCE_LIFECYCLE_KEY = "ctf:announce:lifecycle";
 
-/** Monotonic id source bumped inside ANNOUNCE_STATE_SCRIPT, so every
+/** Monotonic id source bumped inside the lifecycle CAS scripts, so every
  *  announced transition/outbox entry gets a unique id even when the same
  *  edge repeats (pause → resume → pause). */
 export const ANNOUNCE_SEQ_KEY = "ctf:announce:seq";

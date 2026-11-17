@@ -26,6 +26,7 @@ import {
   OUTBOX_SKIP_SCRIPT,
   SET_ANNOUNCE_COOLDOWN_SCRIPT,
   STATE_CAS_ENQUEUE_SCRIPT,
+  STATE_CAS_RECONCILE_SCRIPT,
   STATE_CAS_SCRIPT,
   SWITCH_DISABLE_SCRIPT,
   WEBHOOK_CLEAR_SCRIPT,
@@ -395,6 +396,84 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     expect(box2.result).toBe(entry);
 
     await upstashPipeline([["DEL", stateKey, seqKey, boxKey, cfgKey, genKey]]);
+  });
+
+  it("a delayed observer that captured (pack, rev) before a pause/resume cycle loses both CAS paths", async () => {
+    const stateKey = liveKey("announce-cas-rev", "state");
+    const seqKey = liveKey("announce-cas-rev", "seq");
+    const revKey = liveKey("announce-cas-rev", "rev");
+    const boxKey = liveKey("announce-cas-rev", "box");
+    const cfgKey = liveKey("announce-cas-rev", "config");
+    const genKey = liveKey("announce-cas-rev", "generation");
+
+    // The pack returns to the value the stale observer saw (pause then
+    // resume), but the revision has moved on.
+    await upstashPipeline([
+      ["DEL", stateKey, seqKey, revKey, boxKey, cfgKey, genKey],
+      ["SET", stateKey, "v1|L1P0"],
+      ["SET", revKey, "3"],
+      ["SET", genKey, "0"],
+      ["HSET", cfgKey, "launch", "1", "epoch:launch", "0"],
+    ]);
+
+    const plain = (await upstashEval(
+      STATE_CAS_SCRIPT,
+      [stateKey, seqKey, revKey],
+      ["v1|L1P0", "v1|L0P0", "1"],
+    )) as [number, number, string];
+    expect(plain[0]).toBe(0);
+
+    const enqueued = (await upstashEval(
+      STATE_CAS_ENQUEUE_SCRIPT,
+      [stateKey, seqKey, boxKey, cfgKey, genKey, revKey],
+      ["v1|L1P0", "v1|L0P0", new Date().toISOString(), "0", "1"],
+    )) as [number, number, string, number];
+    expect(enqueued[0]).toBe(0);
+
+    const [pack, seq, rev, box] = await upstashPipeline([
+      ["GET", stateKey],
+      ["GET", seqKey],
+      ["GET", revKey],
+      ["HGETALL", boxKey],
+    ]);
+    expect(pack.result).toBe("v1|L1P0");
+    expect(seq.result).toBeNull();
+    expect(rev.result).toBe("3");
+    expect(box.result).toEqual([]);
+
+    await upstashPipeline([["DEL", stateKey, seqKey, revKey, boxKey, cfgKey, genKey]]);
+  });
+
+  it("STATE_CAS_RECONCILE_SCRIPT returns 3 and leaves the pack alone when the webhook appeared", async () => {
+    const stateKey = liveKey("announce-cas-rec", "state");
+    const seqKey = liveKey("announce-cas-rec", "seq");
+    const revKey = liveKey("announce-cas-rec", "rev");
+    const webhookKey = liveKey("announce-cas-rec", "webhook");
+
+    await upstashPipeline([
+      ["DEL", stateKey, seqKey, revKey, webhookKey],
+      ["SET", stateKey, "v2|L0P0C0A0"],
+      ["SET", revKey, "4"],
+      ["SET", webhookKey, "https://discord.com/api/webhooks/1/token"],
+    ]);
+
+    const res = (await upstashEval(
+      STATE_CAS_RECONCILE_SCRIPT,
+      [stateKey, seqKey, revKey, webhookKey],
+      ["v2|L0P0C0A0", "v2|L1P0C0A0", "4"],
+    )) as [number, number, string];
+    expect(res[0]).toBe(3);
+
+    const [pack, seq, rev] = await upstashPipeline([
+      ["GET", stateKey],
+      ["GET", seqKey],
+      ["GET", revKey],
+    ]);
+    expect(pack.result).toBe("v2|L0P0C0A0");
+    expect(seq.result).toBeNull();
+    expect(rev.result).toBe("4");
+
+    await upstashPipeline([["DEL", stateKey, seqKey, revKey, webhookKey]]);
   });
 
   it("SET_ANNOUNCE_COOLDOWN_SCRIPT keeps the LATEST deadline when a shorter one arrives last", async () => {

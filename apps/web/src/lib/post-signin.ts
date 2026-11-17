@@ -1,4 +1,4 @@
-// First-login team steering (issue #217): every GitHub sign-in lands on
+// First-login team steering: every sign-in, password or provider, lands on
 // /api/post-signin first, which sends a teamless contestant to team setup
 // BEFORE their original destination. The module-page redirect
 // (require-team.ts) and the API refusals still hold as the backstop; this

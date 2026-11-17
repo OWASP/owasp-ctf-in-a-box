@@ -192,13 +192,13 @@ describe("QuizBoard", () => {
 
   it("offers a signed-out visitor no submit control, and no per-question prompt", () => {
     const html = renderToStaticMarkup(<QuizBoard questions={[singleChoiceQuestion]} maxAttempts={3} authenticated={false} />);
-    // The single sign-in prompt is the PAGE's ("Sign in with GitHub to answer
+    // The single sign-in prompt is the PAGE's ("Sign in to answer
     // questions.", quiz/page.tsx, rendered above this board) — one line for
     // the whole set. The board repeating it under every question was the
     // signed-out wall of identical CTAs the redesign removed (findings, bug
     // 1), so the board itself now renders neither a submit control nor its
     // own prompt.
-    expect(html).not.toMatch(/sign in with github/i);
+    expect(html).not.toMatch(/sign in/i);
     expect(html).not.toContain("<button");
   });
 

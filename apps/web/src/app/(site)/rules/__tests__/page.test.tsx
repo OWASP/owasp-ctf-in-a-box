@@ -45,7 +45,7 @@ describe("/rules on a secure-development event", () => {
 
   it("keeps the module's rules, verbatim", () => {
     expect(html).toContain(
-      "Points for a patch credit the pull request&#x27;s author — open every PR from the same GitHub account you sign in with, or your score lands on a row you can&#x27;t see.",
+      "Points for a patch credit the pull request&#x27;s author. Link your GitHub account from your profile and open every PR from that account, or your score is held until its author links it.",
     );
     expect(html).toContain(
       "Only the 6 challenge targets (Juice Shop, DVWA, WebGoat, Security Shepherd, VulnerableApp, and VAmPI) are in scope. Do not attack the CI scoring pipeline, the leaderboard, or other contestants&#x27; forks.",
@@ -83,7 +83,7 @@ describe("/rules on a secure-development event", () => {
   // order the page has always rendered.
   it("orders module rules against the platform's as the page always has", () => {
     expect(html.indexOf("Each person belongs to at most one team")).toBeLessThan(
-      html.indexOf("open every PR from the same GitHub account"),
+      html.indexOf("open every PR from that account"),
     );
     expect(html.indexOf("Revealing a hint deducts points")).toBeLessThan(
       html.indexOf("Prizes are awarded to the top individuals"),

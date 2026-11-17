@@ -44,12 +44,12 @@ export async function generateMetadata(): Promise<Metadata> {
 // true on every event including a secure-development-only one.
 //
 // The sign-in clause renders only for the visitor it applies to: telling a
-// signed-in contestant to "Sign in with GitHub" reads as broken state
+// signed-in contestant to "Sign in" reads as broken state
 // detection (issue #200, 3.1 — the same fix the hint banner got). The page
 // already loads the session for the YOU-row highlight, so this costs
 // nothing.
 const BASE_DESCRIPTION = "Live contestant rankings from every enabled challenge board.";
-const SIGNED_OUT_CLAUSE = " Sign in with GitHub to highlight your own row and unlock your profile.";
+const SIGNED_OUT_CLAUSE = " Sign in to highlight your own row and unlock your profile.";
 
 /**
  * The public standings page — the interactive board by default, the

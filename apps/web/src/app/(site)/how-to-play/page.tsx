@@ -47,7 +47,7 @@ export async function generateMetadata(): Promise<Metadata> {
 // each module's own lede describes only its half, so the frame speaks for
 // itself instead. A single-module event reads that module's lede verbatim.
 const PLATFORM_LEDE =
-  "New to the competition? Here's everything you need to get from a GitHub sign-in to your first points.";
+  "New to the competition? Here's everything you need to get from signing in to your first points.";
 
 function CodeBlock({ code }: { code: string }) {
   return (
@@ -101,7 +101,7 @@ export default async function HowToPlayPage() {
   //
   // Kept GROUPED by module rather than flattened: on a three-module event the
   // flat list read as nine anonymous bullets with three near-duplicates
-  // ("Points are credited to the GitHub account…" once per module) and three
+  // ("Points are credited to the account…" once per module) and three
   // unlabeled scoring paragraphs — visible repetition that read as a bug
   // rather than as three modules each speaking for themselves (issue #200,
   // tier 4). Each group renders under its module's name once a second module

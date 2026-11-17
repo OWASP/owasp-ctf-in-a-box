@@ -78,7 +78,8 @@ describe("ChallengeDetail", () => {
 
   it("prompts a signed-out visitor to sign in instead of offering a submit control", () => {
     const html = renderToStaticMarkup(<ChallengeDetail challenge={web} authenticated={false} submitPath="/api/classic/submit" />);
-    expect(html).toMatch(/sign in with github/i);
+    expect(html).toMatch(/sign in to submit a flag/i);
+    expect(html).not.toMatch(/sign in with github/i);
     expect(html).not.toContain("<button");
   });
 

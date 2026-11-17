@@ -58,7 +58,7 @@ describe("/privacy in a quiz-only event", () => {
   it("keeps every platform promise", () => {
     expect(rendered).toContain("What we never do");
     expect(rendered).toContain("No advertising, no tracking pixels, no third-party analytics");
-    expect(rendered).toContain("We never ask GitHub for write access.");
+    expect(rendered).toContain("We never ask GitHub, Google or Discord for write access.");
     expect(rendered).toContain("Cookies");
     expect(rendered).toContain("Counting where the event reached");
     expect(rendered).toContain("Your choices, and how to reach a human");
@@ -71,6 +71,16 @@ describe("/privacy in a quiz-only event", () => {
     expect(rendered).toContain("Your answers");
     expect(rendered).toContain("the choices you submitted");
     expect(rendered).toContain("how many attempts you have spent");
+  });
+
+  it("describes kit-owned accounts, not a cookie-only GitHub sign-in", () => {
+    expect(rendered).toContain("Your account");
+    expect(rendered).toContain("hash of your password");
+    expect(rendered).toContain("placeholder email address");
+    expect(rendered).toContain("the IP address and browser user-agent it came from");
+    expect(rendered).toContain("Want your account deleted? Ask an organizer.");
+    expect(rendered).not.toContain("There is no account database");
+    expect(rendered).not.toContain("keyed to your GitHub login");
   });
 
   it("promises nothing that only the other module has", () => {

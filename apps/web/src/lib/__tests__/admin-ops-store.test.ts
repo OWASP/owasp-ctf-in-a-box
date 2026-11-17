@@ -910,9 +910,9 @@ describe("deleteUser: the account and its GitHub login", () => {
     expect(result.warnings).toContain(ORPHAN_GRANT_REMOVED);
     expect(result.warnings).not.toContain(GRANT_CLAIMED_DURING_DELETE);
     expect(auditLine("ops:user-delete")).toMatchObject({ player: OCTO, grantRemoved: true, warning: ORPHAN_GRANT_REMOVED });
-    // The retry still marks before any write, and with the row already gone
-    // it has nothing to restore.
-    expect(deletedDeps.markDeleting).toHaveBeenCalledWith(OCTO);
+    // The no-row retry still marks; with the row already gone it has nothing
+    // to restore.
+    expect(deletedDeps.markDeleting).toHaveBeenCalledWith(OCTO, expect.stringMatching(/^[0-9a-f-]{36}$/));
     expect(deletedDeps.restoreAfterFailedDelete).not.toHaveBeenCalled();
   });
 

@@ -260,6 +260,35 @@ describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("password res
     expect(await passwordOf(who)).toBeNull();
   });
 
+  it("a player with two credential rows whose guard expires before the second write still loses every session", async () => {
+    const { reset, ctx, claim } = await load();
+    const [by, who] = [await admin(), await player("password")];
+    await ctx.internalAdapter.linkAccount({
+      userId: who,
+      providerId: "credential",
+      accountId: `second-${who}`,
+      password: await ctx.password.hash("old password 123"),
+    });
+    await ctx.internalAdapter.createSession(who);
+    const sessions = `ctf:auth:session:by:userId:${who}`;
+    expect(await redis(["SCARD", sessions])).toBe(1);
+    const { code } = await reset.issuePasswordResetCode(who, by);
+    const original = ctx.internalAdapter.updateAccount.bind(ctx.internalAdapter);
+    let calls = 0;
+    const spy = vi.spyOn(ctx.internalAdapter, "updateAccount").mockImplementation(async (...args: Parameters<typeof original>) => {
+      calls++;
+      if (calls === 2) await redis(["DEL", claim.resetBusyKey(who)]);
+      return original(...args);
+    });
+    try {
+      await expect(reset.redeemPasswordResetCode(code, PW)).rejects.toThrow(/write fence gone/);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(calls).toBe(2);
+    expect(await redis(["SCARD", sessions])).toBe(0);
+  });
+
   it("overlapping redeems each keep the claim guard until their own release", async () => {
     const { reset, claim, ADMIN_GRANTS_KEY } = await load();
     const { upstashEval } = await import("@/lib/upstash");

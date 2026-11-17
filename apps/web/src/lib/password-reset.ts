@@ -206,6 +206,8 @@ export type RedeemResult = { ok: true; player: string } | { ok: false; reason: "
  * redeems cannot both write. A store or auth failure after the consume throws
  * (the caller answers 503); the code is gone by then, and the organizer
  * issues a new one. Success is never reported for a write that did not land.
+ * A failure after any credential write was sent still revokes every session
+ * first.
  *
  * The consume refuses an organizer, and so does RESET_GUARD_SCRIPT right
  * before the write, which also refuses the player's admin claims until the
@@ -251,20 +253,42 @@ export async function redeemPasswordResetCode(rawCode: string, newPassword: stri
   const guard = await upstashEval(RESET_GUARD_SCRIPT, [ADMIN_GRANTS_KEY, busy], [player, token, String(RESET_BUSY_TTL_SECONDS)]);
   if (guard === 0) return { ok: false, reason: "invalid" };
   if (guard !== 1) throw new Error("password reset: unexpected guard reply");
+  // Set before the first credential write is sent, since a write whose reply
+  // was lost may still have landed. Once set, the sessions are revoked even
+  // when a later write fails: a password that changed on some rows must not
+  // leave the old sessions valid.
+  let written = false;
   try {
-    // Fenced on this redeem's guard token: a write that reaches Redis once
-    // the token is gone (expired or released) is refused and throws.
-    await withWriteFence({ key: busy, member: token }, async () => {
-      // Any credential row, whatever its accountId: better-auth's
-      // updatePassword matches only accountId = userId and would silently
-      // update nothing else.
-      const credentials = (await internalAdapter.findAccounts(player)).filter((a) => a.providerId === "credential");
-      if (credentials.length === 0) {
-        await internalAdapter.linkAccount({ userId: player, providerId: "credential", accountId: player, password: passwordHash });
-      } else {
-        for (const account of credentials) await internalAdapter.updateAccount(account.id, { password: passwordHash });
+    try {
+      // Fenced on this redeem's guard token: a write that reaches Redis once
+      // the token is gone (expired or released) is refused and throws.
+      await withWriteFence({ key: busy, member: token }, async () => {
+        // Any credential row, whatever its accountId: better-auth's
+        // updatePassword matches only accountId = userId and would silently
+        // update nothing else.
+        const credentials = (await internalAdapter.findAccounts(player)).filter((a) => a.providerId === "credential");
+        if (credentials.length === 0) {
+          written = true;
+          await internalAdapter.linkAccount({ userId: player, providerId: "credential", accountId: player, password: passwordHash });
+        } else {
+          for (const account of credentials) {
+            written = true;
+            await internalAdapter.updateAccount(account.id, { password: passwordHash });
+          }
+        }
+      });
+    } catch (err) {
+      // The write's error is what the caller sees; a failed revoke here is
+      // logged, never thrown over it.
+      if (written) {
+        try {
+          await internalAdapter.deleteUserSessions(player);
+        } catch (revokeErr) {
+          console.error("[password-reset] revoking sessions after a failed password write failed", errorLabel(revokeErr));
+        }
       }
-    });
+      throw err;
+    }
     await internalAdapter.deleteUserSessions(player);
   } finally {
     // A failed release leaves the token to expire: the player's claims answer

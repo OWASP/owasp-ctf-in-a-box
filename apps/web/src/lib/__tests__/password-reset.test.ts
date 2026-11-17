@@ -236,10 +236,43 @@ describe("redeemPasswordResetCode", () => {
     expect(m.ia.deleteUserSessions).not.toHaveBeenCalled();
   });
 
-  it("throws when the password write fails after the code is consumed", async () => {
+  it("throws when the password write fails after the code is consumed, and revokes sessions since the write may have landed", async () => {
     codeFor(BOB.id);
     m.ia.updateAccount.mockRejectedValue(new Error("redis down"));
-    await expect(redeemPasswordResetCode(CODE, PW)).rejects.toThrow();
+    await expect(redeemPasswordResetCode(CODE, PW)).rejects.toThrow("redis down");
+    expect(m.ia.deleteUserSessions).toHaveBeenCalledWith(BOB.id);
+  });
+
+  it("revokes sessions when a later credential row fails after an earlier one changed, and still throws the write's error", async () => {
+    codeFor(BOB.id);
+    m.ia.findAccounts.mockResolvedValue([
+      { id: "acc-1", providerId: "credential" },
+      { id: "acc-2", providerId: "credential" },
+    ]);
+    m.ia.updateAccount.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error("write fence gone"));
+    await expect(redeemPasswordResetCode(CODE, PW)).rejects.toThrow("write fence gone");
+    expect(m.ia.updateAccount).toHaveBeenCalledTimes(2);
+    expect(m.ia.deleteUserSessions).toHaveBeenCalledWith(BOB.id);
+    expect(m.upstashEval.mock.calls.some((c) => c[0] === RELEASE_RESET_GUARD_SCRIPT)).toBe(true);
+  });
+
+  it("a failed revoke after a failed write is logged, and the write's error is what throws", async () => {
+    codeFor(BOB.id);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    m.ia.updateAccount.mockRejectedValue(new Error("write fence gone"));
+    m.ia.deleteUserSessions.mockRejectedValue(new Error("revoke down"));
+    try {
+      await expect(redeemPasswordResetCode(CODE, PW)).rejects.toThrow("write fence gone");
+      expect(log.mock.calls.some((c) => String(c[0]).includes("revoking sessions after a failed password write failed"))).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("revokes nothing when the write fails before any credential write is sent", async () => {
+    codeFor(BOB.id);
+    m.ia.findAccounts.mockRejectedValue(new Error("redis down"));
+    await expect(redeemPasswordResetCode(CODE, PW)).rejects.toThrow("redis down");
     expect(m.ia.deleteUserSessions).not.toHaveBeenCalled();
   });
 

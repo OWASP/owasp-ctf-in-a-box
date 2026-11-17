@@ -399,6 +399,7 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     // turned ON before the write, the observation is stale and must lose —
     // otherwise the entry-free swap would consume the launch silently.
     await upstashPipeline([
+      ["DEL", boxKey, seqKey],
       ["SET", stateKey, "v1|L0P0"],
       ["SET", genKey, "5"],
       ["HSET", cfgKey, "launch", "1", "epoch:launch", "4"],

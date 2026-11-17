@@ -14,16 +14,15 @@
 // happened on this exact page load, not page furniture present from every
 // first paint — the opposite of teamless-notice's reasoning for skipping it.
 
-import { authClient } from "@/lib/auth-client";
-import { oauthErrorCallbackURL, postSigninCallbackURL } from "@/lib/post-signin";
+import { signInHref } from "@/lib/post-signin";
 
 /** Friendly, human sentences for the callback errors worth naming. GitHub's
  *  own `error_description` for these — and for every other code — is NEVER
  *  rendered: it is arbitrary provider-supplied prose with no guarantee about
  *  its contents (CodeRabbit pre-merge finding, "Secrets & Challenge Data In
  *  Logs" — a description is exactly the kind of value that shouldn't reach a
- *  page render, a screen share, or a log capture). Only GitHub's own CODE —
- *  a short, fixed enum of OAuth error identifiers — ever reaches the DOM,
+ *  page render, a screen share, or a log capture). Only the provider's own
+ *  CODE — a short, fixed enum of OAuth error identifiers — ever reaches the DOM,
  *  and only once it has been checked against a strict allowlist shape. */
 const FRIENDLY_COPY: Record<string, string> = {
   application_suspended:
@@ -36,11 +35,10 @@ const FRIENDLY_COPY: Record<string, string> = {
 
 const GENERIC_MESSAGE = "Sign-in did not complete.";
 
-/** GitHub's own OAuth error codes are short machine identifiers
- *  (`access_denied`, `server_error`, …): letters, digits, underscore, hyphen,
- *  capped well above any real one. A value outside that shape is not a code
- *  this app trusts as GitHub's own, so none of it — not even the sanitized
- *  parts — is shown; the generic sentence renders alone. */
+/** OAuth error codes are short machine identifiers (`access_denied`,
+ *  `server_error`, …): letters, digits, underscore, hyphen, capped well above
+ *  any real one. A value outside that shape is not a code this app trusts as
+ *  the provider's own, so none of it — not even the sanitized parts — is shown; the generic sentence renders alone. */
 const CODE_SHAPE = /^[A-Za-z0-9_-]{1,40}$/;
 
 export default function OAuthErrorNotice({
@@ -48,10 +46,10 @@ export default function OAuthErrorNotice({
   callbackURL = "/profile",
 }: {
   error: string;
-  /** Where "Try again" retries toward — the destination the failed sign-in
-   *  was originally headed for. Recovered from `?next=` by the caller
+  /** The destination the failed sign-in was headed for, carried to the
+   *  sign-in page by "Try again". Recovered from `?next=` by the caller
    *  (page.tsx) and re-validated there with `sanitizeNext` before being
-   *  passed here; this component trusts it no further than that. */
+   *  passed here; `signInHref` sanitizes it once more. */
   callbackURL?: string;
 }) {
   // `error` is an attacker-controlled query parameter. FRIENDLY_COPY is a
@@ -74,23 +72,9 @@ export default function OAuthErrorNotice({
     >
       <p className="text-xs font-medium uppercase tracking-wider text-[#d4a017]">Sign-in didn&rsquo;t complete</p>
       <p className="mt-1 text-sm leading-relaxed text-zinc-300">{message}</p>
-      <button
-        type="button"
-        className="ds-link mt-2 text-sm"
-        onClick={() => {
-          // The same action the header's own sign-in button runs
-          // (auth-nav.tsx), carrying the SAME destination through both legs
-          // so a retry that also fails lands back here with the destination
-          // still intact rather than collapsing to /profile.
-          void authClient.signIn.social({
-            provider: "github",
-            callbackURL: postSigninCallbackURL(callbackURL),
-            errorCallbackURL: oauthErrorCallbackURL(callbackURL),
-          });
-        }}
-      >
+      <a href={signInHref(callbackURL)} className="ds-link mt-2 inline-block text-sm">
         Try again
-      </button>
+      </a>
     </div>
   );
 }

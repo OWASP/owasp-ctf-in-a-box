@@ -281,4 +281,30 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
       ]);
     }
   });
+
+  it("resetEvent wipes the re-link blocklist, so a blocked login links again", async () => {
+    const { resetEvent } = await import("@/lib/admin-store");
+    const { recordGithubSignIn, releaseGithubLink, RELINK_BLOCK_KEY } = await import("@/lib/github-link");
+    const login = `blk${crypto.randomUUID().replace(/-/g, "")}`.slice(0, 30);
+    const first = crypto.randomUUID();
+    const second = crypto.randomUUID();
+    try {
+      expect(await recordGithubSignIn(first, login)).toBe("linked");
+      expect(await releaseGithubLink(first, { block: true })).toBe(login);
+      expect(await recordGithubSignIn(second, login)).toBe("blocked");
+      const [held] = await upstashPipeline([["GET", `ctf:link:github:${login}`]]);
+      expect(held.result).toBeNull();
+      const { cleared } = await resetEvent(actor("alice"));
+      expect(cleared.relinkBlock).toBe(1);
+      const [member] = await upstashPipeline([["SISMEMBER", RELINK_BLOCK_KEY, login]]);
+      expect(member.result).toBe(0);
+      expect(await recordGithubSignIn(second, login)).toBe("linked");
+    } finally {
+      await upstashPipeline([
+        ["DEL", `ctf:link:github:${login}`, `ctf:link:user:${first}`, `ctf:link:user:${second}`],
+        ["HDEL", "ctf:link:at", first, second],
+        ["SREM", "ctf:relink:blocked", login],
+      ]);
+    }
+  });
 });

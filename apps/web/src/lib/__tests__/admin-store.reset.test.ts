@@ -108,6 +108,7 @@ describe("resetEvent", () => {
       users: 2,
       joinCodes: 2,
       sdHeld: 2,
+      relinkBlock: 2,
       hints: 2,
       quizAnswers: 2,
       quizAttempts: 2,
@@ -128,10 +129,10 @@ describe("resetEvent", () => {
     });
     expect(out.resetAt).toMatch(/^\d+$/);
 
-    // one SCAN + one DEL per prefix (22 prefixes) = 44 pipeline calls
+    // one SCAN + one DEL per prefix (23 prefixes) = 46 pipeline calls
     const verbs = mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0]);
-    expect(verbs.filter((v) => v === "SCAN").length).toBe(22);
-    expect(verbs.filter((v) => v === "DEL").length).toBe(22);
+    expect(verbs.filter((v) => v === "SCAN").length).toBe(23);
+    expect(verbs.filter((v) => v === "DEL").length).toBe(23);
     // every wiped prefix, and NOT settings/audit/sync
     const patterns = mocks.upstashPipeline.mock.calls
       .filter((c) => c[0][0][0] === "SCAN")
@@ -142,6 +143,7 @@ describe("resetEvent", () => {
       "ctf:user:*",
       "ctf:joincode:*",
       "ctf:sd:held:*",
+      "ctf:relink:*",
       "ctf:hints:*",
       "ctf:quiz:answers:*",
       "ctf:quiz:attempts:*",

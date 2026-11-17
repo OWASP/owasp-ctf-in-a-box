@@ -9,7 +9,8 @@ import { sumAttempts } from "@/lib/attempt-row";
 import { logActivity } from "@/lib/activity-log";
 import { errorLabel } from "@/lib/error-label";
 import { OpsValidationError } from "@/lib/ops-errors";
-import { getGithubLink } from "@/lib/github-link";
+import { auth } from "@/lib/auth";
+import { getGithubLink, releaseGithubLink } from "@/lib/github-link";
 import { currentUsername, renameUsername } from "@/lib/username-store";
 import { USERNAME_COPY } from "@/lib/username-rules";
 import { resolveTeamMaxMembers } from "@/lib/team-store";
@@ -783,4 +784,38 @@ export async function renameUser(
   const to = rawName.trim();
   await audit("ops:user-rename", actor, { player, from, to });
   return { from, to };
+}
+
+/**
+ * Removes a player's GitHub link: their `github` account rows, then the link
+ * keys, with no re-link block, so the login is free to link again. Sync reads
+ * a released login as unlinked and holds its scores.
+ *
+ * Refused while the link has scored (any Secure Development solve: the score
+ * is attributed through it) and when GitHub is the player's only sign-in
+ * method (removing it would lock them out). Both are read before any write,
+ * and a failed read throws. The account rows go before the link keys, so a
+ * failure between the two leaves a link a retry finishes. Whether Secure
+ * Development is on is the caller's check.
+ */
+export async function unlinkGithub(rawId: unknown, actor: AuditActor): Promise<{ login: string }> {
+  const player = requirePlayerId(rawId);
+  const link = await getGithubLink(player);
+  if (!link) throw new OpsValidationError("id", "No GitHub account is linked.");
+  if ((await countSecureDevSolves(player)) > 0) {
+    throw new OpsValidationError("id", "This GitHub link has scored and cannot be removed.");
+  }
+  const { internalAdapter } = await auth.$context;
+  const accounts = await internalAdapter.findAccounts(player);
+  const github = accounts.filter((a) => a.providerId === "github");
+  if (github.length === accounts.length) {
+    throw new OpsValidationError(
+      "id",
+      "This player signs in only with GitHub. Give them a reset code so they can set a password first.",
+    );
+  }
+  for (const account of github) await internalAdapter.deleteAccount(account.id);
+  const login = (await releaseGithubLink(player, { block: false })) ?? link.login;
+  await audit("ops:github-unlink", actor, { player, login });
+  return { login };
 }

@@ -3,7 +3,7 @@ import { freshId, liveConfigured, liveKey } from "./live-redis";
 
 vi.mock("server-only", () => ({}));
 
-import { getGithubLink, recordGithubSignIn, resolveGithubLogin } from "@/lib/github-link";
+import { getGithubLink, recordGithubSignIn, releaseGithubLink, resolveGithubLogin } from "@/lib/github-link";
 import { upstashPipeline } from "@/lib/upstash";
 
 describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", () => {
@@ -12,8 +12,24 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
     const gh = `${base}:github:`;
     const us = `${base}:user:`;
     const at = `${base}:at`;
+    const blocked = `${base}:blocked`;
     return {
-      record: (id: string, login: string) => recordGithubSignIn(id, login, gh, us, at),
+      record: (id: string, login: string) => recordGithubSignIn(id, login, gh, us, at, blocked),
+      release: (id: string, block: boolean) => releaseGithubLink(id, { block }, { prefix: gh, userPrefix: us, atKey: at, blockKey: blocked }),
+      isBlocked: async (login: string) => {
+        const [r] = await upstashPipeline([["SISMEMBER", blocked, login]]);
+        if (r?.error) throw new Error(r.error);
+        return r?.result === 1;
+      },
+      setPointer: async (id: string, login: string) => {
+        const [r] = await upstashPipeline([["SET", `${us}${id}`, login]]);
+        if (r?.error) throw new Error(r.error);
+      },
+      loginKeyExists: async (login: string) => {
+        const [r] = await upstashPipeline([["EXISTS", `${gh}${login}`]]);
+        if (r?.error) throw new Error(r.error);
+        return r?.result === 1;
+      },
       resolve: (login: string) => resolveGithubLogin(login, gh),
       dropTime: async (id: string) => {
         const [r] = await upstashPipeline([["HDEL", at, id]]);
@@ -114,5 +130,47 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
     expect(await t.record("u2", "contested")).toBe("taken");
     expect(await t.linkedAt("u2")).toBeNull();
     expect(await t.read("u2")).toBeNull();
+  });
+
+  it("a blocked release refuses the login on another account and writes nothing", async () => {
+    const t = fresh();
+    await t.record("u1", "OctoCat");
+    expect(await t.release("u1", true)).toBe("octocat");
+    expect(await t.isBlocked("octocat")).toBe(true);
+    expect(await t.read("u1")).toBeNull();
+    expect(await t.linkedAt("u1")).toBeNull();
+    expect(await t.record("u2", "OCTOCAT")).toBe("blocked");
+    expect(await t.loginKeyExists("octocat")).toBe(false);
+    expect(await t.read("u2")).toBeNull();
+    expect(await t.linkedAt("u2")).toBeNull();
+    // The released player is refused too: the block is on the login.
+    expect(await t.record("u1", "octocat")).toBe("blocked");
+  });
+
+  it("a plain release leaves no blocklist entry and the login can link again", async () => {
+    const t = fresh();
+    await t.record("u1", "octocat");
+    expect(await t.release("u1", false)).toBe("octocat");
+    expect(await t.isBlocked("octocat")).toBe(false);
+    expect(await t.loginKeyExists("octocat")).toBe(false);
+    expect(await t.read("u1")).toBeNull();
+    expect(await t.record("u2", "octocat")).toBe("linked");
+    expect(await t.resolve("octocat")).toBe("u2");
+  });
+
+  it("a release does not delete a login key that names another player", async () => {
+    const t = fresh();
+    await t.record("u1", "octocat");
+    // A stale reverse pointer: u3 still names a login u1 now holds.
+    await t.setPointer("u3", "octocat");
+    expect(await t.release("u3", false)).toBe("octocat");
+    expect(await t.resolve("octocat")).toBe("u1");
+    expect(await t.read("u3")).toBeNull();
+  });
+
+  it("a release with no link returns null and blocks nothing", async () => {
+    const t = fresh();
+    expect(await t.release("u1", true)).toBeNull();
+    expect(await t.record("u1", "octocat")).toBe("linked");
   });
 });

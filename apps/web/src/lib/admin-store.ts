@@ -751,6 +751,9 @@ export const RESET_PREFIXES: readonly [string, string][] = [
   // Scores sync is holding for authors who have not linked yet belong to the
   // event being wiped. The link itself (`ctf:link:*`) is account data and stays.
   ["sdHeld", "ctf:sd:held:*"],
+  // Logins blocked from re-linking (a deleted player's) are blocked for this
+  // event only. The pattern must never match `ctf:link:*`.
+  ["relinkBlock", "ctf:relink:*"],
   ["hints", "ctf:hints:*"],
   ["quizAnswers", `${QUIZ_ANSWERS_PREFIX}*`],
   ["quizAttempts", `${QUIZ_ATTEMPTS_PREFIX}*`],

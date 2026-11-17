@@ -11,11 +11,12 @@ import { upstashEval } from "@/lib/upstash";
  * *after* `auth.api.getSession()`, so there is a session-backed login to key
  * on that a caller cannot forge without forging the session itself.
  *
- * The auth buckets (`signUpIp`, `signInIp`, `signInUser`) run before any
- * session exists and key on the client address instead, the one the single
- * trusted proxy vouches for (`client-ip.ts` says which header, per deploy
- * path). Those counters are not a player's state, so `rateLimitKeysFor` does
- * not list them; they hold that address until their window expires.
+ * The auth buckets (`signUpIp`, `signInIp`, `signInUser`) and `passwordReset`
+ * run before any session exists and key on the client address instead, the
+ * one the single trusted proxy vouches for (`client-ip.ts` says which
+ * header, per deploy path). Those counters are not a player's state, so
+ * `rateLimitKeysFor` does not list them; they hold that address until their
+ * window expires.
  *
  * Fixed window, not a sliding one: the thing being bounded is a burst (scripted
  * join-code guessing, a hammering client), and a fixed window costs one Lua
@@ -115,6 +116,12 @@ export const RATE_LIMITS = {
    *  global bucket: anyone could spend it and lock the organizer out of the
    *  recovery claim. */
   adminClaim: { bucket: "admin-claim", limit: 5, windowSeconds: 900 },
+  /** Password reset code redemptions (`/api/reset-password`), keyed on the
+   *  client address because the player is signed out, and charged FAIL
+   *  CLOSED like adminClaim: the budget is what bounds guessing. A code is
+   *  128 bits, so it is not what makes guessing infeasible; it stops a script
+   *  trying. */
+  passwordReset: { bucket: "password-reset", limit: 10, windowSeconds: 900 },
   /** Sign-up attempts per client address (`/sign-up/email`), charged fail
    *  closed. Sized so a venue sharing one NAT, or a CDN edge address, still
    *  fits a whole room signing up. */

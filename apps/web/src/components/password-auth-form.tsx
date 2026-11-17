@@ -6,6 +6,7 @@
 // an OAuth one.
 
 import { PROVIDER_DISABLED_COPY, SIGN_IN_SETTINGS_UNREADABLE_COPY } from "@/lib/sign-in-error-copy";
+import Link from "next/link";
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { oauthErrorCallbackURL, postSigninCallbackURL } from "@/lib/post-signin";
@@ -187,6 +188,9 @@ export default function PasswordAuthForm({ next, providers }: { next: string; pr
         <button type="submit" disabled={pending} className={`${SUBMIT} self-start`}>
           {creating ? "Create account" : "Sign in"}
         </button>
+        <Link href="/reset" className="self-start text-xs text-zinc-400 underline-offset-4 hover:text-white hover:underline">
+          Have a reset code from an organizer?
+        </Link>
       </form>
 
       {providers.length > 0 && (

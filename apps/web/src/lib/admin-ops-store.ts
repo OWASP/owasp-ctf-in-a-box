@@ -8,6 +8,7 @@ import { beginScoreLowering, endScoreLowering } from "@/lib/leaderboard/fold-cac
 import { sumAttempts } from "@/lib/attempt-row";
 import { logActivity } from "@/lib/activity-log";
 import { errorLabel } from "@/lib/error-label";
+import { OpsValidationError } from "@/lib/ops-errors";
 import { getGithubLink } from "@/lib/github-link";
 import { resolveTeamMaxMembers } from "@/lib/team-store";
 import {
@@ -55,14 +56,7 @@ import {
  * about who may call them is how the two checks drift apart.
  */
 
-export class OpsValidationError extends Error {
-  field: string;
-  constructor(field: string, message: string) {
-    super(message);
-    this.name = "OpsValidationError";
-    this.field = field;
-  }
-}
+export { OpsValidationError } from "@/lib/ops-errors";
 
 /** Team slugs are produced by `slugify` in team-store: lowercase alphanumerics
  *  and single hyphens, 40 chars max. Validated here because these keys are

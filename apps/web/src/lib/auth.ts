@@ -9,6 +9,9 @@ import { getGithubLink, linkOnUserWrite } from "@/lib/github-link";
 import { recordSignIn } from "@/lib/activity-log";
 import { limitAuthAttempt } from "@/lib/auth-rate-limit";
 import { placeholderEmail } from "@/lib/placeholder-email";
+import { getAdminSettings } from "@/lib/admin-store";
+import { SIGN_IN_PROVIDERS, enabledSignInProviders, type SignInProviderId } from "@/lib/sign-in-providers";
+import { buildSocialProviders } from "@/lib/social-providers";
 import { USERNAME_MAX, USERNAME_MIN, normalizeUsername, usernameProblem } from "@/lib/username-rules";
 
 type AuthCtx = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
@@ -62,21 +65,61 @@ export async function refuseSignUpFields(ctx: AuthCtx): Promise<void> {
 }
 
 /**
- * GitHub is used for identity only. better-auth forwards a client-supplied
- * `scopes` and `additionalParams` into the provider authorization URL, so a
- * request carrying either key (any value, an empty one included) is refused
- * with a 400 instead of trimmed, which makes a tampered client fail loudly.
+ * An OAuth provider is used for identity only, through its redirect flow.
+ * better-auth forwards a client-supplied `scopes` and `additionalParams` into
+ * the provider authorization URL, and an `idToken` skips the redirect: the
+ * endpoint verifies the token and signs the caller in (or links the account)
+ * on the spot. A request carrying any of the three keys (any value, an empty
+ * one included) is refused with a 400 instead of trimmed, which makes a
+ * tampered client fail loudly.
  */
 export async function refuseClientOAuthParams(ctx: AuthCtx): Promise<void> {
   if (ctx.path !== "/sign-in/social" && ctx.path !== "/link-social") return;
   const body = ctx.body;
   if (typeof body !== "object" || body === null) return;
-  if (Object.hasOwn(body, "scopes") || Object.hasOwn(body, "additionalParams")) {
+  if (Object.hasOwn(body, "scopes") || Object.hasOwn(body, "additionalParams") || Object.hasOwn(body, "idToken")) {
     throw new APIError("BAD_REQUEST", {
       message: "OAuth scopes and parameters cannot be set by the client.",
       code: "OAUTH_PARAMS_NOT_ALLOWED",
     });
   }
+}
+
+function isSignInProvider(value: unknown): value is SignInProviderId {
+  return typeof value === "string" && (SIGN_IN_PROVIDERS as readonly string[]).includes(value);
+}
+
+/**
+ * The `/sign-in/social` and `/link-social` before hook. Sign-in takes only a
+ * provider that has keys and whose admin switch is on; an unreadable switch
+ * fails closed, since an organizer may have switched a provider off for a
+ * reason. A link is to GitHub alone (it is what ties a player to a PR author)
+ * and ignores the switch: an organizer can close GitHub sign-in and still let
+ * Secure Development players link.
+ */
+export async function refuseDisabledProvider(ctx: AuthCtx): Promise<void> {
+  if (ctx.path !== "/sign-in/social" && ctx.path !== "/link-social") return;
+  const body: unknown = ctx.body;
+  const provider = typeof body === "object" && body !== null ? (body as Record<string, unknown>).provider : undefined;
+  if (ctx.path === "/link-social") {
+    if (provider !== "github") {
+      throw new APIError("BAD_REQUEST", { code: "LINK_PROVIDER_NOT_ALLOWED", message: "Only a GitHub account can be linked." });
+    }
+    return;
+  }
+  const disabled = () => new APIError("FORBIDDEN", { code: "PROVIDER_DISABLED", message: "That sign-in option is not available." });
+  if (!isSignInProvider(provider)) throw disabled();
+  let enabled: SignInProviderId[];
+  try {
+    enabled = enabledSignInProviders(await getAdminSettings(), process.env);
+  } catch (err) {
+    console.error(`[auth] could not read sign-in switches: ${errorLabel(err)}`);
+    throw new APIError("SERVICE_UNAVAILABLE", {
+      code: "SIGN_IN_SETTINGS_UNREADABLE",
+      message: "Sign-in options could not be loaded. Try again.",
+    });
+  }
+  if (!enabled.includes(provider)) throw disabled();
 }
 
 /**
@@ -113,8 +156,8 @@ export async function refuseSecondGithubLink(ctx: AuthCtx): Promise<void> {
  *   - `ctf:auth:` sits outside every master-reset prefix (`RESET_PREFIXES`), so
  *     a reset keeps accounts and signed-in contestants stay signed in.
  *   - The event archive never reads or writes these keys.
- *   - Provider tokens are never stored: the adapter nulls the GitHub access,
- *     refresh and id tokens on every write, and `storeAccountCookie` is off.
+ *   - Provider tokens are never stored: the adapter nulls every provider's
+ *     access, refresh and id tokens on every write, and `storeAccountCookie` is off.
  *   - The JWE cookie cache lets a request skip the Redis read for up to
  *     `cookieCache.maxAge`, so that is the longest a sign-out or deleted
  *     session keeps working on another device.
@@ -152,17 +195,19 @@ export const authOptions = {
     },
   },
   account: {
-    // better-auth would otherwise be free to mirror the GitHub access and
+    // better-auth would otherwise be free to mirror the provider access and
     // refresh tokens into a client-side `better-auth.account_data` cookie. This
-    // app never calls the GitHub API and only reads
+    // app never calls a provider API and only reads
     // session.user.{login,name,email,image}, so token material is attack
     // surface with no use (OWASP A04, data minimisation). The adapter also
     // nulls the tokens on the stored account row.
     storeAccountCookie: false,
-    // A verified email does not prove two GitHub accounts are one person (an
-    // address can move between accounts), so a sign-in from a GitHub identity
+    // A verified email does not prove two provider accounts are one person (an
+    // address can move between accounts), so a sign-in from a provider identity
     // that has no account row never attaches to a user found by email: each
-    // GitHub identity is its own user. Explicit linking stays available.
+    // provider identity is its own user (and the mapped email is a fresh
+    // placeholder, social-providers.ts, so none could match). Explicit GitHub
+    // linking stays available.
     //
     // allowDifferentEmails: a kit account's email is not an identity (kit-owned
     // accounts carry a placeholder), so it never matches the GitHub one. What
@@ -188,7 +233,7 @@ export const authOptions = {
   // better-auth's own limiter is off on every path. It keeps per-instance
   // memory, keys on the leftmost x-forwarded-for entry (which the client
   // chooses), and allows 3 sign-ins per 10 s on every /sign-in* path, which
-  // would lock a NAT'd room out of GitHub sign-in. limitAuthAttempt
+  // would lock a NAT'd room out of OAuth sign-in. limitAuthAttempt
   // (auth-rate-limit.ts) charges Redis budgets, shared by every instance and
   // keyed on the proxy-vouched address (client-ip.ts), on /sign-up/email, /sign-in/username,
   // /sign-in/social and /link-social. It leaves /callback/:id (it consumes a
@@ -261,8 +306,8 @@ export const authOptions = {
     // These two exist purely to hand a provider token back to the caller.
     // /get-access-token returns a provider access token as JSON to anyone
     // holding a valid session cookie — an oracle that would turn a stolen
-    // session into a usable GitHub token. Disabling them means a session compromise can't be escalated
-    // into a GitHub token.
+    // session into a usable provider token. Disabling them means a session
+    // compromise can't be escalated into a provider token.
     "/get-access-token",
     "/refresh-token",
     // The username plugin's availability probe: an unthrottled oracle for
@@ -276,26 +321,30 @@ export const authOptions = {
     // below) for a returning one, so a renamed account re-links here. A link
     // from /link-social writes it through updateUserInfoOnLink.
     //
-    // On the OAuth callback (a sign-in or a link) the GitHub profile carries
-    // only `login` onto the row: the player's name and avatar are their own.
-    // better-auth merges the returned data over its own, so the fields are
-    // set to undefined, which its adapter skips on update, rather than left out.
+    // On the OAuth callback (a sign-in or a link) the provider profile carries
+    // only GitHub's `login` onto the row: the player's name and avatar are
+    // their own, and the email stays the placeholder minted at creation (each
+    // mapping mints a fresh one). better-auth merges the returned data over its
+    // own, so the fields are set to undefined, which its adapter skips on
+    // update, rather than left out.
     user: {
       create: { after: async (user) => linkOnUserWrite(user) },
       update: {
         before: async (data, ctx) =>
-          ctx?.path === "/callback/:id" ? { data: { ...data, name: undefined, image: undefined } } : undefined,
+          ctx?.path === "/callback/:id" ? { data: { ...data, email: undefined, name: undefined, image: undefined } } : undefined,
         after: async (user) => linkOnUserWrite(user),
       },
     },
   },
   hooks: {
     // In this order: the rate limit is charged before anything reads the
-    // body. Each check returns early off its own path.
+    // body, and the body checks run before anything reads Redis. Each check
+    // returns early off its own path.
     before: createAuthMiddleware(async (ctx) => {
       await limitAuthAttempt(ctx);
       await refuseSignUpFields(ctx);
       await refuseClientOAuthParams(ctx);
+      await refuseDisabledProvider(ctx);
       await refuseSecondGithubLink(ctx);
     }),
     // Sign-in timestamps for the admin activity log. The after hook runs on
@@ -308,19 +357,9 @@ export const authOptions = {
       await recordSignIn(ctx.path, ctx.context.newSession);
     }),
   },
-  socialProviders: {
-    github: {
-      clientId: process.env.GITHUB_CLIENT_ID!,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
-      // The GitHub login is what links a PR author to this player (the
-      // ctf:link:github key sync resolves), so capture it — name/email/image
-      // aren't enough.
-      mapProfileToUser: (profile) => ({ login: profile.login }),
-      // Re-applies the profile on every sign-in so `login` follows a renamed
-      // GitHub account; the stored user row would otherwise keep the old one.
-      overrideUserInfoOnSignIn: true,
-    },
-  },
+  // One entry per provider with keys; refuseDisabledProvider applies the
+  // admin switches per request.
+  socialProviders: buildSocialProviders(),
   user: {
     additionalFields: {
       // SECURITY-RELEVANT FIELD. `login` is the contestant's identity: it keys

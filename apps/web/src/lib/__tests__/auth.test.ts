@@ -12,7 +12,7 @@
 // introduces a default endpoint nobody has classified. That is the failure
 // mode a hand-written list of "paths we remembered to close" cannot catch.
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // auth.ts now imports activity-log.ts (the sign-in hook, issue #212), which
 // carries `server-only` and the Upstash client — inert here (the hook never
@@ -54,6 +54,12 @@ vi.mock("@/lib/rate-limit-store", async (orig) => ({
   consumeRateLimit,
 }));
 
+const getAdminSettings = vi.hoisted(() => vi.fn<() => Promise<unknown>>());
+vi.mock("@/lib/admin-store", async (orig) => ({
+  ...(await orig<typeof import("@/lib/admin-store")>()),
+  getAdminSettings,
+}));
+
 vi.hoisted(() => {
   // betterAuth() runs at import time and warns on a weak secret. Only fills
   // gaps, so a real .env.local still wins locally.
@@ -63,7 +69,14 @@ vi.hoisted(() => {
   process.env.GITHUB_CLIENT_SECRET ??= "test-client-secret";
 });
 
-import { auth, authOptions, refuseClientOAuthParams, refuseSecondGithubLink, refuseSignUpFields } from "@/lib/auth";
+import {
+  auth,
+  authOptions,
+  refuseClientOAuthParams,
+  refuseDisabledProvider,
+  refuseSecondGithubLink,
+  refuseSignUpFields,
+} from "@/lib/auth";
 import { isPlaceholderEmail } from "@/lib/placeholder-email";
 import { APIError } from "better-auth/api";
 
@@ -173,12 +186,15 @@ describe("Redis-backed sign-in state (#736)", () => {
     expect(authOptions.account.accountLinking.updateUserInfoOnLink).toBe(true);
   });
 
+  const github = () => (authOptions.socialProviders as Record<string, { scope?: unknown; overrideUserInfoOnSignIn?: boolean }>).github;
+
   it("requests no OAuth scopes beyond the provider defaults", () => {
-    expect((authOptions.socialProviders.github as { scope?: unknown }).scope).toBeUndefined();
+    expect(github()).toBeDefined();
+    expect(github().scope).toBeUndefined();
   });
 
   it("refreshes the GitHub login on every sign-in", () => {
-    expect(authOptions.socialProviders.github.overrideUserInfoOnSignIn).toBe(true);
+    expect(github().overrideUserInfoOnSignIn).toBe(true);
   });
 });
 
@@ -243,6 +259,12 @@ describe("user.update.before", () => {
 
   it("keeps the login but not the GitHub name or avatar on the OAuth callback", async () => {
     expect(await written(profile, { path: "/callback/:id" })).toEqual({ login: "octocat" });
+  });
+
+  it("never rewrites the email on the OAuth callback", async () => {
+    // Each provider mapping mints a fresh placeholder; an override on a
+    // returning sign-in or a link must not replace the stored one.
+    expect(await written({ ...profile, email: "1c9e@accounts.invalid" }, { path: "/callback/:id" })).toEqual({ login: "octocat" });
   });
 
   it.each([undefined, "/update-user", "/sign-in/social", "/callback/github"])("leaves an update on path %s alone", async (path) => {
@@ -340,9 +362,112 @@ describe("refuseClientOAuthParams (OAuth for identity only)", () => {
     await expect(refuseClientOAuthParams(ctx(path, { provider: "github", callbackURL: "/profile" }))).resolves.toBeUndefined();
   });
 
+  it.each(["/sign-in/social", "/link-social"])("refuses an idToken on %s, the direct sign-in path", async (path) => {
+    for (const value of [{ token: "x" }, "x", null, undefined]) {
+      const err = await refused(refuseClientOAuthParams(ctx(path, { provider: "google", idToken: value })));
+      expect(err.status).toBe("BAD_REQUEST");
+      expect(err.body?.code).toBe("OAUTH_PARAMS_NOT_ALLOWED");
+    }
+  });
+
   it("leaves other paths and a missing body alone", async () => {
     await expect(refuseClientOAuthParams(ctx("/get-session", { scopes: ["repo"] }))).resolves.toBeUndefined();
     await expect(refuseClientOAuthParams(ctx("/sign-in/social", undefined))).resolves.toBeUndefined();
+  });
+});
+
+describe("refuseDisabledProvider (/sign-in/social and /link-social)", () => {
+  const ctx = (path: string, body: unknown) => ({ path, body }) as unknown as Parameters<typeof refuseDisabledProvider>[0];
+  const refused = async (p: Promise<unknown>) => {
+    const err = await p.then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    return err as APIError;
+  };
+  const switches = (s: { github: boolean; google: boolean; discord: boolean }) => getAdminSettings.mockResolvedValue({ signInProviders: s });
+  const keyed = () => {
+    vi.stubEnv("GITHUB_CLIENT_ID", "gh-id");
+    vi.stubEnv("GITHUB_CLIENT_SECRET", "gh-secret");
+    vi.stubEnv("GOOGLE_CLIENT_ID", "g-id");
+    vi.stubEnv("GOOGLE_CLIENT_SECRET", "g-secret");
+    vi.stubEnv("DISCORD_CLIENT_ID", "");
+    vi.stubEnv("DISCORD_CLIENT_SECRET", "");
+  };
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    getAdminSettings.mockReset();
+  });
+
+  it("lets a configured provider whose switch is on through", async () => {
+    keyed();
+    switches({ github: true, google: true, discord: true });
+    await expect(refuseDisabledProvider(ctx("/sign-in/social", { provider: "google" }))).resolves.toBeUndefined();
+    expect(getAdminSettings).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a provider switched off", async () => {
+    keyed();
+    switches({ github: true, google: false, discord: true });
+    const err = await refused(refuseDisabledProvider(ctx("/sign-in/social", { provider: "google" })));
+    expect(err.status).toBe("FORBIDDEN");
+    expect(err.body?.code).toBe("PROVIDER_DISABLED");
+  });
+
+  it("refuses a provider switched on without keys", async () => {
+    keyed();
+    switches({ github: true, google: true, discord: true });
+    const err = await refused(refuseDisabledProvider(ctx("/sign-in/social", { provider: "discord" })));
+    expect(err.status).toBe("FORBIDDEN");
+    expect(err.body?.code).toBe("PROVIDER_DISABLED");
+  });
+
+  it.each([{ provider: "twitter" }, { provider: ["google"] }, {}, null, "google"])("refuses an unknown or malformed provider (%o)", async (body) => {
+    keyed();
+    switches({ github: true, google: true, discord: true });
+    const err = await refused(refuseDisabledProvider(ctx("/sign-in/social", body)));
+    expect(err.body?.code).toBe("PROVIDER_DISABLED");
+  });
+
+  it("fails closed when the settings cannot be read, logging only the label", async () => {
+    keyed();
+    getAdminSettings.mockRejectedValue(new Error("HGETALL failed: NOAUTH"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const err = await refused(refuseDisabledProvider(ctx("/sign-in/social", { provider: "github" })));
+    const logged = errors.mock.calls.map((c) => c.map(String).join(" ")).join("\n");
+    errors.mockRestore();
+    expect(err.status).toBe("SERVICE_UNAVAILABLE");
+    expect(err.body?.code).toBe("SIGN_IN_SETTINGS_UNREADABLE");
+    expect(logged).toContain("NOAUTH");
+  });
+
+  it("lets a GitHub link through with the GitHub switch off, without reading the switches", async () => {
+    keyed();
+    switches({ github: false, google: true, discord: true });
+    await expect(refuseDisabledProvider(ctx("/link-social", { provider: "github" }))).resolves.toBeUndefined();
+    expect(getAdminSettings).not.toHaveBeenCalled();
+  });
+
+  it.each(["google", "discord", undefined])("refuses a %s link", async (provider) => {
+    keyed();
+    switches({ github: true, google: true, discord: true });
+    const err = await refused(refuseDisabledProvider(ctx("/link-social", { provider })));
+    expect(err.status).toBe("BAD_REQUEST");
+    expect(err.body?.code).toBe("LINK_PROVIDER_NOT_ALLOWED");
+  });
+
+  it.each(["/callback/:id", "/get-session", "/sign-up/email", "/sign-in/username"])("ignores %s without reading settings", async (path) => {
+    await expect(refuseDisabledProvider(ctx(path, { provider: "google" }))).resolves.toBeUndefined();
+    expect(getAdminSettings).not.toHaveBeenCalled();
+  });
+
+  it("is wired into the before hook after the OAuth parameter check", async () => {
+    keyed();
+    switches({ github: true, google: false, discord: true });
+    const hook = auth.options.hooks?.before as unknown as (c: unknown) => Promise<unknown>;
+    const disabled = await refused(hook({ path: "/sign-in/social", body: { provider: "google" } }));
+    expect(disabled.body?.code).toBe("PROVIDER_DISABLED");
+    const params = await refused(hook({ path: "/sign-in/social", body: { provider: "google", idToken: { token: "x" } } }));
+    expect(params.body?.code).toBe("OAUTH_PARAMS_NOT_ALLOWED");
   });
 });
 

@@ -305,8 +305,8 @@ export default async function PrivacyPage() {
         />
         <p className="mt-4 text-sm leading-relaxed text-zinc-400">
           All of it is keyed to your random player id and nothing more: no email, no real
-          name, no device or location data. It lives in an Upstash Redis instance run for this
-          event, next to your account. Being straight with you: apart from the activity
+          name, no device or location data. It lives in the Redis database that runs alongside
+          this site for this event, next to your account. Being straight with you: apart from the activity
           log&apos;s rolling cap, this competition data has no automatic expiry today, so treat
           it as kept until the organizers clear it down after the event. Clearing the event
           wipes this data but keeps accounts. You can ask for yours, or your whole account, to
@@ -416,8 +416,9 @@ export default async function PrivacyPage() {
               own infrastructure, so they process requests and keep standard server logs.
             </>,
             <>
-              <span className="text-white">Upstash</span>: stores the accounts and competition
-              data described above, in a Redis instance run for this event.
+              <span className="text-white">The event&apos;s database</span>: a Redis instance the
+              organizer runs alongside this site stores the accounts and competition data
+              described above.
             </>,
             ...(event.discordUrl
               ? [

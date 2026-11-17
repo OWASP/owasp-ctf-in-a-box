@@ -615,8 +615,11 @@ export default function AdminSupportTab({
                   danger: true,
                   confirmLabel: c.confirmLabel,
                   body: c.body,
-                  onConfirm: () =>
-                    run(
+                  onConfirm: () => {
+                    // A new issue voids the code on screen whether or not its
+                    // answer arrives, so the old one is never left to hand over.
+                    setResetCode(null);
+                    return run(
                       () =>
                         fetch("/api/admin/ops/user", {
                           method: "POST",
@@ -629,7 +632,8 @@ export default function AdminSupportTab({
                         }
                         return `Issued a reset code for ${detail.name}.`;
                       },
-                    ),
+                    );
+                  },
                 });
               }}
             >

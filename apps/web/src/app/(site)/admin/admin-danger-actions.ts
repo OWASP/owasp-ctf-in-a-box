@@ -14,6 +14,11 @@ import { authClient } from "@/lib/auth-client";
 import { signInHref } from "@/lib/post-signin";
 import type { ConfirmState } from "./types";
 
+/** What the organizer sees when the Delete all accounts request gets no
+ *  answer: the sweep may have run, so they check before a retry. */
+export const DELETE_ALL_ACCOUNTS_LOST =
+  "No answer from the server: the accounts may already be deleted. Reload /admin to check before trying again.";
+
 /** The Delete all accounts confirmation. The server re-checks the phrase. */
 export function deleteAllAccountsConfirm(): Pick<ConfirmState, "title" | "danger" | "confirmLabel"> & {
   requireType: string;
@@ -130,11 +135,19 @@ export function createDangerActions({
   const doDeleteAllAccounts = async (confirmValue: string): Promise<void> => {
     setError(null);
     setResetInfo(null);
-    const res = await fetch("/api/admin/ops/accounts", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirm: confirmValue }),
-    });
+    let res: Response;
+    try {
+      res = await fetch("/api/admin/ops/accounts", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: confirmValue }),
+      });
+    } catch {
+      // The request may have reached the server: a lost response says
+      // nothing about whether the sweep ran.
+      setError(DELETE_ALL_ACCOUNTS_LOST);
+      return;
+    }
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     if (!res.ok) {
       setError(data.error ?? "Delete all accounts failed");

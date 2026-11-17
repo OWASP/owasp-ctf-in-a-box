@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { signOut } = vi.hoisted(() => ({ signOut: vi.fn() }));
 vi.mock("@/lib/auth-client", () => ({ authClient: { signOut } }));
 
-import { createDangerActions, deleteAllAccountsConfirm } from "@/app/(site)/admin/admin-danger-actions";
+import { DELETE_ALL_ACCOUNTS_LOST, createDangerActions, deleteAllAccountsConfirm } from "@/app/(site)/admin/admin-danger-actions";
 
 describe("deleteAllAccountsConfirm", () => {
   it("requires the typed phrase and says what survives", () => {
@@ -68,6 +68,16 @@ describe("doDeleteAllAccounts", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, json: async () => ({ error: "nope" }) }));
     await actions.doDeleteAllAccounts("x");
     expect(setError).toHaveBeenLastCalledWith("nope");
+    expect(signOut).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("reports a lost request as maybe-done and stays put", async () => {
+    const { actions, setError, assign } = make();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    await expect(actions.doDeleteAllAccounts("delete all accounts")).resolves.toBeUndefined();
+    expect(setError).toHaveBeenLastCalledWith(DELETE_ALL_ACCOUNTS_LOST);
+    expect(DELETE_ALL_ACCOUNTS_LOST).toMatch(/may already be deleted/);
     expect(signOut).not.toHaveBeenCalled();
     expect(assign).not.toHaveBeenCalled();
   });

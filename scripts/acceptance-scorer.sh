@@ -391,10 +391,11 @@ redis_freeze HSET ctf:admin:settings resetAt 1640995200000
 expect_code 422 "$(score_at pre-reset 2021-06-01T00:00:00Z)" "a score posted before the reset epoch"
 expect_code 202 "$(score_at post-reset 2022-06-01T00:00:00Z)" "a score posted after the reset epoch"
 
-# A deleted player's score: the app sets ctf:deleted:<id> before it
-# deletes anything, and the solve script checks it in the same EVAL as the
-# write. While the account row in ctf:auth:user still exists the delete is in
-# progress (503, sync retries); once it is gone the refusal is final (422).
+# A held player's score: the app adds to ctf:score-hold:<id> before a delete
+# or an unlink writes anything, and the solve script checks it in the same EVAL
+# as the write. While the account row in ctf:auth:user still exists the hold is
+# a delete or unlink in progress (503, sync retries); once the row is gone the
+# player is deleted and the refusal is final (422).
 score_deleted_body() { # $1 = player label, $2 = file for the body -> status code
   curl -s -o "$2" -w '%{http_code}' -X POST "http://127.0.0.1:$FREEZE_PORT/score" \
     -H "authorization: Bearer test-token" -H 'content-type: application/json' \
@@ -407,13 +408,13 @@ expect_no_solve() { # $1 = player label, $2 = what
 }
 DELETED_BODY="$TMP/deleted-body.json"
 
-echo "--- deleted player: a score mid-delete (marker set, account row present) answers 503 and writes nothing"
-redis_freeze SADD "ctf:deleted:$(player_for doomed)" x
+echo "--- score hold: a score mid-delete or mid-unlink (hold set, account row present) answers 503 and writes nothing"
+redis_freeze SADD "ctf:score-hold:$(player_for doomed)" x
 redis_freeze HSET ctf:auth:user "$(player_for doomed)" '{}'
-expect_code 503 "$(score_deleted_body doomed "$DELETED_BODY")" "a score while the player's delete is in progress"
-grep -q '"player delete in progress"' "$DELETED_BODY" \
-  || { echo "FAIL: the 503 body did not say the delete is in progress: $(cat "$DELETED_BODY")"; exit 1; }
-expect_no_solve doomed "a score while the player's delete is in progress"
+expect_code 503 "$(score_deleted_body doomed "$DELETED_BODY")" "a score while the player's scores are on hold"
+grep -q '"player scores on hold"' "$DELETED_BODY" \
+  || { echo "FAIL: the 503 body did not say the player's scores are on hold: $(cat "$DELETED_BODY")"; exit 1; }
+expect_no_solve doomed "a score while the player's scores are on hold"
 
 echo "--- deleted player: once the account row is gone the score is refused for good (422 player-deleted)"
 redis_freeze HDEL ctf:auth:user "$(player_for doomed)"
@@ -423,7 +424,7 @@ grep -q '"refused":"player-deleted"' "$DELETED_BODY" \
 expect_no_solve doomed "a score for a deleted player"
 
 echo "--- deleted player: another player's score still records (202)"
-expect_code 202 "$(score_deleted_body survivor "$DELETED_BODY")" "a score for a player with no deletion marker"
+expect_code 202 "$(score_deleted_body survivor "$DELETED_BODY")" "a score for a player with no score hold"
 has=$(docker exec "$FREEZE_REDIS_CTR" redis-cli HEXISTS ctf:solves:juice-shop "$(player_for survivor):reflected-xss-search") \
   || { echo "FAIL: could not read the surviving player's solve field (docker exec redis-cli HEXISTS failed)"; exit 1; }
 [ "$has" = "1" ] || { echo "FAIL: the surviving player's solve field is missing (HEXISTS=$has)"; exit 1; }

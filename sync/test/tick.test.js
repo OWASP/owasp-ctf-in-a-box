@@ -422,7 +422,7 @@ test("a deleted player's score (422 player-deleted) is logged with its reason, s
   assert.equal(posts.length, 1, "a refused revision is never re-presented");
 });
 
-test("a 503 (player delete in progress) is retried next tick and not marked seen", async () => {
+test("a 503 (player scores on hold) is retried next tick and not marked seen", async () => {
   const posts = [];
   let n = 0;
   const f = async (url, opts) => {
@@ -431,7 +431,7 @@ test("a 503 (player delete in progress) is retried next tick and not marked seen
     if (u.endsWith("/score")) {
       posts.push(JSON.parse(opts.body));
       return ++n === 1
-        ? new Response(JSON.stringify({ error: "player delete in progress" }), { status: 503 })
+        ? new Response(JSON.stringify({ error: "player scores on hold" }), { status: 503 })
         : new Response(null, { status: 202 });
     }
     throw new Error(`unexpected url ${u}`);

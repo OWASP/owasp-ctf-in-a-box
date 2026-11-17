@@ -68,7 +68,7 @@ function scorer(status = () => 202) {
     if (s === "throw") throw new Error("fetch failed");
     if (s === 422) return new Response(JSON.stringify({ refused: "paused" }), { status: 422 });
     if (s === "player-deleted") return new Response(JSON.stringify({ error: "player deleted", refused: "player-deleted" }), { status: 422 });
-    if (s === 503) return new Response(JSON.stringify({ error: "player delete in progress" }), { status: 503 });
+    if (s === 503) return new Response(JSON.stringify({ error: "player scores on hold" }), { status: 503 });
     return new Response(null, { status: s });
   };
   return { posts, fetchImpl };
@@ -170,7 +170,7 @@ test("a deleted player's held score is refused for good: released, counted refus
   assert.equal(posts.length, 1, "a refused held score is never posted again");
 });
 
-test("a held score whose player's delete is in progress (503) is kept and retried", async () => {
+test("a held score whose player's scores are on hold (503) is kept and retried", async () => {
   const redis = fakeRedis({ links: { octocat: { player: PLAYER, linkedAt: T - MIN } }, held: { octocat: { "1@2026-11-13T10:00:00Z": JSON.stringify(entryA) } } });
   let n = 0;
   const { posts, fetchImpl } = scorer(() => (++n === 1 ? 503 : 202));

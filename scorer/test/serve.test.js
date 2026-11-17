@@ -729,24 +729,24 @@ test("an unreadable scoring policy fails OPEN: the score is recorded at its comm
   assert.deepEqual(await store.getSolves("dvwa"), { [pid("octocat") + ":sqli-low"]: "2026-08-14T10:00:00.000Z" });
 });
 
-// A deleted player's score. The app marks ctf:deleted:<id> before it
-// deletes anything; the solve write checks that marker atomically, so a score
-// that lands mid-delete waits (503, sync retries) and one after the account
-// row is gone is refused for good (422).
+// A held player's score. The app adds to ctf:score-hold:<id> before a delete
+// or an unlink writes anything; the solve write checks that hold atomically, so
+// a score that lands mid-delete or mid-unlink waits (503, sync retries) and one
+// after the account row is gone is refused for good (422).
 
-test("a score for a player whose delete is in progress answers 503 and writes nothing", async (t) => {
+test("a score for a player on hold (delete or unlink in progress) answers 503 and writes nothing", async (t) => {
   const { store, post } = await bootWith(t);
-  store.deleted.add(pid("octocat"));
+  store.holds.add(pid("octocat"));
   store.users.add(pid("octocat"));
   const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
   assert.equal(res.status, 503);
-  assert.deepEqual(await res.json(), { error: "player delete in progress" });
+  assert.deepEqual(await res.json(), { error: "player scores on hold" });
   assert.deepEqual(await store.getSolves("dvwa"), {});
 });
 
 test("a score for a deleted player answers 422 player-deleted and writes nothing", async (t) => {
   const { store, post } = await bootWith(t);
-  store.deleted.add(pid("octocat"));
+  store.holds.add(pid("octocat"));
   const res = await post(timed("octocat", "dvwa", ["sqli-low"], "2026-08-14T10:00:00Z"));
   assert.equal(res.status, 422);
   assert.deepEqual(await res.json(), { error: "player deleted", refused: "player-deleted" });

@@ -57,9 +57,9 @@ describe("RESET_PREFIXES", () => {
     }
   });
 
-  it("keeps the deleted-player markers through a master reset", () => {
+  it("keeps the score holds through a master reset", () => {
     for (const [, pattern] of RESET_PREFIXES) {
-      expect(globToRegExp(pattern).test("ctf:deleted:x")).toBe(false);
+      expect(globToRegExp(pattern).test("ctf:score-hold:x")).toBe(false);
     }
   });
 

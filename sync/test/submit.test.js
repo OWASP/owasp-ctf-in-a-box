@@ -39,8 +39,8 @@ test("refused on 422 player-deleted: a verdict on who, final like the rest", asy
   assert.deepEqual(await submitScore(CFG, PAYLOAD, f), { outcome: "refused", reason: "player-deleted" });
 });
 
-test("a 503 (player delete in progress) throws so the caller retries", async () => {
-  const f = async () => new Response(JSON.stringify({ error: "player delete in progress" }), { status: 503 });
+test("a 503 (player scores on hold) throws so the caller retries", async () => {
+  const f = async () => new Response(JSON.stringify({ error: "player scores on hold" }), { status: 503 });
   await assert.rejects(() => submitScore(CFG, PAYLOAD, f));
 });
 

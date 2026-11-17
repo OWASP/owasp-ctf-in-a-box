@@ -166,7 +166,7 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
       await pipeline([
         ["DEL", `ctf:user:${id}`, `ctf:user:${id}:hints`, `ctf:hints:at:${id}`, `ctf:quiz:answers:${id}`, `ctf:quiz:attempts:${id}`],
         ["DEL", `ctf:classic:solves:${id}`, `ctf:classic:attempts:${id}`, `ctf:classic:opened:${id}`, `ctf:link:user:${id}`],
-        ["DEL", `ctf:deleted:${id}`],
+        ["DEL", `ctf:score-hold:${id}`],
         ...buckets.map((b) => ["DEL", `ctf:rl:${b}:${id}`]),
         ...["ctf:hints:spent", "ctf:quiz:points", "ctf:quiz:answered", "ctf:quiz:lastAt", "ctf:classic:points", "ctf:classic:solved", "ctf:classic:lastAt", "ctf:link:at"].map((k) => ["HDEL", k, id]),
       ]);
@@ -300,35 +300,35 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
       spy.mockRestore();
     }
     // The event record and the link went before the failure; the account did
-    // not, so the delete's own marker is gone and later scores write.
-    const [record, marker] = await pipeline([["EXISTS", `ctf:user:${id}`], ["EXISTS", `ctf:deleted:${id}`]]);
+    // not, so the delete's own hold token is gone and later scores write.
+    const [record, hold] = await pipeline([["EXISTS", `ctf:user:${id}`], ["EXISTS", `ctf:score-hold:${id}`]]);
     expect(record.result).toBe(0);
-    expect(marker.result).toBe(0);
+    expect(hold.result).toBe(0);
     expect((await authState(id)).user).toMatchObject({ id });
 
     await expect(ops.deleteUser(id, actor)).resolves.toMatchObject({ leftTeam: null });
-    const [markedAfter] = await pipeline([["SMEMBERS", `ctf:deleted:${id}`]]);
-    expect(markedAfter.result).toEqual([expect.stringMatching(/^[0-9a-f-]{36}$/)]);
+    const [heldAfter] = await pipeline([["SMEMBERS", `ctf:score-hold:${id}`]]);
+    expect(heldAfter.result).toEqual([expect.stringMatching(/^[0-9a-f-]{36}$/)]);
     expect(await authState(id)).toEqual({ user: null, accounts: 0, sessions: 0 });
     const [blocked] = await pipeline([["SISMEMBER", "ctf:relink:blocked", gh]]);
     expect(blocked.result).toBe(1);
   });
 
-  it("a finished delete leaves the deleted marker and no account row, so the scorer answers deleted", async () => {
+  it("a finished delete leaves its score-hold token and no account row, so the scorer answers deleted", async () => {
     const { pipeline, ops } = await load();
     const gh = `vd5${tag}`.slice(0, 39);
     const id = await makePlayer(gh);
-    const [before] = await pipeline([["EXISTS", `ctf:deleted:${id}`]]);
+    const [before] = await pipeline([["EXISTS", `ctf:score-hold:${id}`]]);
     expect(before.result).toBe(0);
 
     await ops.deleteUser(id, { id: crypto.randomUUID(), name: "organizer" });
 
-    const [marker, row] = await pipeline([["SMEMBERS", `ctf:deleted:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
-    expect(marker.result).toEqual([expect.stringMatching(/^[0-9a-f-]{36}$/)]);
+    const [hold, row] = await pipeline([["SMEMBERS", `ctf:score-hold:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
+    expect(hold.result).toEqual([expect.stringMatching(/^[0-9a-f-]{36}$/)]);
     expect(row.result).toBe(0);
   });
 
-  it("a second delete that fails after the first finished keeps the marker", async () => {
+  it("a second delete that fails after the first finished keeps the hold", async () => {
     const { ctx, pipeline, ops } = await load();
     const gh = `vd6${tag}`.slice(0, 39);
     const id = await makePlayer(gh);
@@ -344,40 +344,40 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
       spy.mockRestore();
     }
     // B's restore lifts nothing with the row gone: A's token and B's stay.
-    const [marker, row] = await pipeline([["SCARD", `ctf:deleted:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
-    expect(marker.result).toBe(2);
+    const [hold, row] = await pipeline([["SCARD", `ctf:score-hold:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
+    expect(hold.result).toBe(2);
     expect(row.result).toBe(0);
   });
 
   it("restore lifts only its own token, and only while the account row exists", async () => {
     const { pipeline } = await load();
-    const { markDeleting, restoreAfterFailedDelete } = await import("@/lib/deleted-player");
+    const { holdScores, restoreAfterFailedDelete } = await import("@/lib/score-hold");
     const gh = `vd7${tag}`.slice(0, 39);
     const id = await makePlayer(gh);
 
     const mine = crypto.randomUUID();
     const theirs = crypto.randomUUID();
-    await markDeleting(id, mine);
-    await markDeleting(id, theirs);
+    await holdScores(id, mine);
+    await holdScores(id, theirs);
     await expect(restoreAfterFailedDelete(id, mine)).resolves.toBe("in-flight");
-    const [left] = await pipeline([["SMEMBERS", `ctf:deleted:${id}`]]);
+    const [left] = await pipeline([["SMEMBERS", `ctf:score-hold:${id}`]]);
     expect(left.result).toEqual([theirs]);
     await expect(restoreAfterFailedDelete(id, theirs)).resolves.toBe("restored");
-    const [gone] = await pipeline([["EXISTS", `ctf:deleted:${id}`]]);
+    const [gone] = await pipeline([["EXISTS", `ctf:score-hold:${id}`]]);
     expect(gone.result).toBe(0);
   });
 
-  it("A fails while B is in flight: B's mark survives A's restore, and B finishes deleted", async () => {
+  it("A fails while B is in flight: B's hold token survives A's restore, and B finishes deleted", async () => {
     const { ctx, pipeline, ops } = await load();
-    const { markDeleting, restoreAfterFailedDelete } = await import("@/lib/deleted-player");
+    const { holdScores, restoreAfterFailedDelete } = await import("@/lib/score-hold");
     const gh = `vd8${tag}`.slice(0, 39);
     const id = await makePlayer(gh);
     const actor = { id: crypto.randomUUID(), name: "organizer" };
 
-    // B marks; A marks, fails before its row step and restores. B's token is
+    // B holds; A holds, fails before its row step and restores. B's token is
     // still there, so the scorer keeps answering pending.
     const b = crypto.randomUUID();
-    await markDeleting(id, b);
+    await holdScores(id, b);
     const original = ctx.internalAdapter.deleteAccounts.bind(ctx.internalAdapter);
     const spy = vi.spyOn(ctx.internalAdapter, "deleteAccounts").mockRejectedValueOnce(new Error("auth store: down"));
     try {
@@ -385,19 +385,19 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     } finally {
       spy.mockRestore();
     }
-    const [mid, rowMid] = await pipeline([["SMEMBERS", `ctf:deleted:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
+    const [mid, rowMid] = await pipeline([["SMEMBERS", `ctf:score-hold:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
     expect(mid.result).toEqual([b]);
     expect(rowMid.result).toBe(1);
 
-    // B finishes: the row goes with B's token still in the marker, so the
+    // B finishes: the row goes with B's token still on the hold, so the
     // scorer answers deleted. B's own restore, after the fact, keeps it.
     await original(id);
     await ctx.internalAdapter.deleteUser(id);
-    const [end, rowEnd] = await pipeline([["EXISTS", `ctf:deleted:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
+    const [end, rowEnd] = await pipeline([["EXISTS", `ctf:score-hold:${id}`], ["HEXISTS", "ctf:auth:user", id]]);
     expect(end.result).toBe(1);
     expect(rowEnd.result).toBe(0);
     await expect(restoreAfterFailedDelete(id, b)).resolves.toBe("kept");
-    const [still] = await pipeline([["SMEMBERS", `ctf:deleted:${id}`]]);
+    const [still] = await pipeline([["SMEMBERS", `ctf:score-hold:${id}`]]);
     expect(still.result).toEqual([b]);
   });
 
@@ -503,6 +503,103 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     ]);
     expect([owner.result, pointer.result]).toEqual([null, null]);
     expect((await ctx.internalAdapter.findAccounts(id)).map((a) => a.providerId)).toEqual(["credential"]);
+  });
+
+  /** The scorer's own solve script (scorer/src/store.js), run against this
+   *  Redis with the keys the scorer hands it. */
+  async function scorerWrite(id: string, challenge: string): Promise<unknown> {
+    const storeUrl = new URL("../../../../../scorer/src/store.js", import.meta.url).href;
+    const { RECORD_SOLVES_SCRIPT } = (await import(/* @vite-ignore */ storeUrl)) as { RECORD_SOLVES_SCRIPT: string };
+    const { upstashEval } = await import("@/lib/upstash");
+    return upstashEval(RECORD_SOLVES_SCRIPT, [`ctf:solves:${target}`, `ctf:score-hold:${id}`, "ctf:auth:user"], [id, at, challenge]);
+  }
+
+  it("unlinkGithub holds a score resolved before the take: the scorer answers pending mid-unlink and writes nothing", async () => {
+    const { ctx, pipeline, ops } = await load();
+    const gh = `vh1${tag}`.slice(0, 39);
+    const id = await makePlayer(gh, `vh1${tag}`.slice(0, 20));
+    // Sync resolved the author's login to this player before the unlink began.
+    const [resolved] = await pipeline([["GET", `ctf:link:github:${gh}`]]);
+    expect(resolved.result).toBe(id);
+
+    // The score reaches the scorer after the unlink's solve count found
+    // nothing: the first account-row delete runs only after that count.
+    let midUnlink: unknown;
+    const original = ctx.internalAdapter.deleteAccount.bind(ctx.internalAdapter);
+    const spy = vi.spyOn(ctx.internalAdapter, "deleteAccount").mockImplementationOnce(async (accountId: string) => {
+      midUnlink = await scorerWrite(id, "held1");
+      return original(accountId);
+    });
+    try {
+      await expect(ops.unlinkGithub(id, { id: crypto.randomUUID(), name: "organizer" })).resolves.toEqual({ login: gh });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(midUnlink).toBe("pending");
+    const [field, hold, owner, pointer] = await pipeline([
+      ["HEXISTS", `ctf:solves:${target}`, `${id}:held1`],
+      ["EXISTS", `ctf:score-hold:${id}`],
+      ["GET", `ctf:link:github:${gh}`],
+      ["GET", `ctf:link:user:${id}`],
+    ]);
+    expect(field.result).toBe(0);
+    // Hold lifted and the login unlinked: sync's retry resolves nobody and
+    // holds the score instead of scoring it.
+    expect(hold.result).toBe(0);
+    expect([owner.result, pointer.result]).toEqual([null, null]);
+  });
+
+  it("unlinkGithub on a scored link restores it and lifts its hold, so sync's retry scores", async () => {
+    const { pipeline, ops } = await load();
+    const gh = `vh2${tag}`.slice(0, 39);
+    const id = await makePlayer(gh, `vh2${tag}`.slice(0, 20));
+    await pipeline([["HSET", `ctf:solves:${target}`, `${id}:api1`, at]]);
+    try {
+      await expect(ops.unlinkGithub(id, { id: crypto.randomUUID(), name: "organizer" })).rejects.toThrow(
+        "This GitHub link has scored and cannot be removed.",
+      );
+      const [hold, owner] = await pipeline([["EXISTS", `ctf:score-hold:${id}`], ["GET", `ctf:link:github:${gh}`]]);
+      expect(hold.result).toBe(0);
+      expect(owner.result).toBe(id);
+      expect(await scorerWrite(id, "api2")).toBe("ok");
+    } finally {
+      await pipeline([["HDEL", `ctf:solves:${target}`, `${id}:api1`, `${id}:api2`]]);
+    }
+  });
+
+  it("unlinkGithub leaves a concurrent delete's hold token in place", async () => {
+    const { pipeline, ops } = await load();
+    const { holdScores } = await import("@/lib/score-hold");
+    const gh = `vh3${tag}`.slice(0, 39);
+    const id = await makePlayer(gh, `vh3${tag}`.slice(0, 20));
+    const other = crypto.randomUUID();
+    await holdScores(id, other);
+    await ops.unlinkGithub(id, { id: crypto.randomUUID(), name: "organizer" });
+    const [left] = await pipeline([["SMEMBERS", `ctf:score-hold:${id}`]]);
+    expect(left.result).toEqual([other]);
+  });
+
+  it("a link restore after a delete completed between the take and a failed count recreates nothing and blocks the login", async () => {
+    const { pipeline, ops } = await load();
+    const { takeGithubLink, restoreGithubLink } = await import("@/lib/github-link");
+    const gh = `vh4${tag}`.slice(0, 39);
+    const id = await makePlayer(gh, `vh4${tag}`.slice(0, 20));
+    const taken = await takeGithubLink(id);
+    expect(taken).toMatchObject({ login: gh, ours: true });
+    // The delete sees no link, so its own release blocks nothing.
+    await ops.deleteUser(id, { id: crypto.randomUUID(), name: "organizer" });
+    const [blockedBefore] = await pipeline([["SISMEMBER", "ctf:relink:blocked", gh]]);
+    expect(blockedBefore.result).toBe(0);
+    // The unlink's count then fails and it puts the link back.
+    await expect(restoreGithubLink(id, taken!)).resolves.toBe("deleted");
+    const [owner, pointer, time, blocked] = await pipeline([
+      ["GET", `ctf:link:github:${gh}`],
+      ["GET", `ctf:link:user:${id}`],
+      ["HEXISTS", "ctf:link:at", id],
+      ["SISMEMBER", "ctf:relink:blocked", gh],
+    ]);
+    expect([owner.result, pointer.result, time.result]).toEqual([null, null, 0]);
+    expect(blocked.result).toBe(1);
   });
 
   it("unlinkGithub refuses a player with a password but no username and changes nothing", async () => {

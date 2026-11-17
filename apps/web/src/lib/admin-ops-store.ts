@@ -16,7 +16,7 @@ import { errorLabel } from "@/lib/error-label";
 import { OpsValidationError } from "@/lib/ops-errors";
 import { auth } from "@/lib/auth";
 import { type TakenLink, getGithubLink, releaseGithubLink, restoreGithubLink, takeGithubLink } from "@/lib/github-link";
-import { markDeleting, restoreAfterFailedDelete } from "@/lib/deleted-player";
+import { holdScores, releaseScoreHold, restoreAfterFailedDelete } from "@/lib/score-hold";
 import { currentUsername, renameUsername } from "@/lib/username-store";
 import { USERNAME_COPY } from "@/lib/username-rules";
 import { resolveTeamMaxMembers } from "@/lib/team-store";
@@ -433,7 +433,7 @@ export async function resetUserProgress(rawId: unknown, actor: AuditActor): Prom
 }
 
 /** A reset player's Secure Development solves come back when their PR is
- *  scored again. Not a delete's warning: the deleted marker refuses that PR. */
+ *  scored again. Not a delete's warning: the score hold refuses that PR. */
 const SECURE_DEV_RETURNS_WARNING =
   "Secure Development solves are re-ingested from PR comments: the scorer writes them with HSETNX and the poller re-submits, so these return if this contestant's PR is scored again. Close the PR or freeze scoring to make it stick.";
 
@@ -541,11 +541,11 @@ return 1`;
  * what a run that failed at the grant removal leaves, and the retry removes
  * it, with its own warning.
  *
- * After the refusals and before any other write it sets the deleted marker
- * (`ctf:deleted:<id>`, deleted-player.ts), which the scorer reads atomically
- * with its solve write, so a Secure Development score in flight is never
- * written into the cleared progress. The marker stays once the account row is
- * gone; a delete that throws before that lifts only its own token. Deleting
+ * After the refusals and before any other write it adds a token to the score
+ * hold (`ctf:score-hold:<id>`, score-hold.ts), which the scorer reads
+ * atomically with its solve write, so a Secure Development score in flight is
+ * never written into the cleared progress. The token stays once the account
+ * row is gone; a delete that throws before that lifts only its own token. Deleting
  * every account (`deleteAllAccounts`) sets none: its master reset moves
  * `resetAt`, and the scorer refuses every score from before it.
  *
@@ -587,18 +587,18 @@ export async function deleteUser(
   // aborted with nothing written.
   const heldLogin = detail.github?.login.toLowerCase() ?? null;
 
-  // The deleted marker goes first, before any write: from here the scorer
+  // The score hold goes first, before any write: from here the scorer
   // answers this player's in-flight score "pending" (503, sync retries) while
   // the account row exists and "deleted" (422, final) once it is gone, so no
   // score lands between the progress reset below and the row delete. The token
-  // exists before the mark so a mark of unknown outcome (a timeout) is still
+  // exists before the hold so a hold of unknown outcome (a timeout) is still
   // lifted by the restore below; SREM of a non-member is harmless.
   const token = crypto.randomUUID();
-  // Set once the re-read confirms the row is gone: marker plus no row is the
+  // Set once the re-read confirms the row is gone: hold plus no row is the
   // finished state, so a later throw has nothing to restore.
   let rowGone = false;
   try {
-    await markDeleting(player, token);
+    await holdScores(player, token);
     // The link goes, blocked, before any progress write: from here sync reads
     // the login as unlinked and holds its scores instead of scoring them into
     // the reset below, and a failure later leaves an account a retry deletes,
@@ -612,7 +612,7 @@ export async function deleteUser(
     try {
       const leftTeam = detail.team?.slug ?? null;
       // The reset without resetUserProgress's "scored again" warning: the
-      // marker refuses this player's PR, so their solves do not come back.
+      // hold refuses this player's PR, so their solves do not come back.
       const reset = await resetProgressOf(player, actor);
       const cmds: (string | number)[][] = [];
       if (leftTeam) cmds.push(["SREM", membersKey(leftTeam), player]);
@@ -666,9 +666,9 @@ export async function deleteUser(
     }
   } catch (err) {
     // The account row may still be there: lift this call's token from the
-    // marker. The script does that only while the row exists, so a delete
-    // that finished concurrently keeps the marker; scores write again only
-    // once no other delete of this player holds a token in it. A failed
+    // hold. The script does that only while the row exists, so a delete
+    // that finished concurrently keeps the hold; scores write again only
+    // once no other delete or unlink of this player holds a token in it. A failed
     // restore leaves this token, which holds the player's scores (503, sync
     // retries) until a re-run of the delete SUCCEEDS; the original error is
     // what the caller sees.
@@ -676,11 +676,11 @@ export async function deleteUser(
       try {
         const outcome = await restoreAfterFailedDelete(player, token);
         if (outcome === "in-flight") {
-          console.error(`[admin-ops] delete ${player} failed; another delete token remains on the deleted marker (running, or failed without lifting it)`);
+          console.error(`[admin-ops] delete ${player} failed; another token remains on the score hold (a delete or unlink running, or failed without lifting it)`);
         }
       } catch (restoreErr) {
         console.error(
-          `[admin-ops] delete ${player} failed and removing its deleted marker failed too; scores for this player wait until a re-run of the delete succeeds`,
+          `[admin-ops] delete ${player} failed and lifting its score hold failed too; scores for this player wait until a re-run of the delete succeeds`,
           errorLabel(restoreErr),
         );
       }
@@ -986,14 +986,19 @@ function noOtherSignIn(hasUsername: boolean, hasPassword: boolean): string {
  * Refused when no usable sign-in method would remain (a password with a
  * username, or another provider that is enabled), read before any write; a
  * failed read throws. Refused while the link has scored (any Secure
- * Development solve: the score is attributed through it). That count runs
- * AFTER the link is released, so a score sync attributes from then on is
- * held, not scored; a solve found puts the link back exactly as it was (time
- * included) and refuses, and a failed count does the same before it throws.
- * What this cannot see is a score sync resolved to this player before the
- * release and the scorer persists after the count: the scorer's HSETNX does
- * not consult the link, so closing that needs a lock shared with the scorer.
- * A link that cannot be put back throws and is logged.
+ * Development solve: the score is attributed through it).
+ *
+ * The whole unlink runs under the player's score hold (`ctf:score-hold:<id>`,
+ * score-hold.ts), the one the scorer reads atomically with its solve write:
+ * the hold goes on before the link is taken and comes off, this call's token
+ * only, after the last write. A score sync resolved through the link before
+ * the take is either written before the hold (so the solve count sees it) or
+ * answered 503 while the hold is on, and sync's retry resolves the login
+ * again: unlinked, it is held; put back, it scores. A solve found puts the
+ * link back exactly as it was (time included) and refuses, and a failed count
+ * does the same before it throws. A link that cannot be put back throws and is
+ * logged; one whose player was deleted meanwhile is not put back, and its
+ * login is blocked.
  *
  * The link keys go before the account rows, so a failure between the two
  * leaves GitHub rows with no link, which a retry deletes. Whether Secure
@@ -1022,34 +1027,55 @@ export async function unlinkGithub(rawId: unknown, actor: AuditActor): Promise<{
   }
   if (!usable) throw new OpsValidationError("id", noOtherSignIn(hasUsername, hasPassword));
 
-  const taken = link ? await takeGithubLink(player) : null;
-  if (taken) {
-    let solves: number;
-    try {
-      solves = await countSecureDevSolves(player);
-    } catch (err) {
-      await putBack(player, taken);
-      throw err;
+  // The token exists before the hold so a hold of unknown outcome (a
+  // timeout) is still lifted below; SREM of a non-member is harmless.
+  const token = crypto.randomUUID();
+  try {
+    await holdScores(player, token);
+    const taken = link ? await takeGithubLink(player) : null;
+    if (taken) {
+      let solves: number;
+      try {
+        solves = await countSecureDevSolves(player);
+      } catch (err) {
+        await putBack(player, taken);
+        throw err;
+      }
+      if (solves > 0) {
+        await putBack(player, taken);
+        throw new OpsValidationError("id", "This GitHub link has scored and cannot be removed.");
+      }
     }
-    if (solves > 0) {
-      await putBack(player, taken);
-      throw new OpsValidationError("id", "This GitHub link has scored and cannot be removed.");
+    for (const account of github) await internalAdapter.deleteAccount(account.id);
+    const login = taken?.login ?? null;
+    await audit("ops:github-unlink", actor, { player, login });
+    return { login };
+  } finally {
+    // A failed lift leaves this token, and every score for the player answers
+    // 503 until it is removed by hand (docs/troubleshooting.md); the unlink's
+    // own outcome is what the caller sees.
+    try {
+      await releaseScoreHold(player, token);
+    } catch (err) {
+      console.error(`[admin-ops] unlink ${player}: lifting its score hold failed; scores for this player wait until the token is removed`, errorLabel(err));
     }
   }
-  for (const account of github) await internalAdapter.deleteAccount(account.id);
-  const login = taken?.login ?? null;
-  await audit("ops:github-unlink", actor, { player, login });
-  return { login };
 }
 
 /** Restores a link `unlinkGithub` took, logging (without the login or id) a
  *  restore that fails: a scored login left unlinked is one another account
- *  can link. */
+ *  can link. A player deleted while the unlink ran gets no link back (the
+ *  restore blocks the login instead) and the unlink refuses. */
 async function putBack(player: string, taken: TakenLink): Promise<void> {
+  let outcome: "restored" | "deleted";
   try {
-    await restoreGithubLink(player, taken);
+    outcome = await restoreGithubLink(player, taken);
   } catch (err) {
     console.error(`[admin-ops] could not restore a scored GitHub link: ${errorLabel(err)}`);
     throw err;
+  }
+  if (outcome === "deleted") {
+    console.error("[admin-ops] a player was deleted while their GitHub unlink ran; the login is blocked instead of restored");
+    throw new OpsValidationError("id", "This player was deleted while the unlink ran.");
   }
 }

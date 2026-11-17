@@ -11,21 +11,23 @@ const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
 // The manual freeze's closed intervals, newest first, one JSON {from, to} per
 // entry. apps/web admin-store.ts writes it atomically with the `paused` flag.
 const ADMIN_PAUSES_KEY = "ctf:admin:pauses";
-// A player's deletion marker, a set of delete tokens that apps/web's
-// deleteUser adds to before it deletes anything; it never expires. Only its
-// existence is read here, whatever its type.
-export const deletedKey = (player) => `ctf:deleted:${player}`;
+// A player's score hold, a set of tokens: apps/web's deleteUser adds one
+// before it deletes anything (and leaves it once the account row is gone),
+// unlinkGithub adds one for the length of the unlink. Only its existence is
+// read here, whatever its type.
+export const scoreHoldKey = (player) => `ctf:score-hold:${player}`;
 // The better-auth user rows hash, field = player id: apps/web
 // auth-store/keys.ts rowsKey(AUTH_PREFIX, "user"). Both sides pin this literal.
 export const AUTH_USER_ROWS_KEY = "ctf:auth:user";
 
-// The solve write, judged against the deletion marker in the same EVAL so no
-// delete can land between the check and the HSETNX. A marker with the account
-// row still present is a delete in progress ('pending': write nothing, the
-// caller retries); a marker with the row gone is a deleted player ('deleted':
-// refused for good). No marker writes each `<player>:<id>` with HSETNX, so the
-// first solve time wins and a replay is a no-op.
-// KEYS: [1] ctf:solves:<target>, [2] ctf:deleted:<player>, [3] ctf:auth:user
+// The solve write, judged against the score hold in the same EVAL so no
+// delete or unlink can land between the check and the HSETNX. A hold with the
+// account row still present is a delete or unlink in progress ('pending':
+// write nothing, the caller retries and re-resolves the link); a hold with the
+// row gone is a deleted player ('deleted': refused for good). No hold writes
+// each `<player>:<id>` with HSETNX, so the first solve time wins and a replay
+// is a no-op.
+// KEYS: [1] ctf:solves:<target>, [2] ctf:score-hold:<player>, [3] ctf:auth:user
 // ARGV: [1] player, [2] at, [3..] challenge ids
 export const RECORD_SOLVES_SCRIPT = `
 if redis.call('EXISTS', KEYS[2]) == 1 then
@@ -96,15 +98,15 @@ export function createMemoryStore({ teams = [] } = {}) {
   // No event settings to judge a score's time against until a test sets
   // some — the same answer the Redis store gives when it cannot read them.
   let policy = null;
-  // Test seams mirroring ctf:deleted:<player> and the ctf:auth:user rows.
-  const deleted = new Set();
+  // Test seams mirroring ctf:score-hold:<player> and the ctf:auth:user rows.
+  const holds = new Set();
   const users = new Set();
   return {
-    deleted,
+    holds,
     users,
     async recordSolves(target, player, ids, at) {
       if (ids.length === 0) return "ok";
-      if (deleted.has(player)) return users.has(player) ? "pending" : "deleted";
+      if (holds.has(player)) return users.has(player) ? "pending" : "deleted";
       let hash = hashes.get(solvesKey(target));
       if (!hash) hashes.set(solvesKey(target), (hash = new Map()));
       for (const id of ids) {
@@ -199,7 +201,7 @@ export function createRedisStore({
       if (ids.length === 0) return "ok";
       const verdict = await evalScript(
         RECORD_SOLVES_SCRIPT,
-        [solvesKey(target), deletedKey(player), AUTH_USER_ROWS_KEY],
+        [solvesKey(target), scoreHoldKey(player), AUTH_USER_ROWS_KEY],
         [player, at, ...ids],
       );
       if (!SOLVE_VERDICTS.has(verdict)) {

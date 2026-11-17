@@ -6,7 +6,7 @@ import {
   RECORD_SOLVES_SCRIPT,
   createMemoryStore,
   createRedisStore,
-  deletedKey,
+  scoreHoldKey,
   solvesKey,
 } from "../src/store.js";
 
@@ -49,7 +49,7 @@ test("redis store: one EVAL of the solve script via SRH pipeline, bearer token",
       RECORD_SOLVES_SCRIPT,
       3,
       "ctf:solves:dvwa",
-      "ctf:deleted:octocat",
+      "ctf:score-hold:octocat",
       "ctf:auth:user",
       "octocat",
       T0,
@@ -90,15 +90,15 @@ test("redis store: a script error or an unknown verdict throws, never a verdict"
   );
 });
 
-test("deleted-player keys match the app's: ctf:deleted:<id> and the ctf:auth:user rows hash", () => {
-  assert.equal(deletedKey("octocat"), "ctf:deleted:octocat");
+test("score-hold keys match the app's: ctf:score-hold:<id> and the ctf:auth:user rows hash", () => {
+  assert.equal(scoreHoldKey("octocat"), "ctf:score-hold:octocat");
   // apps/web auth-store/keys.ts rowsKey(AUTH_PREFIX, "user"); the app pins the same literal.
   assert.equal(AUTH_USER_ROWS_KEY, "ctf:auth:user");
 });
 
-test("memory store: a deletion marker refuses the write — pending while the row exists, deleted after", async () => {
+test("memory store: a score hold refuses the write — pending while the row exists, deleted after", async () => {
   const store = createMemoryStore();
-  store.deleted.add("octocat");
+  store.holds.add("octocat");
   store.users.add("octocat");
   assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0), "pending");
   assert.deepEqual(await store.getSolves("dvwa"), {});

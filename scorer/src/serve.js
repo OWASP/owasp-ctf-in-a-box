@@ -153,11 +153,11 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     );
     const solvedAt = await solveTime(at);
     if (solvedAt.status) return json(res, solvedAt.status, solvedAt.body);
-    // The marker check and the write are one script: a delete in progress
-    // answers 503 (sync retries), a deleted player 422 (final, ADR 67). A
+    // The hold check and the write are one script: a delete or unlink in
+    // progress answers 503 (sync retries), a deleted player 422 (final, ADR 67). A
     // store error throws to the 500 below, so sync retries and nothing is lost.
     const written = await store.recordSolves(target, player, ids, solvedAt.iso);
-    if (written === "pending") return json(res, 503, { error: "player delete in progress" });
+    if (written === "pending") return json(res, 503, { error: "player scores on hold" });
     if (written === "deleted") return json(res, 422, { error: "player deleted", refused: "player-deleted" });
     if (!rubric) seenTargets.add(target);
     res.writeHead(202).end();

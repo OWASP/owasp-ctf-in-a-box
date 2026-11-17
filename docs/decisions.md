@@ -88,6 +88,8 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 70 — Unattributed Secure Development scores are held, not dropped](#adr-70-unattributed-secure-development-scores-are-held-not-dropped)
 - [ADR 71 — The AI module is retired in v2.0.0](#adr-71-the-ai-module-is-retired-in-v200)
 - [ADR 72 — Admins are claimed with a one-time code, not named in `.env`](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)
+- [ADR 73 — Reserved for Discord announcements](#adr-73-reserved-for-discord-announcements)
+- [ADR 74 — Players are kit accounts; GitHub is needed only for Secure Development](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -4469,6 +4471,12 @@ not read. Deleting an account must also remove its grant (#740).
 race on a public URL. Admins named by username in `.env`: usernames are
 self-chosen at open sign-up, so the name can be taken first. A slow password
 hash for the code: there is no low entropy for it to protect.
+
+## ADR 73. Reserved for Discord announcements
+
+**Status.** Reserved. The number belongs to the Discord announcements
+decision (#590), which its pull request (#639) writes here in full when it
+merges, replacing this entry.
 
 ## ADR 74. Players are kit accounts; GitHub is needed only for Secure Development
 

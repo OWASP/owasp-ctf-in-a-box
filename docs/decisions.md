@@ -4498,7 +4498,9 @@ different player and a login was the only handle an organizer had.
   appear once both their keys are in `.env`, and each has an on/off switch in
   the `/admin` Event tab (absent means on). Keys never go to Redis or an
   archive. No email is stored from any provider: every account gets a
-  placeholder email, and only GitHub contributes a field (its `login`).
+  placeholder email. Google and Discord contribute nothing from the profile;
+  GitHub contributes its `login`, and an account created by a GitHub sign-in
+  starts with the GitHub name and avatar.
 - **GitHub is required only for Secure Development.** With SD on, a player
   links GitHub from their profile (or signs in with it), and sync credits a
   PR to the player who linked its author's login. One GitHub account links to

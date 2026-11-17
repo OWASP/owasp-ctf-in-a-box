@@ -60,7 +60,7 @@ export function codeId(hash: string): string {
   return hash.slice(0, 8);
 }
 
-/** Set while a password reset writes `player`'s password (password-reset.ts
+/** Holds a token per password reset writing `player`'s password (password-reset.ts
  *  RESET_GUARD_SCRIPT): CLAIM_SCRIPT refuses that player while it exists, so
  *  no grant lands between the reset's organizer check and its write. Under
  *  password-reset's `ctf:admin:reset-code:` prefix, so delete-all-accounts

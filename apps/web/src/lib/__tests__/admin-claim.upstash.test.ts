@@ -151,7 +151,7 @@ describe.skipIf(!liveConfigured)("admin claim scripts against a live Redis", () 
     const { pipeline } = await load();
     const k = keys();
     const [boot, issued] = [sha("boot-busy"), sha("issued-busy")];
-    await pipeline([["SADD", k.grants, id(9)], ["HSET", k.gen, id(9), 0], ["SET", k.busy, "token", "EX", 60]]);
+    await pipeline([["SADD", k.grants, id(9)], ["HSET", k.gen, id(9), 0], ["SADD", k.busy, "token"], ["EXPIRE", k.busy, 60]]);
     expect(await runIssue(k, issued, id(9))).toBe(1);
     expect(await runClaim(k, id(1), boot, boot)).toEqual(["busy"]);
     expect(await runClaim(k, id(1), issued, "")).toEqual(["busy"]);

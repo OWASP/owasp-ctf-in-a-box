@@ -117,18 +117,21 @@ export const RESET_BUSY_TTL_SECONDS = 120;
  *
  * The organizer check right before the password write: 0 when the player
  * holds an admin grant (one claimed since the consume), with nothing written;
- * otherwise sets the busy key, which CLAIM_SCRIPT reads, so no grant can land
- * until RELEASE_RESET_GUARD_SCRIPT removes it after the write, or it expires.
+ * otherwise adds this redeem's token to the busy set, which CLAIM_SCRIPT
+ * reads, so no grant can land while any redeem of the player is writing. One
+ * token per redeem, so overlapping redeems each keep the guard until their
+ * own RELEASE_RESET_GUARD_SCRIPT, or the set expires.
  */
 export const RESET_GUARD_SCRIPT = `
 if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1 then return 0 end
-redis.call('SET', KEYS[2], ARGV[2], 'EX', tonumber(ARGV[3]))
+redis.call('SADD', KEYS[2], ARGV[2])
+redis.call('EXPIRE', KEYS[2], tonumber(ARGV[3]))
 return 1`;
 
-/** KEYS [resetBusy]; ARGV [token]. Removes the busy key only while it is this
- *  redeem's own. */
+/** KEYS [resetBusy]; ARGV [token]. Removes this redeem's token only; Redis
+ *  drops the key once no redeem holds one. */
 export const RELEASE_RESET_GUARD_SCRIPT = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('DEL', KEYS[1]) end
+redis.call('SREM', KEYS[1], ARGV[1])
 return 1`;
 
 /** Issue a single-use reset code for `playerId`, valid for 15 minutes, voiding
@@ -247,7 +250,7 @@ export async function redeemPasswordResetCode(rawCode: string, newPassword: stri
     }
     await internalAdapter.deleteUserSessions(player);
   } finally {
-    // A failed release leaves the key to expire: the player's claims answer
+    // A failed release leaves the token to expire: the player's claims answer
     // 503 until then, and the redeem's own outcome is what the caller sees.
     try {
       await upstashEval(RELEASE_RESET_GUARD_SCRIPT, [busy], [token]);

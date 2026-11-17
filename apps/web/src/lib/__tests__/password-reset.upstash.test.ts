@@ -212,6 +212,23 @@ describe.skipIf(!liveConfigured || !destructiveLiveRedisAllowed())("password res
     await expect(claim.claimAdmin(adminCode, { id: who, name: "p" }, "")).resolves.toEqual({ ok: true, via: "code" });
   });
 
+  it("overlapping redeems each keep the claim guard until their own release", async () => {
+    const { reset, claim, ADMIN_GRANTS_KEY } = await load();
+    const { upstashEval } = await import("@/lib/upstash");
+    const who = await player("password");
+    const busy = claim.resetBusyKey(who);
+    const guard = (token: string) =>
+      upstashEval(reset.RESET_GUARD_SCRIPT, [ADMIN_GRANTS_KEY, busy], [who, token, String(reset.RESET_BUSY_TTL_SECONDS)]);
+    const release = (token: string) => upstashEval(reset.RELEASE_RESET_GUARD_SCRIPT, [busy], [token]);
+    expect(await guard("a")).toBe(1);
+    expect(await guard("b")).toBe(1);
+    await release("b");
+    // A's write is still pending: the guard stays.
+    expect(await redis(["EXISTS", busy])).toBe(1);
+    await release("a");
+    expect(await redis(["EXISTS", busy])).toBe(0);
+  });
+
   it("a code redeemed twice concurrently succeeds exactly once", async () => {
     const { reset } = await load();
     const [by, who] = [await admin(), await player("password")];

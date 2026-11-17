@@ -569,7 +569,12 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
   it("unlinkGithub releases an unscored link and its github row for a player with a username and password", async () => {
     const { ctx, pipeline, ops } = await load();
     const gh = `vt7${tag}`.slice(0, 39);
-    const id = await makePlayer(gh, `vt7${tag}`.slice(0, 20));
+    // A username that does not contain the login, so search can match only the login.
+    const id = await makePlayer(gh, `vu7${tag}`.slice(0, 20));
+    // An avatar a GitHub sign-in stored on the row.
+    await ctx.internalAdapter.updateUser(id, { image: "https://avatars.githubusercontent.com/u/1?v=4" } as never);
+    const { findPlayers } = await import("@/lib/player");
+    expect((await findPlayers(gh, 200)).map((p) => p.id)).toContain(id);
     await expect(ops.unlinkGithub(id, { id: crypto.randomUUID(), name: "organizer" })).resolves.toEqual({ login: gh });
     const [owner, pointer] = await pipeline([
       ["GET", `ctf:link:github:${gh}`],
@@ -577,6 +582,15 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     ]);
     expect([owner.result, pointer.result]).toEqual([null, null]);
     expect((await ctx.internalAdapter.findAccounts(id)).map((a) => a.providerId)).toEqual(["credential"]);
+    const row = (await ctx.internalAdapter.findUserById(id)) as { login?: unknown; image?: unknown } | null;
+    expect(row?.login ?? null).toBeNull();
+    expect(row?.image ?? null).toBeNull();
+    // The old login no longer finds the player in admin search.
+    expect((await findPlayers(gh, 200)).map((p) => p.id)).not.toContain(id);
+    // A later write to the row does not re-link the old login.
+    await ctx.internalAdapter.updateUser(id, { name: "renamed" } as never);
+    const [relinked] = await pipeline([["GET", `ctf:link:github:${gh}`]]);
+    expect(relinked.result).toBeNull();
   });
 
   const scorerWrite = (id: string, challenge: string, login = "") => scorerSolveWrite(target, id, at, challenge, login);

@@ -1,0 +1,1 @@
+- **Fixed: a GitHub unlink now clears the player's GitHub login and GitHub avatar (#792).** Before this, the login stayed on the player's record after an unlink. Admin search still found the player by it, the profile still showed the GitHub avatar, and the next write to the record could link the old login to the player again.

@@ -1,8 +1,13 @@
-// Issue #740: Delete all accounts, beside master reset in the Event tab's
-// Danger zone. The confirm is type-gated; the action is one DELETE and, on
-// success, a full navigation to /admin/claim (the grants are gone, so the
-// SPA's own routes would 403).
-import { afterEach, describe, expect, it, vi } from "vitest";
+// Delete all accounts, beside master reset in the Event tab's Danger zone.
+// The confirm is type-gated; the action is one DELETE and, on success, a
+// sign-out and a full navigation to sign-in on the way to /admin/claim: the
+// grants and the account are gone, so the SPA's own routes would 403 and the
+// cached session must not reach the claim form.
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { signOut } = vi.hoisted(() => ({ signOut: vi.fn() }));
+vi.mock("@/lib/auth-client", () => ({ authClient: { signOut } }));
+
 import { createDangerActions, deleteAllAccountsConfirm } from "@/app/(site)/admin/admin-danger-actions";
 
 describe("deleteAllAccountsConfirm", () => {
@@ -17,6 +22,10 @@ describe("deleteAllAccountsConfirm", () => {
 });
 
 describe("doDeleteAllAccounts", () => {
+  beforeEach(() => {
+    signOut.mockReset();
+    signOut.mockResolvedValue({});
+  });
   afterEach(() => vi.unstubAllGlobals());
   const make = () => {
     const setError = vi.fn();
@@ -31,7 +40,7 @@ describe("doDeleteAllAccounts", () => {
     return { actions, setError, assign };
   };
 
-  it("sends the typed phrase and navigates to /admin/claim", async () => {
+  it("sends the typed phrase, signs out and navigates to sign-in bound for /admin/claim", async () => {
     const { actions, assign } = make();
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ cleared: { keys: 4 } }) });
     vi.stubGlobal("fetch", fetchMock);
@@ -41,7 +50,17 @@ describe("doDeleteAllAccounts", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confirm: "delete all accounts" }),
     });
-    expect(assign).toHaveBeenCalledWith("/admin/claim");
+    expect(signOut).toHaveBeenCalledTimes(1);
+    expect(assign).toHaveBeenCalledWith("/sign-in?next=%2Fadmin%2Fclaim");
+    expect(signOut.mock.invocationCallOrder[0]).toBeLessThan(assign.mock.invocationCallOrder[0]);
+  });
+
+  it("still navigates when the sign-out fails", async () => {
+    const { actions, assign } = make();
+    signOut.mockRejectedValue(new Error("offline"));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+    await actions.doDeleteAllAccounts("delete all accounts");
+    expect(assign).toHaveBeenCalledWith("/sign-in?next=%2Fadmin%2Fclaim");
   });
 
   it("reports a refusal and stays put", async () => {
@@ -49,6 +68,7 @@ describe("doDeleteAllAccounts", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, json: async () => ({ error: "nope" }) }));
     await actions.doDeleteAllAccounts("x");
     expect(setError).toHaveBeenLastCalledWith("nope");
+    expect(signOut).not.toHaveBeenCalled();
     expect(assign).not.toHaveBeenCalled();
   });
 });

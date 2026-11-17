@@ -10,6 +10,8 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import type { AdminSettings } from "@/lib/admin-store";
+import { authClient } from "@/lib/auth-client";
+import { signInHref } from "@/lib/post-signin";
 import type { ConfirmState } from "./types";
 
 /** The Delete all accounts confirmation. The server re-checks the phrase. */
@@ -138,7 +140,16 @@ export function createDangerActions({
       setError(data.error ?? "Delete all accounts failed");
       return;
     }
-    window.location.assign("/admin/claim");
+    // The account is gone but the cookie cache can keep its session alive for
+    // minutes; signing out drops it, so the claim form is reached only by a
+    // fresh sign-in. A failed sign-out still navigates: the claim refuses an
+    // id with no account row either way.
+    try {
+      await authClient.signOut();
+    } catch {
+      // The navigation below still runs.
+    }
+    window.location.assign(signInHref("/admin/claim"));
   };
 
   return { doReset, doSeed, doClearDemo, doDeleteAllAccounts };

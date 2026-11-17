@@ -80,9 +80,11 @@ return 1`;
  * GET then DEL in one script, so two racing redeems consume a code exactly
  * once, and the code is spent before any password is written. The pointer is
  * deleted only while it still names this hash (a newer code keeps its own).
- * An entry that names another player, has no readable issuer or generation,
- * or whose issuer has since lost the grant or moved generation is `invalid`
- * and still consumed (fail closed).
+ * An entry that names another player, or a player who has since been granted
+ * admin (the issue script refuses an organizer, and a grant after the issue
+ * must not reopen that), has no readable issuer or generation, or whose issuer
+ * has since lost the grant or moved generation is `invalid` and still
+ * consumed (fail closed).
  */
 export const CONSUME_RESET_SCRIPT = `
 local raw = redis.call('GET', KEYS[1])
@@ -91,6 +93,7 @@ redis.call('DEL', KEYS[1])
 if redis.call('GET', KEYS[2]) == ARGV[1] then redis.call('DEL', KEYS[2]) end
 local ok, v = pcall(cjson.decode, raw)
 if not ok or type(v) ~= 'table' or v.player ~= ARGV[2] then return {'invalid'} end
+if redis.call('SISMEMBER', KEYS[3], v.player) == 1 then return {'invalid'} end
 local issuer = (type(v.by) == 'string' and v.by) or ''
 local gen = type(v.gen) == 'number' and v.gen
 if issuer == '' or not gen or redis.call('SISMEMBER', KEYS[3], issuer) == 0 then return {'invalid'} end

@@ -141,6 +141,24 @@ describe.skipIf(!liveConfigured)("password reset codes against a live Redis", ()
     await expect(reset.issuePasswordResetCode(organizer, by)).resolves.toMatchObject({ code: expect.any(String) });
   });
 
+  it("a code issued before the player was granted admin is refused, consumed, and changes nothing", async () => {
+    const { reset, ctx, ADMIN_GRANTS_KEY } = await load();
+    const [by, who] = [await admin(), await player("password")];
+    await ctx.internalAdapter.createSession(who);
+    const sessions = `ctf:auth:session:by:userId:${who}`;
+    const before = await passwordOf(who);
+    const { code } = await reset.issuePasswordResetCode(who, by);
+    admins.push(who);
+    await redis(["SADD", ADMIN_GRANTS_KEY, who]);
+    expect(await reset.redeemPasswordResetCode(code, PW)).toEqual({ ok: false, reason: "invalid" });
+    expect(await passwordOf(who)).toBe(before);
+    expect(await redis(["SCARD", sessions])).toBe(1);
+    // Consumed: dropping the grant does not bring the code back.
+    await redis(["SREM", ADMIN_GRANTS_KEY, who]);
+    expect(await reset.redeemPasswordResetCode(code, PW)).toEqual({ ok: false, reason: "invalid" });
+    expect(await passwordOf(who)).toBe(before);
+  });
+
   it("a code redeemed twice concurrently succeeds exactly once", async () => {
     const { reset } = await load();
     const [by, who] = [await admin(), await player("password")];

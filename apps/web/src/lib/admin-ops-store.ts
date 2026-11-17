@@ -623,13 +623,17 @@ const ACCOUNT_PREFIXES: readonly [string, string][] = [
 /**
  * Empties the box of people: every GitHub link, the master reset (which
  * takes the re-link blocklist too), then every account, session, outstanding
- * admin or reset code, and every admin grant, the acting admin's included. Content, settings, the audit list and
- * the spent bootstrap code stay. Afterwards `/admin` is closed until someone
- * claims it with a fresh claim code: `requireAdmin` reads the grants, so a
- * cached session that survives the sweep is still refused.
+ * admin or reset code, and every admin grant, the acting admin's included.
+ * Content, settings, the audit list and the spent bootstrap code stay.
+ * Afterwards `/admin` is closed until someone claims it with a fresh claim
+ * code: `requireAdmin` reads the grants, so a cached session that survives the
+ * sweep is still refused.
  *
  * Requires the exact typed confirmation. Fails closed: any failed step throws
- * with what came before it standing, and re-running finishes the sweep.
+ * with what came before it standing, and re-running finishes the sweep. If the
+ * link sweep lands and the reset then throws, every login is unlinked but not
+ * blocked: sync holds their scores, a player can link again from a session
+ * still in the cookie cache, and the re-run deletes it all.
  */
 export async function deleteAllAccounts(
   confirm: unknown,

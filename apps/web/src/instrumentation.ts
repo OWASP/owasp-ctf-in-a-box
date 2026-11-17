@@ -1,4 +1,5 @@
 import { trustedClientIpHeader } from "@/lib/client-ip";
+import { configuredProviders } from "@/lib/sign-in-providers";
 import { checkEventUrl } from "@/lib/secure-url";
 
 /**
@@ -20,6 +21,14 @@ export function register() {
   // Throws on a malformed TRUSTED_CLIENT_IP_HEADER, refusing to boot rather
   // than keying every client on one address (see client-ip.ts).
   trustedClientIpHeader();
+
+  // Quiz and classic still serve without GitHub keys, so this logs rather
+  // than refusing to boot.
+  if ((process.env.SCORE_IMAGE ?? "").trim() !== "" && !configuredProviders().includes("github")) {
+    console.error(
+      "[startup] Secure Development is on (SCORE_IMAGE is set) but GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET are missing: players cannot link GitHub, so no PR will score.",
+    );
+  }
 
   const verdict = checkEventUrl({
     url: process.env.BETTER_AUTH_URL,

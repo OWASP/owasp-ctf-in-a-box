@@ -39,6 +39,7 @@ const props = (s: AdminSettings): AdminEventTabProps => ({
   pending: false,
   resetInfo: null,
   eventName: "Fixture CTF",
+  configuredSignInProviders: ["github", "google", "discord"],
   applyField: async () => true,
   statusOf: () => ({ state: "idle" }) as ReturnType<AdminEventTabProps["statusOf"]>,
   setConfirm: () => {},

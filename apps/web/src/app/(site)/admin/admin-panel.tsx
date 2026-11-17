@@ -18,6 +18,7 @@ import { adminClaimCodeHash, getGithubOrg } from "@/lib/bootstrap-env";
 import type { ModuleSetupContent, OrgContext } from "@/lib/modules";
 import { secureDevAvailable } from "@/lib/module-defaults";
 import { getModuleSetup, getResolvedModules } from "@/lib/resolved-modules";
+import { configuredProviders } from "@/lib/sign-in-providers";
 import { getSite } from "@/lib/site";
 import AdminControls from "@/app/(site)/admin/admin-controls";
 import AdminHeader from "@/app/(site)/admin/admin-header";
@@ -125,6 +126,7 @@ export default async function AdminPanel({ tab }: { tab?: string }) {
           viewerId={gate.player.id}
           sync={sync}
           eventName={site.name}
+          configuredSignInProviders={configuredProviders()}
         />
       ) : (
         <div className="ds-card flex flex-col gap-3 rounded-lg border border-white/[0.06] bg-[#16162a] p-5">

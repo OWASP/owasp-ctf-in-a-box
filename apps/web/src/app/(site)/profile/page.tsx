@@ -36,6 +36,7 @@ import { getPlayer } from "@/lib/player";
 import { getGithubLink } from "@/lib/github-link";
 import { errorLabel } from "@/lib/error-label";
 import LinkGithubButton from "@/components/link-github-button";
+import { configuredProviders } from "@/lib/sign-in-providers";
 import AddPasswordForm from "@/components/add-password-form";
 import { hasPassword } from "@/lib/username-store";
 import { firstParam, linkNotice } from "@/app/(site)/profile/link-notice";
@@ -419,7 +420,11 @@ export default async function ProfilePage({
           <p role="status" className="rounded-md border border-[#d4a017]/40 bg-[#d4a017]/10 px-4 py-2 text-sm text-white">
             Secure Development is on. Your PRs won&apos;t score until you link your GitHub account.
           </p>
-          <LinkGithubButton />
+          {configuredProviders().includes("github") ? (
+            <LinkGithubButton />
+          ) : (
+            <p className="text-sm text-zinc-400">GitHub linking is not set up on this box. Ask the organizer.</p>
+          )}
         </div>
       )}
 

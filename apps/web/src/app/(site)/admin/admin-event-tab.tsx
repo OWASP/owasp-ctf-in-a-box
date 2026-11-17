@@ -20,6 +20,7 @@ import { useEffect, useState } from "react";
 import type { AdminSettings } from "@/lib/admin-store";
 import { launchState, outsideScoringWindow, outsideWindow, serverFloorNow } from "@/lib/schedule-window";
 import { TEAM_MAX_MEMBERS, TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
+import { PROVIDER_LABEL, PROVIDER_SWITCH_FIELD, type SignInProviderId } from "@/lib/sign-in-providers";
 import { DEFAULT_EVENT_IDENTITY, EVENT_IDENTITY_MAX, type EventIdentityKey } from "@/lib/event-identity";
 import { DEFAULT_EVENT_TIME_ZONE, instantToWall, resolveTimeZone, wallToInstant, zoneLabel } from "@/lib/event-time";
 import AdminEventControls from "@/components/admin-event-controls";
@@ -201,6 +202,8 @@ export type AdminEventTabProps = {
    *  type. Resolved server-side by getSite(); a client bundle cannot read
    *  settings. */
   eventName: string;
+  /** The providers whose keys are in .env, resolved server-side. */
+  configuredSignInProviders: readonly SignInProviderId[];
   /** A write that belongs to one field or switch: reported into that row's
    *  status rather than the panel-wide error line (UX audit F2). */
   applyField: (key: string, patch: Record<string, unknown>, label: string) => Promise<boolean>;
@@ -235,6 +238,7 @@ export default function AdminEventTab({
   pending,
   resetInfo,
   eventName,
+  configuredSignInProviders,
   applyField,
   statusOf,
   setConfirm,
@@ -342,6 +346,41 @@ export default function AdminEventTab({
           status={statusOf("displayQr")}
           onChange={(next) => void applyField("displayQr", { displayQr: next }, "Projector QR code")}
         />
+      </section>
+
+      <section className="flex flex-col gap-3 border-b border-white/[0.06] pb-4">
+        <div>
+          <h3 className="text-white">Sign-in</h3>
+          <p className="text-sm text-muted">
+            Username and password is always on. A provider appears here once its client id and secret are in .env and the app has restarted.
+          </p>
+        </div>
+        {configuredSignInProviders.length === 0 ? (
+          <p className="text-sm text-muted">
+            No sign-in providers are configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (or DISCORD_ or GITHUB_) to .env and restart.
+          </p>
+        ) : (
+          configuredSignInProviders.map((id) => {
+            const field = PROVIDER_SWITCH_FIELD[id];
+            const label = `${PROVIDER_LABEL[id]} sign-in`;
+            return (
+              <AdminSwitch
+                key={id}
+                id={`event-sign-in-${id}`}
+                label={label}
+                help={
+                  id === "github" && live.has("secure-development")
+                    ? "Players can still link GitHub from their profile for Secure Development while this is off."
+                    : undefined
+                }
+                checked={settings.signInProviders[id]}
+                disabled={pending}
+                status={statusOf(field)}
+                onChange={(next) => void applyField(field, { [field]: next }, label)}
+              />
+            );
+          })
+        )}
       </section>
 
       <section className="flex flex-col gap-2 border-b border-white/[0.06] pb-4">

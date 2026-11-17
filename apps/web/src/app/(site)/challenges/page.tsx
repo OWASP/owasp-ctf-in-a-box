@@ -18,6 +18,7 @@ import { redirectIfNotLaunched } from "@/lib/launch";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { getGithubLink } from "@/lib/github-link";
 import LinkGithubButton from "@/components/link-github-button";
+import { configuredProviders } from "@/lib/sign-in-providers";
 import { firstParam, linkNotice } from "@/app/(site)/profile/link-notice";
 
 /** This page's own name, with an organizer rename applied.
@@ -159,7 +160,11 @@ export default async function ChallengesPage({
           <p role="status" className="rounded-md border border-[#d4a017]/40 bg-[#d4a017]/10 px-4 py-2 text-sm text-white">
             Link your GitHub account to start.
           </p>
-          <LinkGithubButton callbackURL="/challenges?linked=github" />
+          {configuredProviders().includes("github") ? (
+            <LinkGithubButton callbackURL="/challenges?linked=github" />
+          ) : (
+            <p className="text-sm text-zinc-400">GitHub linking is not set up on this box. Ask the organizer.</p>
+          )}
         </div>
       )}
       <ChallengeGrid

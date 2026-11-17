@@ -50,6 +50,11 @@ vi.mock("@/lib/player", () => ({
 const linkDeps = vi.hoisted(() => ({ getGithubLink: vi.fn() }));
 vi.mock("@/lib/github-link", () => ({ getGithubLink: linkDeps.getGithubLink }));
 
+// renameUser reads the old username and writes the new one through the
+// username store (the auth adapter), which these suites do not stand up.
+const nameDeps = vi.hoisted(() => ({ renameUsername: vi.fn(), currentUsername: vi.fn() }));
+vi.mock("@/lib/username-store", () => nameDeps);
+
 import {
   CLEAR_HELD_SCRIPT,
   OpsValidationError,
@@ -59,6 +64,7 @@ import {
   forceRemoveFromTeam,
   forceTransferCaptain,
   lookupUser,
+  renameUser,
   requirePlayerId,
   resetUserProgress,
 } from "@/lib/admin-ops-store";
@@ -821,5 +827,48 @@ describe("forceAddToTeam (#597)", () => {
     mocks.upstashEval.mockResolvedValueOnce(verdict);
     await expect(forceAddToTeam("red-team", BOB, ADMIN)).rejects.toThrow(message);
     expect(teamDeps.logActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe("renameUser", () => {
+  const auditLine = () => {
+    const cmd = allCommands().find((c) => c[0] === "LPUSH");
+    return cmd ? JSON.parse(String(cmd[2])) : null;
+  };
+
+  it("renames and audits from and to", async () => {
+    nameDeps.currentUsername.mockResolvedValue("alice");
+    nameDeps.renameUsername.mockResolvedValue("ok");
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
+    expect(await renameUser(OCTO, " Alicia ", ADMIN)).toEqual({ from: "alice", to: "Alicia" });
+    expect(nameDeps.renameUsername).toHaveBeenCalledWith(OCTO, " Alicia ");
+    expect(auditLine()).toMatchObject({ action: "ops:user-rename", player: OCTO, from: "alice", to: "Alicia", by: ADMIN.id });
+  });
+
+  it.each([
+    ["taken", "That username is taken."],
+    ["invalid", "Usernames are 3 to 30 letters, digits, dots or underscores."],
+    ["missing", "No such player."],
+  ])("maps %s to a username validation error and audits nothing", async (result, message) => {
+    nameDeps.currentUsername.mockResolvedValue(null);
+    nameDeps.renameUsername.mockResolvedValue(result);
+    const err = await renameUser(OCTO, "bob", ADMIN).catch((e) => e);
+    expect(err).toBeInstanceOf(OpsValidationError);
+    expect(err).toMatchObject({ field: "username", message });
+    expect(allCommands().some((c) => c[0] === "LPUSH")).toBe(false);
+  });
+
+  it("validates the id before touching the store, and a non-string name is invalid", async () => {
+    await expect(renameUser("OctoCat", "bob", ADMIN)).rejects.toThrow("invalid player id");
+    expect(nameDeps.renameUsername).not.toHaveBeenCalled();
+    nameDeps.currentUsername.mockResolvedValue(null);
+    await expect(renameUser(OCTO, 42, ADMIN)).rejects.toMatchObject({ field: "username" });
+    expect(nameDeps.renameUsername).not.toHaveBeenCalled();
+  });
+
+  it("lets a store failure throw", async () => {
+    nameDeps.currentUsername.mockResolvedValue("alice");
+    nameDeps.renameUsername.mockRejectedValue(new Error("NOAUTH"));
+    await expect(renameUser(OCTO, "bob", ADMIN)).rejects.toThrow("NOAUTH");
   });
 });

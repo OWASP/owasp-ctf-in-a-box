@@ -31,7 +31,7 @@ vi.mock("@/lib/auth", async (importOriginal) => {
   };
 });
 
-import { setUsernameOnce } from "@/lib/username-store";
+import { renameUsername, setUsernameOnce } from "@/lib/username-store";
 
 async function freshUser(prefix: string, login: string) {
   const instance = betterAuth({ ...authOptions, database: redisAdapter({ prefix }) });
@@ -93,5 +93,19 @@ describe.skipIf(!liveConfigured)("setUsernameOnce against a live SRH proxy", () 
     const row = (await ctx.internalAdapter.findUserById(u.user.id)) as { username?: string; displayUsername?: string };
     const won = results[0] === "ok" ? ["alice", "Alice"] : ["bob", "Bob"];
     expect([row.username, row.displayUsername]).toEqual(won);
+  });
+
+  it("renames across users: same name in another case is the same user's own, another user's is taken", async () => {
+    const prefix = liveKey("username-store", freshId("rename"));
+    const a = await freshUser(prefix, "ren-a");
+    const b = await freshUser(prefix, "ren-b");
+    expect(await renameUsername(a.user.id, "Alice")).toBe("ok");
+    expect(await renameUsername(a.user.id, "alice")).toBe("ok");
+    expect(await renameUsername(b.user.id, "ALICE")).toBe("taken");
+    expect(await renameUsername(freshId("nobody"), "someone")).toBe("missing");
+
+    const ctx = (await live.instance!.$context) as Awaited<ReturnType<typeof betterAuth>["$context"]>;
+    const row = (await ctx.internalAdapter.findUserById(a.user.id)) as { username?: string; displayUsername?: string };
+    expect([row.username, row.displayUsername]).toEqual(["alice", "alice"]);
   });
 });

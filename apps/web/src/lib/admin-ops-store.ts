@@ -10,6 +10,8 @@ import { logActivity } from "@/lib/activity-log";
 import { errorLabel } from "@/lib/error-label";
 import { OpsValidationError } from "@/lib/ops-errors";
 import { getGithubLink } from "@/lib/github-link";
+import { currentUsername, renameUsername } from "@/lib/username-store";
+import { USERNAME_COPY } from "@/lib/username-rules";
 import { resolveTeamMaxMembers } from "@/lib/team-store";
 import {
   HINTS_SPENT_KEY,
@@ -757,4 +759,28 @@ export async function forceDisbandTeam(
 
   await audit("ops:team-disband", actor, { slug, members: members.length });
   return { ok: true, members: members.length };
+}
+
+/**
+ * Renames a player's account username. The new name is held to the sign-up
+ * rule and the unique index; nothing else about the player changes (scores,
+ * team and links are keyed on the id). `from` is the old normalized username,
+ * null for an account that never picked one. The player's cached session can
+ * show the old name for a few minutes.
+ */
+export async function renameUser(
+  rawId: unknown,
+  rawName: unknown,
+  actor: AuditActor,
+): Promise<{ from: string | null; to: string }> {
+  const player = requirePlayerId(rawId);
+  if (typeof rawName !== "string") throw new OpsValidationError("username", USERNAME_COPY);
+  const from = await currentUsername(player);
+  const result = await renameUsername(player, rawName);
+  if (result === "taken") throw new OpsValidationError("username", "That username is taken.");
+  if (result === "invalid") throw new OpsValidationError("username", USERNAME_COPY);
+  if (result === "missing") throw new OpsValidationError("username", "No such player.");
+  const to = rawName.trim();
+  await audit("ops:user-rename", actor, { player, from, to });
+  return { from, to };
 }

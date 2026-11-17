@@ -11,9 +11,8 @@ import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { oauthErrorCallbackURL, postSigninCallbackURL } from "@/lib/post-signin";
 import { PROVIDER_LABEL, type SignInProviderId } from "@/lib/sign-in-providers";
-import { usernameProblem } from "@/lib/username-rules";
+import { USERNAME_COPY, usernameProblem } from "@/lib/username-rules";
 
-const USERNAME_COPY = "Usernames are 3 to 30 letters, digits, dots or underscores.";
 export const PASSWORD_COPY = "Passwords are 12 to 128 characters.";
 export const GENERIC_COPY = "Something went wrong. Try again.";
 

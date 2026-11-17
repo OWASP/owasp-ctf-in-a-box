@@ -76,6 +76,7 @@ vi.mock("@/lib/username-store", () => nameDeps);
 
 import {
   CLEAR_HELD_SCRIPT,
+  GRANT_CLAIMED_DURING_DELETE,
   OpsValidationError,
   deleteAllAccounts,
   deleteUser,
@@ -578,6 +579,7 @@ describe("deleteUser", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // SREM + DEL
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(0)); // no grant to remove
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
 
     const result = await deleteUser("0c7aca70-0000-4000-8000-00000000000a", ADMIN);
@@ -623,6 +625,7 @@ describe("deleteUser: held Secure Development scores", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(0)); // no grant to remove
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
   }
 
@@ -701,7 +704,7 @@ describe("deleteUser: the account and its GitHub login", () => {
   /** Queues the pipelines a no-team, no-SD-keys delete walks through; a
    *  delete that fails before its audit line queues none for it, so no reply
    *  is left over for the next test. */
-  function queueDelete(audited = true) {
+  function queueDelete(audited = true, grantRemoved = 0) {
     mocks.upstashPipeline.mockResolvedValueOnce(
       replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
     );
@@ -711,7 +714,10 @@ describe("deleteUser: the account and its GitHub login", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
-    if (audited) mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
+    if (audited) {
+      mocks.upstashPipeline.mockResolvedValueOnce(replies(grantRemoved)); // grant SREM
+      mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // delete audit
+    }
   }
   const auditLine = (action: string) => {
     const cmd = allCommands().find((c) => c[0] === "LPUSH" && String(c[2]).includes(`"${action}"`));
@@ -828,6 +834,7 @@ describe("deleteUser: the account and its GitHub login", () => {
     mockQuizAndHintsPipeline();
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // reset audit
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // tail
+    mocks.upstashPipeline.mockResolvedValueOnce(replies(0)); // no grant to remove
     mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1)); // audit
     await expect(deleteUser(OCTO, ADMIN)).resolves.toMatchObject({ leftTeam: "red-team" });
   });
@@ -838,6 +845,40 @@ describe("deleteUser: the account and its GitHub login", () => {
     authDeps.deleteAccounts.mockRejectedValueOnce(new Error("auth store: deleteMany account failed"));
     await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow("auth store");
     expect(authDeps.deleteUser).not.toHaveBeenCalled();
+    expect(auditLine("ops:user-delete")).toBeNull();
+    expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(2);
+  });
+
+  it("removes the id's admin grant after the account row is gone and the re-read confirms it", async () => {
+    queueDelete();
+    const result = await deleteUser(OCTO, ADMIN);
+    const calls = mocks.upstashPipeline.mock.calls.map((c) => c[0]);
+    const sremAt = calls.findIndex((cmds) => cmds.some((c) => c[0] === "SREM" && c[1] === "ctf:admin:grants"));
+    expect(calls[sremAt]).toEqual([["SREM", "ctf:admin:grants", OCTO]]);
+    const sremOrder = mocks.upstashPipeline.mock.invocationCallOrder[sremAt];
+    expect(sremOrder).toBeGreaterThan(authDeps.deleteUser.mock.invocationCallOrder[0]);
+    expect(sremOrder).toBeGreaterThan(Math.max(...authDeps.findUserById.mock.invocationCallOrder));
+    expect(result.warnings).not.toContain(GRANT_CLAIMED_DURING_DELETE);
+    expect(auditLine("ops:user-delete")).toMatchObject({ grantRemoved: false });
+    expect(auditLine("ops:user-delete")).not.toHaveProperty("warning");
+  });
+
+  it("a grant claimed during the delete is removed, returned as a warning and audited", async () => {
+    queueDelete(true, 1);
+    const result = await deleteUser(OCTO, ADMIN);
+    expect(result.warnings).toContain(GRANT_CLAIMED_DURING_DELETE);
+    expect(auditLine("ops:user-delete")).toMatchObject({
+      player: OCTO,
+      grantRemoved: true,
+      warning: GRANT_CLAIMED_DURING_DELETE,
+    });
+  });
+
+  it("a failed grant removal rejects with no audit line", async () => {
+    queueDelete(false);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "READONLY" }]);
+    await expect(deleteUser(OCTO, ADMIN)).rejects.toThrow(/admin grant.*READONLY/);
+    expect(authDeps.deleteUser).toHaveBeenCalledWith(OCTO);
     expect(auditLine("ops:user-delete")).toBeNull();
     expect(foldCache.endScoreLowering).toHaveBeenCalledTimes(2);
   });

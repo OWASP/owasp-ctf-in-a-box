@@ -505,6 +505,10 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
 
 // --- delete -----------------------------------------------------------------
 
+/** The warning `deleteUser` returns when an admin grant appeared on the id
+ *  while the delete ran. */
+export const GRANT_CLAIMED_DURING_DELETE = "An admin grant was claimed during the delete and has been removed.";
+
 // KEYS: [1]=ctf:sd:held:by:<login> [2]=ctf:sd:held:authors  ARGV: [1]=login.
 // The hash first: a DEL that errors stops the script, so the author stays
 // indexed and sync can still find the entries.
@@ -524,7 +528,8 @@ return 1`;
  * Refused for an organizer (revoke the grant first: this also covers deleting
  * yourself and the last admin) and for a captain (see `forceTransferCaptain`).
  * Both refusals, and the "No such player." for an id with neither an account
- * nor event state, come before any write.
+ * nor event state, come before any write. A grant claimed after that check
+ * is removed once the account row is gone, with a warning.
  *
  * Re-runnable: every step tolerates what an earlier, failed run already
  * removed, so a delete that threw part way completes on the next call. One
@@ -596,9 +601,27 @@ export async function deleteUser(
     if (await internalAdapter.findUserById(player)) {
       throw new Error("delete user: the account row is still there");
     }
+    // CLAIM_SCRIPT refuses an id with no account row, so from the re-read
+    // above no claim can bind this id. A grant found here was claimed between
+    // the organizer check and the row delete, and is removed with nothing
+    // left to race it: a grant on a deleted id would keep /admin open to a
+    // cookie-cached session.
+    const [grant] = assertPipelineOk(
+      await upstashPipeline([["SREM", ADMIN_GRANTS_KEY, player]]),
+      "delete user admin grant",
+    );
+    const grantRemoved = Number(grant.result) === 1;
+    const warnings = [...reset.warnings];
+    if (grantRemoved) warnings.push(GRANT_CLAIMED_DURING_DELETE);
 
-    await audit("ops:user-delete", actor, { player, leftTeam, blockedLogin });
-    return { cleared: reset.cleared, warnings: reset.warnings, leftTeam };
+    await audit("ops:user-delete", actor, {
+      player,
+      leftTeam,
+      blockedLogin,
+      grantRemoved,
+      ...(grantRemoved ? { warning: GRANT_CLAIMED_DURING_DELETE } : {}),
+    });
+    return { cleared: reset.cleared, warnings, leftTeam };
   } finally {
     await endScoreLowering();
   }

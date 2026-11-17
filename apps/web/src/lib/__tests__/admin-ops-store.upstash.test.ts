@@ -309,6 +309,57 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     expect(blocked.result).toBe(1);
   });
 
+  it("a grant claimed after the organizer check is removed with the account, and the id cannot claim again", async () => {
+    const { ctx, pipeline, ops } = await load();
+    const { CLAIM_SCRIPT } = await import("@/lib/admin-claim");
+    const { upstashEval } = await import("@/lib/upstash");
+    const gh = `vt4${tag}`.slice(0, 39);
+    const id = await makePlayer(gh);
+    const codeKey = `ctf:admin:code:vt-${RUN}`;
+    const boot = `vt-boot-${RUN}`;
+    // The grant lands after the refusal check and before the row delete: the
+    // first auth write is where a concurrent claim would have slipped in.
+    const original = ctx.internalAdapter.deleteUserSessions.bind(ctx.internalAdapter);
+    const spy = vi.spyOn(ctx.internalAdapter, "deleteUserSessions").mockImplementationOnce(async (userId: string) => {
+      const [added] = await pipeline([["SADD", "ctf:admin:grants", userId]]);
+      expect(added.result).toBe(1);
+      return original(userId);
+    });
+    try {
+      const result = await ops.deleteUser(id, { id: crypto.randomUUID(), name: "organizer" });
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(result.warnings).toContain(ops.GRANT_CLAIMED_DURING_DELETE);
+      const [granted, [line]] = (await pipeline([
+        ["SISMEMBER", "ctf:admin:grants", id],
+        ["LRANGE", "ctf:admin:audit", 0, 0],
+      ])).map((r) => r.result) as [number, string[]];
+      expect(granted).toBe(0);
+      expect(JSON.parse(line)).toMatchObject({
+        action: "ops:user-delete",
+        player: id,
+        grantRemoved: true,
+        warning: ops.GRANT_CLAIMED_DURING_DELETE,
+      });
+
+      // With the row gone, even the bootstrap path refuses the id, so the
+      // removal above leaves nothing for a later claim to race.
+      const claim = await upstashEval(
+        CLAIM_SCRIPT,
+        ["ctf:admin:grants", "ctf:admin:claim:spent", codeKey, "ctf:admin:audit", "ctf:admin:grant-gen", "ctf:auth:user"],
+        [id, gh, boot, boot, new Date().toISOString(), 499],
+      );
+      expect(claim).toEqual(["invalid"]);
+      const [stillOut, spent] = await pipeline([
+        ["SISMEMBER", "ctf:admin:grants", id],
+        ["SISMEMBER", "ctf:admin:claim:spent", boot],
+      ]);
+      expect([stillOut.result, spent.result]).toEqual([0, 0]);
+    } finally {
+      spy.mockRestore();
+      await pipeline([["SREM", "ctf:admin:grants", id], ["SREM", "ctf:admin:claim:spent", boot]]);
+    }
+  });
+
   it("refuses an organizer and leaves the account in place", async () => {
     const { pipeline, ops } = await load();
     const gh = `vt3${tag}`.slice(0, 39);

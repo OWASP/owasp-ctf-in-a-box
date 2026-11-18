@@ -463,14 +463,13 @@ The panel offers:
   guessed from the request. It is encoded on the server into an inline SVG,
   with no third-party service and no request from the viewer's browser. The
   regular `/leaderboard` never shows it.
-- **Sign-in** (Event tab) — a switch per configured sign-in provider
-  (GitHub, Google, Discord), on by default; a provider without both keys in
-  `.env` has no switch. Turning one off stops new sign-ins through it: the
-  button leaves `/sign-in`, and an OAuth sign-in already started is refused at
-  the callback too. It does not sign out existing sessions. Username and
-  password is always on. Switching a provider off also stops players whose
-  only way in is that provider; they can add a password from their profile
-  first, or an organizer can help. With Secure Development on, players can still link
+- **Sign-in** (Event tab) — the GitHub sign-in switch, on by default;
+  without both GitHub keys in `.env` there is no switch. Turning it off stops
+  new GitHub sign-ins: the button leaves `/sign-in`, and a GitHub sign-in
+  already started is refused at the callback too. It does not sign out
+  existing sessions. Username and password is always on. Switching GitHub
+  off also stops players whose only way in is GitHub; they can add a
+  password from their profile first, or an organizer can help. With Secure Development on, players can still link
   GitHub from their profile while GitHub sign-in is off.
 - **Modules** (Event tab) — which modules this event serves, switchable
   **during the event without a rebuild**. Switching one off removes its nav
@@ -1192,8 +1191,8 @@ password. Then:
 - Redeeming signs the player out of every session. A device whose session is
   held in the 5-minute cookie cache can keep working for up to 5 minutes
   before it notices.
-- It works for an account that signs in only with GitHub, Google or Discord:
-  the redeem gives it a password. A player with no username still needs to
+- It works for an account that signs in only with GitHub: the redeem gives
+  it a password. A player with no username still needs to
   pick one at `/welcome` before they can sign in by username.
 - Redemption is rate limited to 300 attempts per 15 minutes per client
   address (`passwordReset` in `apps/web/src/lib/rate-limit-store.ts`).
@@ -1208,8 +1207,7 @@ renamed player's header can keep showing the old name for up to 5 minutes.
 **Unlink GitHub** (Secure Development on only). Releases the player's GitHub
 link so they can link another account. It is refused once the link has scored
 a Secure Development solve, and refused when the player would have no other
-way to sign in. Another way means a password with a username, or a Google or
-Discord account whose sign-in is switched on. For a player who signs in only
+way to sign in. Another way means a password with a username. For a player who signs in only
 with GitHub, first set a username for them in Support (type it in the
 **Username** box and press **Save**), then give them a reset code so they can
 set a password. The refusal names whichever of the two steps is missing.

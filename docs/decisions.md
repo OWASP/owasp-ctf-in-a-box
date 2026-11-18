@@ -4480,7 +4480,7 @@ merges, replacing this entry.
 
 ## ADR 74. Players are kit accounts; GitHub is needed only for Secure Development
 
-**Status.** Accepted (#731, built in #736–#744). Amends [ADR 19](#adr-19-organizer-admin-panel-runtime-override-layer), [ADR 40](#adr-40-csrf-assertion-in-the-proxy-rate-limits-keyed-on-the-login), [ADR 47](#adr-47-a-team-is-required-to-score-enforced-at-the-route-and-signposted-at-the-page), [ADR 48](#adr-48-per-contestant-support-actions-and-why-they-refuse-some-things), [ADR 49](#adr-49-firstteamat-records-the-funnels-conversion-moment-joinedat-does-not) and [ADR 50](#adr-50-metrics-are-computed-from-stored-data-forks-report-nothing): wherever they key a record on, or identify a player by, a GitHub login, read the player id. Admin access is [ADR 72](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env).
+**Status.** Accepted (#731, built in #736–#744). Amended 2026-11-17 (#798): GitHub is the one OAuth provider; Google and Discord were dropped before release. Amends [ADR 19](#adr-19-organizer-admin-panel-runtime-override-layer), [ADR 40](#adr-40-csrf-assertion-in-the-proxy-rate-limits-keyed-on-the-login), [ADR 47](#adr-47-a-team-is-required-to-score-enforced-at-the-route-and-signposted-at-the-page), [ADR 48](#adr-48-per-contestant-support-actions-and-why-they-refuse-some-things), [ADR 49](#adr-49-firstteamat-records-the-funnels-conversion-moment-joinedat-does-not) and [ADR 50](#adr-50-metrics-are-computed-from-stored-data-forks-report-nothing): wherever they key a record on, or identify a player by, a GitHub login, read the player id. Admin access is [ADR 72](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env).
 
 **Context.** Through v1 a player was a GitHub login. Every event needed a
 GitHub OAuth app, even one that ran only Quiz and Jeopardy, and a GitHub
@@ -4494,13 +4494,13 @@ different player and a login was the only handle an organizer had.
   provider accounts and sessions. There is no new service and no SQL
   database. Username and password sign-up is always available; usernames are
   unique case-insensitively, and sign-up is rate-limited per address.
-- **Providers are the organizer's choice.** GitHub, Google and Discord each
-  appear once both their keys are in `.env`, and each has an on/off switch in
-  the `/admin` Event tab (absent means on). Keys never go to Redis or an
-  archive. No email is stored from any provider: every account gets a
-  placeholder email. Google and Discord contribute nothing from the profile;
-  GitHub contributes its `login`, and an account created by a GitHub sign-in
-  starts with the GitHub name and avatar.
+- **GitHub is the one OAuth provider, and the organizer's choice.** GitHub
+  sign-in appears once both its keys are in `.env`, and has an on/off switch
+  in the `/admin` Event tab (absent means on) that gates both the start and
+  the completion of a sign-in. Keys never go to Redis or an archive. No email
+  is stored from GitHub: every account gets a placeholder email. GitHub
+  contributes its `login`, and an account created by a GitHub sign-in starts
+  with the GitHub name and avatar.
 - **GitHub is required only for Secure Development.** With SD on, a player
   links GitHub from their profile (or signs in with it), and sync credits a
   PR to the player who linked its author's login. One GitHub account links to

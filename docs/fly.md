@@ -38,7 +38,6 @@ what runs at the event is what you exercised locally.
 | Docker | Images are built here and pushed to Fly's registry; the render shells out to `docker compose` |
 | A `.env` from `ctf-setup.sh secrets` | `init` copies it and tops it up — including `GITHUB_ORG`, a runtime read (config v2, #386), not a build-time bake. It gives `.env.fly` its own admin claim code rather than copying `.env`'s |
 | A GitHub OAuth app | Its callback must match the deployed hostname exactly. Fly always runs Secure Development, so the GitHub keys stay required in `.env.fly` |
-| Optional: Google and Discord OAuth apps | `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` and `DISCORD_CLIENT_ID`/`DISCORD_CLIENT_SECRET` in `.env.fly`; blank leaves that provider off. Callbacks are `https://<host>/api/auth/callback/google` and `/discord` |
 | Access to a `SCORE_IMAGE` | Mirrored into Fly's registry so the forks and the leaderboard judge with the same artifact |
 
 **Fly needs a `SCORE_IMAGE`.** The machine runs the scorer and the poller too,

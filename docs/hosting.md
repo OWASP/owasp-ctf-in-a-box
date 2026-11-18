@@ -8,7 +8,7 @@ title: Hosting
 
 Everything you need to stand the kit up: prerequisites,
 [how scores reach the box](#how-scores-reach-the-box), player accounts and
-the optional sign-in providers, and how event config reaches the app. For the happy-path command sequence see the
+optional GitHub sign-in, and how event config reaches the app. For the happy-path command sequence see the
 [README Quickstart](https://github.com/OWASP/owasp-ctf-in-a-box#quickstart); for
 running the event once it is up see [docs/operations.md](operations.md).
 
@@ -603,14 +603,14 @@ You can also set all three by hand instead of using the helpers.
 ## Player accounts
 
 Players create accounts on the box itself: `/sign-in` offers *Sign in* and
-*Create an account* (a username and a password), beside a button for each
-sign-in provider the organizer turned on.
+*Create an account* (a username and a password), beside a *Sign in with
+GitHub* button when the organizer turned GitHub sign-in on.
 Usernames are 3 to 30 characters of letters, digits, `_` and `.`, unique
 regardless of case and shown as typed; passwords are 12 to 128 characters
 with no composition rules. Account creation is always open — the
 registration window gates creating and joining teams, not accounts — and
 needs no GitHub account, so a Quiz or Jeopardy event can run with no GitHub
-at all. A player who signs in through a provider and has no username is
+at all. A player who signs in with GitHub and has no username is
 asked to pick one first, and can add a password from `/profile`. There is
 no email and no self-service recovery: a player who forgets a password asks
 an organizer for a reset code (Support tab, see
@@ -618,29 +618,27 @@ an organizer for a reset code (Support tab, see
 
 ## Sign-in providers
 
-Username and password sign-in is always on. Contestants and admins can also
-sign in with GitHub, Google or Discord, each from its own OAuth app. Each
-provider reads two `.env` keys, and it counts as configured only when both
-are non-blank:
+Username and password sign-in is always on. GitHub is the one OAuth
+provider: contestants and admins can also sign in with GitHub, from the
+event's GitHub OAuth app. It reads two `.env` keys, and it counts as
+configured only when both are non-blank:
 
 | Provider | Keys | Callback URL |
 |---|---|---|
 | GitHub | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | `<EVENT_URL>/api/auth/callback/github` |
-| Google | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | `<EVENT_URL>/api/auth/callback/google` |
-| Discord | `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | `<EVENT_URL>/api/auth/callback/discord` |
 
 The GitHub keys are required only with Secure Development (`SCORE_IMAGE`
-non-empty), because players link GitHub to have their pull requests scored.
-Google and Discord are optional on every event. The app reads the keys at
+non-empty), because players link GitHub to have their pull requests scored;
+on any other event they are optional. The app reads the keys at
 start-up, and `docker compose restart` keeps a container's old environment,
 so recreate the app after changing them: `docker compose up -d --no-deps
---force-recreate app`, or redeploy on Fly or AWS. A configured provider appears
-as a switch in the `/admin` Event tab (see
+--force-recreate app`, or redeploy on Fly or AWS. Once configured, GitHub
+sign-in appears as a switch in the `/admin` Event tab (see
 [the admin panel](operations.md#organizer-admin-panel)).
 
-The app stores no provider email, name or avatar for Google or Discord, and no
-email from any provider; GitHub sets its name and avatar at account creation. Only GitHub can be
-linked to an account.
+The app stores no email from GitHub; GitHub sets the name and avatar at
+account creation. GitHub is also the one account that can be linked to a
+kit account.
 
 ### GitHub OAuth app
 
@@ -704,8 +702,7 @@ events, not during one.
    settings and content, with no player data; v2 does not migrate it.
 2. **Update `.env`.** Delete the `ADMIN_LOGINS` line (nothing reads it).
    The `GITHUB_CLIENT_*` keys stay required with Secure Development; without
-   it they are optional, like the Google and Discord keys
-   ([Sign-in providers](#sign-in-providers)).
+   it they are optional ([Sign-in providers](#sign-in-providers)).
 3. **Deploy v2 and generate the admin claim code.** Each command below prints
    the code once and stores only its hash in `ADMIN_CLAIM_CODE_HASH`.
    - Compose: `./setup/ctf-setup.sh admin-code`, then bring the box up as
@@ -1087,7 +1084,6 @@ the same list, annotated), and `doctor` flags a missing `REDIS_PASSWORD`.
 |---|---|---|---|
 | `BETTER_AUTH_SECRET` | `lib/auth.ts` | required | Session-signing secret. |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | `lib/auth.ts` | required with Secure Development | The sign-in OAuth app (not the poll GitHub App). |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | `lib/auth.ts` | optional | Google and Discord sign-in; a provider needs both of its keys. See [Sign-in providers](#sign-in-providers). |
 | `ALLOW_INSECURE_EVENT_URL` | `instrumentation.ts` | unset | `1` downgrades the `http://` non-loopback refusal to a start-up warning. TLS-less closed networks only. |
 | `LEADERBOARD_SOURCE` | `lib/leaderboard/source.ts` | *fixed*: `lambda` | `mock` / `lambda`. With `secure-development` disabled the mode is forced to `empty` (no scorer read; the board is built from the module overlays alone); an unknown value falls back to `mock` with a warning. |
 | `LEADERBOARD_API_URL` | `lib/challenges.ts`, `lib/leaderboard/lambda.ts` | *fixed*: `http://scorer:4000` | Scorer base URL for the challenge catalogue and the board. |

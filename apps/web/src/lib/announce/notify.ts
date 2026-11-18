@@ -67,10 +67,11 @@ export type FirstBloodInput = {
 
 /** Public prompt + points for one quiz item, from the module's public
  *  list (the same one the board reads — no flags, no answers ride along).
- *  Null when the challenge no longer exists or is unreadable: a missing or
- *  unverified challenge must never post, because its ID embeds the prompt
- *  slug. Classic goes through the secrecy gate below instead, because a
- *  story step must be judged before even its ID is safe to name. */
+ *  Null when the challenge no longer exists: a missing or unverified
+ *  challenge must never post, because its ID embeds the prompt slug.
+ *  A read failure throws so the caller can log it. Classic goes through
+ *  the secrecy gate below instead, because a story step must be judged
+ *  before even its ID is safe to name. */
 async function lookupItem(id: string): Promise<{ title: string; points: number } | null> {
   const q = (await listQuestions()).find((x) => x.id === id);
   return q ? { title: q.prompt, points: q.points } : null;
@@ -157,7 +158,7 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
       // FAIL CLOSED: a failed or absent quiz lookup posts nothing. The ID embeds
       // the prompt slug (generateQuestionId), so it must not be named without a
       // verified public item.
-      item = await lookupItem(input.challengeId).catch(() => null);
+      item = await lookupItem(input.challengeId);
       if (!item) return;
     }
 
@@ -167,6 +168,14 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
     const profiles = await getPlayerProfiles([input.playerId]).catch(() => new Map());
     const who = team?.name || profiles.get(input.playerId)?.name || input.playerId;
     const url = challengeEmbedUrl(input.module, input.challengeId);
+
+    // Revalidate question existence after enriching with team and player data:
+    // an organizer may have deleted the question while those lookups were pending.
+    if (input.module === "quiz") {
+      const fresh = await lookupItem(input.challengeId);
+      if (!fresh) return;
+      item = fresh;
+    }
 
     await enqueueLedgerAnnouncement(
       "first-blood",

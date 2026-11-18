@@ -228,6 +228,7 @@ function parseQuestion(raw: string): Question | null {
  *  the leaderboard) may call. */
 export async function listQuestions(): Promise<Question[]> {
   const [res] = await upstashPipeline([["HGETALL", QUESTIONS_KEY]]);
+  if (res.error) throw new Error(`quiz questions read failed: ${res.error}`);
   const flat = Array.isArray(res.result) ? (res.result as string[]) : [];
   const questions: Question[] = [];
   for (let i = 0; i < flat.length; i += 2) {
@@ -267,6 +268,8 @@ export async function listQuestionsForAdmin(): Promise<AdminQuestion[]> {
     ["HGETALL", QUESTIONS_KEY],
     ["HGETALL", KEY_KEY],
   ]);
+  const failed = [questionsRes, keyRes].find((r) => r.error);
+  if (failed) throw new Error(`quiz admin read failed: ${failed.error}`);
 
   const keyFlat = Array.isArray(keyRes.result) ? (keyRes.result as string[]) : [];
   const correctById = new Map<string, string[]>();

@@ -133,14 +133,41 @@ describe("notifyFirstBlood", () => {
   });
 
   it("withholds a quiz challenge that vanished after the solve — a deleted item must not leak its id", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.listQuestions.mockResolvedValue([]);
     await notifyFirstBlood({ module: "quiz", challengeId: "q-missing", playerId: "alice" });
     expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it("fails closed when the quiz list read rejects", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.listQuestions.mockRejectedValue(new Error("redis down"));
     await notifyFirstBlood({ module: "quiz", challengeId: "qmissing", playerId: "alice" });
+    expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith("[announce] first-blood notify failed:", expect.any(String));
+    errorSpy.mockRestore();
+  });
+
+  it("revalidates question existence after enriching with team data and drops announcement if deleted", async () => {
+    let releaseTeams: (() => void) | undefined;
+    mocks.listTeams.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseTeams = () => resolve([{ slug: "t1", name: "Team One", members: ["alice"] }]);
+        }),
+    );
+    mocks.listQuestions.mockResolvedValueOnce([{ id: "q1", prompt: "Prompt 1", points: 10 }]);
+
+    const notify = notifyFirstBlood({ module: "quiz", challengeId: "q1", playerId: "alice" });
+    await vi.waitFor(() => expect(mocks.listTeams).toHaveBeenCalledTimes(1));
+
+    mocks.listQuestions.mockResolvedValueOnce([]);
+
+    releaseTeams?.();
+    await notify;
+
     expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
   });
 

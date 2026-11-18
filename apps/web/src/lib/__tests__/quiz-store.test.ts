@@ -87,11 +87,21 @@ describe("listQuestions", () => {
     mocks.upstashPipeline.mockResolvedValue([{ result: [] }]);
     expect(await listQuestions()).toEqual([]);
   });
+
+  it("throws on per-command read error", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ error: "WRONGTYPE Operation against a key holding the wrong kind of value" }]);
+    await expect(listQuestions()).rejects.toThrow("quiz questions read failed: WRONGTYPE");
+  });
 });
 
 describe("listQuestionsForAdmin", () => {
   const q = (id: string, order: number) =>
     JSON.stringify({ id, prompt: `${id}?`, type: "single", choices: [{ id: "a", label: "A" }], points: 5, order });
+
+  it("throws on per-command read error", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ error: "WRONGTYPE" }, { result: [] }]);
+    await expect(listQuestionsForAdmin()).rejects.toThrow("quiz admin read failed: WRONGTYPE");
+  });
 
   it("returns each question WITH its correct set, reading both hashes in one pipeline", async () => {
     mocks.upstashPipeline.mockResolvedValue([

@@ -388,7 +388,7 @@ export function ChallengeCard({
             </button>
           </form>
         ) : (
-          <p className="mt-3 text-xs text-muted">Sign in with GitHub to submit a flag.</p>
+          <p className="mt-3 text-xs text-muted">Sign in to submit a flag.</p>
         ))}
     </div>
   );

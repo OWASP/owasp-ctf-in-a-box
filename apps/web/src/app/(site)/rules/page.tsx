@@ -66,14 +66,14 @@ export default async function RulesPage() {
     {
       heading: "Teams",
       rules: [
-        "Scoring is per team, and you need one before anything you solve counts. Compete solo with a one-click team of one, or in a team of up to four — create or join one from your profile after signing in with GitHub.",
+        "Scoring is per team, and you need one before anything you solve counts. Compete solo with a one-click team of one, or in a team of up to four — create or join one from your profile after signing in.",
         "Each person belongs to at most one team at a time.",
         // Stated once, for every module: three modules each restating this in
         // their own verb rendered as three near-identical adjacent bullets
         // (issue #200, tier 4). A module contributes a teams bullet only for
         // nuance this sentence cannot carry (secure-development's PR-author
         // credit, below).
-        "Your GitHub login is your identity for scoring — everything you submit counts for the account you signed in with.",
+        "Your account is your identity for scoring — everything you submit on this site counts for the account you signed in with.",
         ...fromModules("teams"),
       ],
     },

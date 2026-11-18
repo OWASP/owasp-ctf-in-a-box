@@ -34,8 +34,8 @@ export { getHintNotice, getHintPenalties, HINTS_AVAILABLE, resolveHintConfig } f
  *
  * Purchases are recorded under the site's ctf: namespace, which
  * the scorer never rewrites, so penalties survive re-scores:
- *   SADD ctf:user:<login>:hints "<app>/<challengeId>"   (what the user bought)
- *   HINCRBY ctf:hints:spent <login> HINT_COST           (running penalty total)
+ *   SADD ctf:user:<playerId>:hints "<app>/<challengeId>"   (what the user bought)
+ *   HINCRBY ctf:hints:spent <playerId> HINT_COST           (running penalty total)
  * Displayed scores subtract the penalty as an overlay (see
  * leaderboard/hint-penalties.ts) — the scorer's leaderboard ZSET is never
  * decremented.
@@ -260,7 +260,7 @@ type RevealResult =
  *  whatever casing the PR author used. */
 async function countSolves(login: string, target: HintTarget): Promise<number> {
   // Classic: the anti-burner gate counts solves on the WHOLE board —
-  // the per-login solves hash has one field per solved challenge (#190) —
+  // the per-player solves hash has one field per solved challenge (#190) —
   // NOT secure-dev's shared
   // `ctf:solves:<target>` hash the default arm below assumes.
   if (target === "classic") {

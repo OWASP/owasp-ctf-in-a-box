@@ -40,7 +40,7 @@ type RateLimitVerdict =
 
 const rateKey = (bucket: string, login: string) => `ctf:rl:${bucket}:${login.toLowerCase()}`;
 
-// KEYS[1] = ctf:rl:<bucket>:<login>
+// KEYS[1] = ctf:rl:<bucket>:<playerId>
 // ARGV[1] = limit   ARGV[2] = window seconds
 //
 // INCR-then-EXPIRE inside one script: the window starts at the first request
@@ -146,7 +146,7 @@ export const RATE_LIMITS = {
   setPassword: { bucket: "set-password", limit: 10, windowSeconds: 10 * 60 },
 } as const;
 
-/** Every rate-limit counter `player` can hold, keyed on the player's login.
+/** Every rate-limit counter `player` can hold, keyed on the player id.
  *  The admin delete clears them with the rest of the player's state. The
  *  address-keyed auth buckets are not a player's and are not listed. */
 export function rateLimitKeysFor(player: string): string[] {

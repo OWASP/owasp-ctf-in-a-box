@@ -29,7 +29,7 @@
 // Clamping is NOT this rule and does not substitute for it. `Math.max(live,
 // solved)` stops a ratio exceeding one, which is why `atLeast` is still the
 // right answer where per-item identity does not exist — secure-development's
-// catalogue is baked from the rubrics, and the aggregate per-login counters are
+// catalogue is baked from the rubrics, and the aggregate per-player counters are
 // running totals with no memory of which items produced them. But it reports
 // 5 / 5 where the truth is 5 / 7: it tells a contestant they have finished a
 // module they have not. Reach for it only when there are no ids to union.

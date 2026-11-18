@@ -23,8 +23,9 @@
 
 ## What this is
 
-Everything a security event needs, on one machine you control: GitHub
-sign-in, teams, a live leaderboard, an organizer admin panel, and the
+Everything a security event needs, on one machine you control: player
+accounts (username and password, plus GitHub, Google or Discord sign-in if
+you turn them on), teams, a live leaderboard, an organizer admin panel, and the
 scoring behind it. You pick which challenge **modules** run, alone or
 together on one leaderboard:
 
@@ -187,8 +188,12 @@ Components, the score data flow and the security model:
 
 ## Running an event
 
-- **Contestants** sign in with GitHub and form or join a team (a team is
-  required to score), then play whichever modules you enabled.
+- **Contestants** create an account on the box (or sign in with a provider
+  you turned on) and form or join a team (a team is required to score), then play whichever modules you enabled.
+  With Secure Development on, each contestant also links GitHub from their
+  profile: a PR scores for the account its author is linked to, and an
+  unlinked author's score is held until they link, which must be before
+  scoring closes.
 - **Organizers** run everything from `/admin`: the schedule, the freeze,
   registration, content — and when one contestant gets stuck, they fix that
   one contestant instead of resetting the event.
@@ -216,7 +221,7 @@ organizer guide is [docs/operations.md](docs/operations.md).
 
 | Read this when you're… | Document |
 |---|---|
-| Standing the kit up | [docs/hosting.md](docs/hosting.md) — prerequisites, the wizard and every step, the GitHub OAuth app, the `.env` bootstrap |
+| Standing the kit up | [docs/hosting.md](docs/hosting.md) — prerequisites, the wizard and every step, player accounts and sign-in providers, the `.env` bootstrap, upgrading from v1 |
 | Deploying to a cloud | [docs/aws.md](docs/aws.md) (Terraform: ECS Fargate + ElastiCache + ALB) · [docs/fly.md](docs/fly.md) (one Fly machine) |
 | About to open the doors | [docs/security-checklist.md](docs/security-checklist.md) — the one-page pre-event walk |
 | Running the event | [docs/operations.md](docs/operations.md) — teams, the admin panel, the module guides, teardown |

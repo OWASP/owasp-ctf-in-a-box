@@ -134,7 +134,7 @@ export default async function QuizPage() {
   // carries the count — a sentence saying the same numbers directly above it
   // was the same fact twice, the duplication the classic board already
   // removed. Only the signed-out prompt has no strip to defer to.
-  const progress = playerId ? null : "Sign in with GitHub to answer questions.";
+  const progress = playerId ? null : "Sign in to answer questions.";
 
   return (
     <div className="flex flex-col gap-8">
@@ -151,7 +151,7 @@ export default async function QuizPage() {
       {/* The progress line sits OUTSIDE the empty-state branch on purpose. It
           used to be the header description, which rendered whatever the
           question count was; moving it into the populated branch quietly took
-          the "Sign in with GitHub" prompt away from a signed-out visitor
+          the "Sign in" prompt away from a signed-out visitor
           looking at a quiz whose questions haven't been authored yet — exactly
           the visitor most worth telling, since signing in now is what lets
           them answer the moment questions appear. */}

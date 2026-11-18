@@ -110,7 +110,7 @@ or hit **Play solo** for a one-click team of one named after their
 username. Everyone ends up on a team — a solo player is simply a team of one.
 
 The requirement is enforced in three places, earliest first. **At sign-in**:
-every GitHub sign-in lands on a post-signin step that sends a contestant with
+every sign-in lands on a post-signin step that sends a contestant with
 no team straight to the team card — team setup is the first thing a new
 contestant completes, not something discovered later (a `/join/<code>` invite
 passes through untouched, since the invite *is* the team step). **At the
@@ -147,7 +147,8 @@ routes would refuse.
 > events running Secure Development.
 >
 > Deferred credit needs the PR author to be a linked player when sync reads
-> the score: a contestant links their GitHub login by signing in with GitHub.
+> the score: a contestant links their GitHub login from `/profile`, or by
+> signing in with GitHub when that provider is on.
 > A score whose author nobody has linked is held, not dropped: sync releases
 > it on a later tick once the author links before Scoring closes. A link made
 > at or after the close never releases it; the Secure Development admin tab
@@ -323,7 +324,7 @@ places:
 - **`/quiz`'s and `/flags`'s page header**, as the lede under
   the title. This is the module describing itself; a contestant's own progress lives on the
   board itself (Quiz's progress strip, Jeopardy's "Your run" rail), and a
-  signed-out visitor sees a "Sign in with GitHub to …" line above the
+  signed-out visitor sees a "Sign in to …" line above the
   questions/challenges;
 - the **landing page section lede**, but only for a module that ships no
   registry `home` block. All three modules that exist today have one, so
@@ -684,11 +685,11 @@ The panel offers:
 - **Insights** (its own tab) — engagement metrics for the event, computed
   **entirely from data the box already stores**. Nothing is collected from
   contestants' forks, and no new tracking was added: quiz answers and classic
-  solves already carry a timestamp per item per login, Secure Development
-  solves are timestamped as they are ingested, attempts are counted per login,
-  and `firstTeamAt` supplies the funnel's conversion moment. Every per-login record is
-  read under the login as GitHub spells it, so a contestant whose login has
-  a capital letter counts like any other.
+  solves already carry a timestamp per item per player, Secure Development
+  solves are timestamped as they are ingested, attempts are counted per
+  player, and `firstTeamAt` supplies the funnel's conversion moment. Every
+  per-player record is keyed by the player id, so a rename or a GitHub link
+  changes nothing here.
 
   It computes when you open the tab, not when the admin page loads — the fold
   is O(contestants) — and, while the event phase is live, recomputes every

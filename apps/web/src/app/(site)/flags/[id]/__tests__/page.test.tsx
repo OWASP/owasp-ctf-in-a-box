@@ -191,7 +191,8 @@ describe("challenge page", () => {
     getSession.mockResolvedValue(null);
     const html = renderToStaticMarkup(await ClassicChallengePage(params("c1")));
     expect(getViewerClassic).not.toHaveBeenCalled();
-    expect(html).toMatch(/sign in with github/i);
+    expect(html).toMatch(/sign in to submit a flag/i);
+    expect(html).not.toMatch(/sign in with github/i);
     expect(html).not.toContain("<button");
   });
 

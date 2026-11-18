@@ -1,11 +1,19 @@
 // Privacy notice for this site specifically. The OWASP Foundation privacy
 // policy is the governing document; this page exists because it can't describe
-// what a one-off CTF site does with GitHub logins and hint purchases.
+// what a one-off CTF site does with its accounts and hint purchases.
 //
 // IMPORTANT: every claim here is a promise about code in this repo. If you
 // change what is stored, what a cookie holds, or how long anything is kept,
 // change this page in the SAME PR. Sources for the claims below:
-//   src/lib/auth.ts .................. sessions, OAuth scopes, no token storage
+//   src/lib/auth.ts .................. accounts, sessions, cookies, password rules
+//   src/lib/auth-store/redis-adapter.ts  provider tokens nulled on every write
+//   src/lib/social-providers.ts ...... what each provider's profile leaves on the row
+//   src/lib/placeholder-email.ts ..... the never-deliverable account email
+//   src/lib/github-link.ts ........... the GitHub login link
+//   src/lib/password-reset.ts ........ organizer-issued reset codes
+//   better-auth's defaults ........... scrypt password hash; session rows keep
+//                                      the sign-in IP and user agent; the OAuth
+//                                      state cookie lives 5 minutes
 //   src/lib/stats-store.ts ........... aggregate country counters
 //   src/lib/hint-store.ts ............ hint purchases
 //   src/lib/team-store.ts ............ team membership
@@ -70,20 +78,19 @@ const Bullets = ({ items, accent = "#2563eb" }: { items: React.ReactNode[]; acce
 // line here is enforced by code, not policy — check before adding to it.
 //
 // This is a FUNCTION of `secureDev`, not a module-scope constant:
-// secure-development is runtime-toggleable now (issue #386), so there is no
-// longer a module-load-time answer for whether it is live — only a
-// per-request one, read inside the page component.
+// secure-development is runtime-toggleable, so whether it is live is a
+// per-request answer, read inside the page component.
 function neverLines(secureDev: boolean): string[] {
   return [
     "No advertising, no tracking pixels, no third-party analytics, no data broker. Nothing about you is sold or shared.",
     "No consent banner, because there is nothing to consent to. Every cookie we set is doing a job you asked for.",
-    "Your email address and your real name are never written to our databases and never appear anywhere on this site.",
+    "We never ask for your email address or your real name, and no email address from a sign-in provider is written to our databases.",
     // Same promise either way; it just can't be made concrete with artifacts
     // an event without secure-development has no notion of.
     secureDev
-      ? "We never ask GitHub for write access. We cannot push code, open pull requests, change your repositories, or act as you."
-      : "We never ask GitHub for write access. The scopes we ask for are read-only, so we cannot write anything to your GitHub account or act as you.",
-    "We don't keep the GitHub access token issued at sign-in, so there is no key to your GitHub account sitting in our systems.",
+      ? "We never ask GitHub, Google or Discord for write access. We cannot push code, open pull requests, change your repositories, or act as you."
+      : "We never ask GitHub, Google or Discord for write access. The scopes we ask for are read-only, so we cannot write anything to those accounts or act as you.",
+    "We don't keep the access token a provider issues when you sign in or link an account, so there is no key to your GitHub, Google or Discord account sitting in our systems.",
     "We don't build a location history. The only geographic data we hold is a per-country tally with nobody's name on it.",
   ];
 }
@@ -92,13 +99,18 @@ function cookieRows(): { name: string; what: string; life: string }[] {
   return [
     {
       name: "Sign-in session",
-      what: "Set when you sign in with GitHub, and holds your session. Encrypted, and readable only by the server. Your browser can't read it, and neither can any script on the page.",
+      what: "Set by any sign-in, with a password or with a provider. Holds a signed random token that points at your session on the server. Your browser can't read it, and neither can any script on the page.",
       life: "7 days",
     },
     {
+      name: "Session cache",
+      what: "An encrypted copy of your session, so most pages load without a database read. Readable only by the server.",
+      life: "5 minutes",
+    },
+    {
       name: "Sign-in handshake",
-      what: "Protects the GitHub sign-in redirect against tampering. Discarded the moment sign-in finishes.",
-      life: "10 minutes",
+      what: "Set only when you sign in with GitHub, Google or Discord, or link GitHub. Protects the redirect against tampering, and is discarded the moment it finishes.",
+      life: "5 minutes",
     },
     {
       name: "ctf-mock-team",
@@ -111,10 +123,9 @@ function cookieRows(): { name: string; what: string; life: string }[] {
 export default async function PrivacyPage() {
   const event = await getSite();
   const liveModules = await getEnabledModuleIds();
-  // secure-development, quiz and classic are ALL runtime-toggleable now
-  // (issue #386) — this page's claims about what is collected have to match
-  // what actually is, so all three are read off the one live-set read below,
-  // per request.
+  // secure-development, quiz and classic are all runtime-toggleable, and this
+  // page's claims about what is collected have to match what actually is, so
+  // all three are read off the one live-set read below, per request.
   const secureDev = liveModules.has("secure-development");
   const quiz = liveModules.has("quiz");
   const classic = liveModules.has("classic");
@@ -142,7 +153,7 @@ export default async function PrivacyPage() {
           specific: it describes what{" "}
           <span className="text-white">this competition site</span>{" "}
           does, because a general policy can&apos;t tell you what happens to{" "}
-          {secureDev ? "a hint purchase or a GitHub login" : "a GitHub login"} on a leaderboard.
+          {secureDev ? "an account or a hint purchase" : "an account"} on a leaderboard.
         </p>
       </section>
 
@@ -162,34 +173,81 @@ export default async function PrivacyPage() {
         />
       </Card>
 
-      <Card heading="Signing in with GitHub">
+      <Card heading="Your account">
         <p className="mb-4 text-sm leading-relaxed text-zinc-400">
-          We use GitHub OAuth and ask for the two narrowest scopes available:{" "}
-          <span className="font-mono text-xs text-zinc-200">read:user</span> and{" "}
-          <span className="font-mono text-xs text-zinc-200">user:email</span>. Both are
-          read-only.
+          You create an account on this site with a username and a password. That account is
+          kept in this event&apos;s own database and holds:
         </p>
         <Bullets
           items={[
             <>
-              GitHub hands us your <span className="text-white">login</span>, numeric account
-              id, display name, avatar URL, and email address.
-            </>,
-            <>
-              Of those we keep exactly one: your{" "}
-              <span className="text-white">GitHub login</span>,{" "}
+              A random <span className="text-white">player id</span>. Everything you do here is
+              recorded against it, never against your name or a GitHub login
               {secureDev
-                ? "because the scorer credits points to the account that authored a pull request."
-                : "because your points are recorded against the account you signed in with."}{" "}
-              The rest renders the page you&apos;re on and is then forgotten.
+                ? ", with one exception: a Secure Development score from a GitHub account that is not linked yet is held under that GitHub login until its author links it."
+                : "."}
             </>,
             <>
-              We deliberately{" "}
-              <span className="text-white">do not store the access token</span>{" "}
-              GitHub issues at sign-in. This app never calls the GitHub API, so keeping that
-              token would mean holding a credential we have no use for.
+              Your <span className="text-white">username</span>, which is the name everyone else
+              sees. An account made by signing in with GitHub has no username until you set
+              one, and until then its GitHub login is the name everyone sees.
             </>,
-            "There is no account database. Your session lives entirely in an encrypted cookie, so once it expires the sign-in has left nothing behind on our side.",
+            <>
+              A <span className="text-white">hash of your password</span> (scrypt), never the
+              password itself.
+            </>,
+            <>
+              A <span className="text-white">placeholder email address</span> that ends in{" "}
+              <span className="font-mono text-xs text-zinc-200">accounts.invalid</span> and
+              can never receive mail. The account store needs one; you never give us yours.
+            </>,
+            <>
+              Your <span className="text-white">sessions</span>: one record per sign-in, with
+              the IP address and browser user-agent it came from. A session lasts 7 days, and
+              signing out deletes it.
+            </>,
+            "Forgot your password? An organizer can give you a one-time reset code to use on the reset page. It expires after 15 minutes, and organizers never see or set your password.",
+          ]}
+        />
+      </Card>
+
+      <Card heading="Signing in with GitHub, Google or Discord">
+        <p className="mb-4 text-sm leading-relaxed text-zinc-400">
+          The organizers can also turn on sign-in with GitHub, Google or Discord. Each asks for
+          read-only scopes:{" "}
+          <span className="font-mono text-xs text-zinc-200">read:user</span> and{" "}
+          <span className="font-mono text-xs text-zinc-200">user:email</span> on GitHub,{" "}
+          <span className="font-mono text-xs text-zinc-200">openid email profile</span> on
+          Google, and{" "}
+          <span className="font-mono text-xs text-zinc-200">identify email</span> on Discord.
+        </p>
+        <Bullets
+          items={[
+            "The provider hands us your account id, name, avatar, and email address.",
+            <>
+              We keep the provider&apos;s <span className="text-white">account id</span>, so we
+              recognise you next time. From GitHub we also keep your{" "}
+              <span className="text-white">GitHub login</span>, and a new account made by
+              signing in with GitHub starts with your GitHub name and avatar URL. Nothing else
+              from Google or Discord is kept.
+            </>,
+            "The email address is never kept from any provider. Your account gets a placeholder address instead.",
+            <>
+              We <span className="text-white">do not store the access token</span> a provider
+              issues. This app never calls a provider&apos;s API, so keeping that token would
+              mean holding a credential we have no use for.
+            </>,
+            ...(secureDev
+              ? [
+                  <>
+                    GitHub matters only for Secure Development: the scorer credits points to
+                    the GitHub account that authored a pull request. Link your GitHub account
+                    from your profile (signing in with GitHub links it too). A score from a
+                    GitHub account that is not linked yet is held until its author links it
+                    before scoring closes.
+                  </>,
+                ]
+              : []),
           ]}
         />
       </Card>
@@ -205,12 +263,12 @@ export default async function PrivacyPage() {
           items={[
             <>
               <span className="text-white">Team membership</span>: the team&apos;s name, who
-              created it, and the GitHub logins of its members.
+              created it, and the player ids of its members.
             </>,
             <>
               <span className="text-white">An activity log for the organizers</span>: when you
               signed in, when you solved something (recorded by its id, never the answer you
-              submitted), and team changes, keyed to your GitHub login. Only organizers can see
+              submitted), and team changes, keyed to your player id. Only organizers can see
               it, only the most recent few thousand entries are kept — older ones are
               discarded automatically — and it holds no IP address or device data.
             </>,
@@ -218,12 +276,13 @@ export default async function PrivacyPage() {
               ? [
                   <>
                     <span className="text-white">Hint purchases</span>: which hints you revealed,
-                    when, and the running point penalty against your login.
+                    when, and the running point penalty against your account.
                   </>,
                   <>
                     <span className="text-white">Your scores</span>{" "}
                     come from the scoring pipeline, keyed to the GitHub login that authored the pull
-                    request. This site reads them; it doesn&apos;t create them.
+                    request and credited to the account that login is linked to. This site reads
+                    them; it doesn&apos;t create them.
                   </>,
                 ]
               : []),
@@ -232,7 +291,7 @@ export default async function PrivacyPage() {
                   <>
                     <span className="text-white">Your answers</span>: which questions you have
                     answered, the choices you submitted, when, how many attempts you have spent,
-                    and the points each answer earned, all keyed to your GitHub login.
+                    and the points each answer earned, all keyed to your player id.
                   </>,
                 ]
               : []),
@@ -242,18 +301,22 @@ export default async function PrivacyPage() {
                     <span className="text-white">Your classic progress</span>: which challenges
                     you have solved, the points you earned and when, how many attempts you have
                     made on each challenge and when, and your running point and solve totals, all
-                    keyed to your GitHub login.
+                    keyed to your player id.
                   </>,
                 ]
               : []),
           ]}
         />
         <p className="mt-4 text-sm leading-relaxed text-zinc-400">
-          All of it is keyed to a public GitHub username and nothing more: no email, no real
-          name, no device or location data. It lives in an Upstash Redis instance run for this
-          event. Being straight with you: apart from the activity log&apos;s rolling cap, this
-          competition data has no automatic expiry today, so treat it as kept until the
-          organizers clear it down after the event. You can ask for yours sooner. See below.
+          All of it is keyed to your random player id
+          {secureDev ? " (apart from a held score, keyed by its GitHub login until that login is linked)" : ""} and
+          nothing more: no email, no real
+          name, no device or location data. It lives in the Redis database that runs alongside
+          this site for this event, next to your account. Being straight with you: apart from the activity
+          log&apos;s rolling cap, this competition data has no automatic expiry today, so treat
+          it as kept until the organizers clear it down after the event. Clearing the event
+          wipes this data but keeps accounts. You can ask for yours, or your whole account, to
+          be deleted sooner. See below.
         </p>
       </Card>
 
@@ -276,7 +339,7 @@ export default async function PrivacyPage() {
 
       <Card heading="Cookies">
         <p className="mb-4 text-sm leading-relaxed text-zinc-400">
-          Three, all strictly functional, all marked{" "}
+          Four, all strictly functional, all marked{" "}
           <span className="font-mono text-xs text-zinc-200">httpOnly</span> so no script on the
           page can read them. None of them track you, and none follow you off this site.
         </p>
@@ -312,9 +375,9 @@ export default async function PrivacyPage() {
         <Bullets
           items={[
             secureDev
-              ? "Your GitHub login and avatar, your rank, your points, and how many challenges you have patched and not patched."
-              : "Your GitHub login and avatar, your rank, and your points.",
-            "Your team, if you're on one. Expanding a team shows every member's login and avatar.",
+              ? "Your username, your GitHub avatar if you signed in with GitHub, your rank, your points, and how many challenges you have patched and not patched."
+              : "Your username, your GitHub avatar if you signed in with GitHub, your rank, and your points.",
+            "Your team, if you're on one. Expanding a team shows every member's name and avatar.",
             // Both of these describe secure-development's own board: the hint
             // penalty chip and the PR/commit columns the scorer supplies.
             ...(secureDev
@@ -326,15 +389,18 @@ export default async function PrivacyPage() {
           ]}
         />
         <p className="mt-4 text-sm leading-relaxed text-zinc-400">
-          Not public, and not visible to other contestants or to organizers browsing the site:
+          Not public, and not visible to other contestants:
           {secureDev
-            ? " your email address, your real name, and the contents of any hint you've revealed."
+            ? " how you sign in, your linked GitHub login, and the contents of any hint you've revealed."
             : quiz
-              ? " your email address, your real name, and which questions you have answered."
+              ? " how you sign in, any linked GitHub login, and which questions you have answered."
               : classic
-                ? " your email address, your real name, and which classic challenges you have solved or attempted."
-                : " your email address and your real name."}
-          {" "}Those appear only on your own profile page, behind your own session.
+                ? " how you sign in, any linked GitHub login, and which classic challenges you have solved or attempted."
+                : " how you sign in and any linked GitHub login."}
+          {" "}The one exception is an account made with GitHub that has no username yet: its
+          GitHub login is its public name until you set one.
+          {" "}Organizers can look up your account (its username and any linked GitHub login) in the admin panel
+          to help you with it.
         </p>
       </Card>
 
@@ -344,23 +410,28 @@ export default async function PrivacyPage() {
             <>
               <span className="text-white">GitHub</span>:{" "}
               {secureDev
-                ? "handles sign-in, hosts the challenge repositories, and serves avatar images."
-                : "handles sign-in and serves avatar images."}{" "}
+                ? "handles sign-in when the organizers turn it on, hosts the challenge repositories, and serves avatar images."
+                : "handles sign-in when the organizers turn it on, and serves avatar images."}{" "}
               Worth knowing: avatars load straight from GitHub, so GitHub sees the IP of anyone
               viewing a page with avatars on it, including the leaderboard.
+            </>,
+            <>
+              <span className="text-white">Google and Discord</span>: each handles sign-in
+              when the organizers turn it on, and sees that you signed in to this site.
             </>,
             <>
               <span className="text-white">The event organizer</span>: hosts this site on their
               own infrastructure, so they process requests and keep standard server logs.
             </>,
             <>
-              <span className="text-white">Upstash</span>: stores the competition data described
-              above, in a Redis instance run for this event.
+              <span className="text-white">The event&apos;s database</span>: a Redis instance the
+              organizer runs alongside this site stores the accounts and competition data
+              described above.
             </>,
             ...(event.discordUrl
               ? [
                   <>
-                    <span className="text-white">Discord</span>: only ever a link from this
+                    <span className="text-white">The CTF Discord</span>: a link from this
                     site. If you join, Discord&apos;s own privacy policy governs what happens
                     there.
                   </>,
@@ -382,12 +453,13 @@ export default async function PrivacyPage() {
             secureDev
               ? "Don't sign in. Everything except your own profile, teams, and hints works signed out."
               : "Don't sign in. Everything except your own profile and teams works signed out — nothing you do while signed out is scored, and nothing about you is recorded.",
-            "Leave your team at any time from your profile. That removes your login from the team record immediately.",
-            "Clear your cookies, or just wait for them to expire, to end the session.",
+            "Leave your team at any time from your profile. That removes you from the team record immediately.",
+            "Sign out to end your session. Signing out deletes the session record on our side too.",
+            "Want your account deleted? Ask an organizer. Deleting it removes your account, your progress and your team membership.",
           ]}
         />
         <p className="mt-4 text-sm leading-relaxed text-zinc-400">
-          There is no self-serve delete button for competition data, so those requests go to a
+          There is no self-serve delete button for your account or competition data, so those requests go to a
           person. For access, correction, or deletion, contact OWASP at{" "}
           <a href={`mailto:${event.privacyContactEmail}`} className="ds-link font-mono">
             {event.privacyContactEmail}
@@ -398,7 +470,7 @@ export default async function PrivacyPage() {
           EEA and California residents.
           {(event.contactEmail || event.discordUrl) && (
             <>
-              {" "}For CTF-specific data such as team membership
+              {" "}For CTF-specific data such as your account, team membership
               {secureDev
                 ? " or hint purchases"
                 : quiz

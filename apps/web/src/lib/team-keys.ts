@@ -32,7 +32,7 @@ export const HINTS_SPENT_KEY = "ctf:hints:spent";
 
 /** When each hint was bought: hash, `<app>/<id>` -> ISO (issue #169).
  *
- *  A SEPARATE key rather than converting `ctf:user:<login>:hints` from a SET
+ *  A SEPARATE key rather than converting `ctf:user:<playerId>:hints` from a SET
  *  to a hash — that would be a type change on a key live events already hold,
  *  so the first SADD after deploying would fail WRONGTYPE mid-event.
  *

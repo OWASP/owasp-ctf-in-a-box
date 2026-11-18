@@ -170,7 +170,8 @@ describe("flags page view model", () => {
     const html = renderToStaticMarkup(await FlagsPage());
 
     expect(getViewerClassic).not.toHaveBeenCalled();
-    expect(html).toMatch(/sign in with github/i);
+    expect(html).toMatch(/sign in to submit flags/i);
+    expect(html).not.toMatch(/sign in with github/i);
     expect(html).not.toContain("<button");
     // And no personal summary — nothing personal to summarize.
     expect(html).not.toContain("/ 1 solved");
@@ -242,7 +243,8 @@ describe("flags page view model", () => {
 
     // Non-vacuity: this really is the empty-state render, not a populated one.
     expect(html).toMatch(/no challenges are available/i);
-    expect(html).toMatch(/sign in with github to submit flags/i);
+    expect(html).toMatch(/sign in to submit flags/i);
+    expect(html).not.toMatch(/sign in with github/i);
   });
 
   // Finding A: getAdminSettings() must fail OPEN at the page level — a Redis blip on the settings read

@@ -53,7 +53,7 @@ describe("/rules in a quiz-only event", () => {
 
   it("states the same rules in the quiz's own terms", () => {
     expect(html).toContain(
-      "Your GitHub login is your identity for scoring — everything you submit counts for the account you signed in with.",
+      "Your account is your identity for scoring — everything you submit on this site counts for the account you signed in with.",
     );
     expect(html).toContain("The published questions are the whole game.");
     expect(html).toContain(

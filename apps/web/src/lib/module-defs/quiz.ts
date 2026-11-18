@@ -50,7 +50,7 @@ export const QUIZ_DEF: ModuleDef = {
       "Answer security questions for points. Every question carries its own point value, is graded the moment you submit it, and counts toward your place on the leaderboard.",
     steps: () => [
       {
-        title: "Sign in with GitHub",
+        title: "Sign in",
         body: "Sign in to claim your row on the leaderboard. Your answers and points are recorded against your account, nothing is graded for a signed-out visitor, and signing in is what lets you leave and pick the set back up later.",
       },
       {
@@ -72,9 +72,9 @@ export const QUIZ_DEF: ModuleDef = {
   // nothing is graded for a signed-out visitor. Deliberately silent on AI,
   // for the reason spelled out on `home`.
   guide: {
-    lede: "New to the quiz? Here's everything you need to go from a GitHub sign-in to your first scored answer.",
+    lede: "New to the quiz? Here's everything you need to go from signing in to your first scored answer.",
     metaDescription:
-      "Step-by-step guide to the quiz: sign in with GitHub, work through the questions, and get scored the moment you submit an answer.",
+      "Step-by-step guide to the quiz: sign in, work through the questions, and get scored the moment you submit an answer.",
     loop: {
       kicker: "The loop",
       cycle: ["read the question", "pick your answer", "submit it", "it's scored on the spot"],
@@ -82,8 +82,8 @@ export const QUIZ_DEF: ModuleDef = {
     },
     steps: () => [
       {
-        title: "Sign in with GitHub",
-        body: "Use the sign-in button in the header. Your GitHub login is how the leaderboard and your profile track your progress, and nothing is graded for a signed-out visitor.",
+        title: "Sign in",
+        body: "Use the sign-in button in the header to create an account or sign in. Your account is how the leaderboard and your profile track your progress, and nothing is graded for a signed-out visitor.",
       },
       {
         title: "Join a team, or play solo",
@@ -105,7 +105,7 @@ export const QUIZ_DEF: ModuleDef = {
     notes: [
       "Every question carries its own point value, and says what it is worth before you answer it.",
       "Organizers can cap how many times a question may be attempted and make you wait between tries. The question tells you when it is on cooldown and when you have run out of attempts.",
-      "Points are credited to the GitHub account you signed in with. A question answered by several teammates counts once for the team, so a team's total can be less than its members' points added together.",
+      "Points are credited to the account you signed in with. A question answered by several teammates counts once for the team, so a team's total can be less than its members' points added together.",
     ],
     scoring:
       "Every question is worth a fixed number of points, set by the organizers when they author it. Points are awarded the moment a correct answer is submitted, graded against a stored answer key, so nothing waits on manual review. Your live total is visible on your profile once you're signed in, and on the leaderboard alongside everyone else's.",
@@ -144,7 +144,7 @@ export const QUIZ_DEF: ModuleDef = {
     prep: [
       {
         q: "What do I need to bring?",
-        a: "A GitHub account and something to read and click with. Everything runs in the browser, and nothing is installed or downloaded.",
+        a: "Something to read and click with. Everything runs in the browser, and nothing is installed or downloaded.",
       },
     ],
     playing: [
@@ -158,7 +158,7 @@ export const QUIZ_DEF: ModuleDef = {
       },
       {
         q: "How is my progress tracked?",
-        a: "Sign in with GitHub to claim your row on the live leaderboard and see how many questions you have answered, and what they were worth, on your profile. Points are credited to the account you signed in with, and nothing is graded for a signed-out visitor.",
+        a: "Sign in to claim your row on the live leaderboard and see how many questions you have answered, and what they were worth, on your profile. Points are credited to the account you signed in with, and nothing is graded for a signed-out visitor.",
       },
       {
         q: "Can I retry a question I got wrong?",
@@ -172,7 +172,7 @@ export const QUIZ_DEF: ModuleDef = {
   }),
   terms: () => ({
     eligibility: [
-      "You need a GitHub account. Your GitHub login is your identity for scoring, so answer from the account you sign in with. Points are credited to the account that submitted the answer and cannot be moved between accounts afterwards.",
+      "You need an account on this site. Your account is your identity for scoring, so answer from the account you sign in with. Points are credited to the account that submitted the answer and cannot be moved between accounts afterwards.",
       "Organizers and anyone who wrote or reviewed the questions may compete for fun but are not eligible for prizes.",
     ],
     scope: [

@@ -53,12 +53,14 @@ describe("/how-to-play in a classic-only event", () => {
 
   it("renders classic's own guide instead", () => {
     expect(html).toContain(
-      "New to the board? Here&#x27;s everything you need to go from a GitHub sign-in to your first solved flag.",
+      "New to the board? Here&#x27;s everything you need to go from signing in to your first solved flag.",
     );
     expect(html).toContain("find the flag");
-    for (const title of ["Sign in with GitHub", "Open the board", "Find the flag", "Submit it and get scored"]) {
+    for (const title of ["Sign in", "Open the board", "Find the flag", "Submit it and get scored"]) {
       expect(html).toContain(title);
     }
+    expect(html).toContain("Use the sign-in button in the header to create an account or sign in.");
+    expect(html).not.toContain("Sign in with GitHub");
     expect(html).toContain("Browse the flags");
     expect(html).toContain('href="/flags"');
   });
@@ -82,7 +84,7 @@ describe("/how-to-play in a classic-only event", () => {
 
   it("describes the page with classic's meta description", () => {
     expect(metadata.description).toBe(
-      "Step-by-step guide to the flag board: sign in with GitHub, work through the flags, and get scored the instant you submit a correct one.",
+      "Step-by-step guide to the flag board: sign in, work through the flags, and get scored the instant you submit a correct one.",
     );
   });
 });

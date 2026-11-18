@@ -172,7 +172,7 @@ export default async function FlagsPage() {
   // totals — a sentence restating the same numbers directly above it was the
   // same fact twice (the duplication quiz/page.tsx also removed). Only the
   // signed-out prompt has no rail to defer to.
-  const progress = playerId ? null : "Sign in with GitHub to submit flags.";
+  const progress = playerId ? null : "Sign in to submit flags.";
 
   return (
     <div className="flex flex-col gap-8">

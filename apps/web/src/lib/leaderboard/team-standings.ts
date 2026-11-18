@@ -10,7 +10,7 @@ import type { LeaderboardData, LeaderboardEntry, TeamStanding } from "./types";
  * Overlays live team MEMBERSHIP (from the team store's ctf:team:* records)
  * onto leaderboard data from a source that has no team concept (upstash, and
  * the empty source a quiz-only event uses). Such a source only has each
- * player's per-login TOTAL, not which flag earned which point — so it has no
+ * player's per-player TOTAL, not which flag earned which point — so it has no
  * way to tell whether two teammates' totals overlap on a flag they both
  * solved. Summing member totals into a team score would double-count any such
  * shared flag, so a synthesised row deliberately fabricates no SCORER points:

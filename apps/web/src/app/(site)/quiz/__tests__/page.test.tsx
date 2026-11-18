@@ -134,7 +134,8 @@ describe("quiz page view model", () => {
     const html = renderToStaticMarkup(await QuizPage());
 
     expect(getViewerQuiz).not.toHaveBeenCalled();
-    expect(html).toMatch(/sign in with github/i);
+    expect(html).toMatch(/sign in to answer questions/i);
+    expect(html).not.toMatch(/sign in with github/i);
     expect(html).not.toContain("<button");
   });
 
@@ -242,7 +243,8 @@ describe("quiz page blurb and progress line", () => {
 
     const html = renderToStaticMarkup(await QuizPage());
 
-    expect(html).toMatch(/sign in with github to answer questions/i);
+    expect(html).toMatch(/sign in to answer questions/i);
+    expect(html).not.toMatch(/sign in with github/i);
     // And the header still describes the module rather than the viewer.
     expect(html).toMatch(/<h1[^>]*>Round 1<\/h1><p[^>]*>Ten questions on the OWASP Top 10, one point each\.<\/p>/);
   });
@@ -261,7 +263,8 @@ describe("quiz page blurb and progress line", () => {
 
     // Non-vacuity: this really is the empty-state render, not a populated one.
     expect(html).toMatch(/no quiz questions are available/i);
-    expect(html).toMatch(/sign in with github to answer questions/i);
+    expect(html).toMatch(/sign in to answer questions/i);
+    expect(html).not.toMatch(/sign in with github/i);
   });
 
   it("falls back to the registry default blurb when the organizer set none", async () => {

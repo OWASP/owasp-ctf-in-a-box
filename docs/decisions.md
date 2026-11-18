@@ -88,6 +88,8 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 70 — Unattributed Secure Development scores are held, not dropped](#adr-70-unattributed-secure-development-scores-are-held-not-dropped)
 - [ADR 71 — The AI module is retired in v2.0.0](#adr-71-the-ai-module-is-retired-in-v200)
 - [ADR 72 — Admins are claimed with a one-time code, not named in `.env`](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)
+- [ADR 73 — Reserved for Discord announcements](#adr-73-reserved-for-discord-announcements)
+- [ADR 74 — Players are kit accounts; GitHub is needed only for Secure Development](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -670,7 +672,7 @@ keep the two consistent.
 
 ## ADR 19. Organizer admin panel: runtime override layer
 
-**Status.** Accepted; the v1 read-path limitation noted below was resolved by [ADR 31](#adr-31-one-hint-switch-capability-split-from-policy), and scheduled windows arrived with [ADR 32](#adr-32-scheduled-windows-evaluated-at-read-time-in-three-readers).
+**Status.** Accepted; the v1 read-path limitation noted below was resolved by [ADR 31](#adr-31-one-hint-switch-capability-split-from-policy), and scheduled windows arrived with [ADR 32](#adr-32-scheduled-windows-evaluated-at-read-time-in-three-readers). Amended 2026-11-17: an admin is a player id granted by a claim code ([ADR 72](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)), not a GitHub login, and players are kit accounts ([ADR 74](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development)).
 
 **Context.** Everything up to this point is either build-time config
 (`event.yaml`, decision 12) or a one-shot event of no return (a score
@@ -1935,7 +1937,7 @@ organizer hardening checklist ([#44](https://github.com/OWASP/owasp-ctf-in-a-box
 
 ## ADR 40. CSRF assertion in the proxy, rate limits keyed on the login
 
-**Status.** Accepted. The ADR 53 amendment's `/api/ai/*` exemption is superseded 2026-11-15 by [ADR 71](#adr-71-the-ai-module-is-retired-in-v200): v2.0.0 has no `/api/ai/*` routes, so the proxy carries no AI carve-out and those paths take the origin check like any other.
+**Status.** Accepted. The ADR 53 amendment's `/api/ai/*` exemption is superseded 2026-11-15 by [ADR 71](#adr-71-the-ai-module-is-retired-in-v200): v2.0.0 has no `/api/ai/*` routes, so the proxy carries no AI carve-out and those paths take the origin check like any other. Amended 2026-11-17 by [ADR 74](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development): the per-player rate limits are keyed on the player id.
 
 **Context.** The custom API routes (`/api/admin/*`, `/api/team/*`,
 `/api/hints/reveal`, `/api/quiz/answer`, `/api/classic/submit`) authenticate
@@ -2506,7 +2508,7 @@ pins that the stamp is at least 3.
 
 ## ADR 47. A team is required to score, enforced at the route and signposted at the page
 
-**Status.** Accepted.
+**Status.** Accepted. Amended 2026-11-17 by [ADR 74](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development): records are keyed by the player id, not the GitHub login.
 
 **Context.** The docs said "everyone ends up on a team", and nothing enforced
 it. A contestant could sign in, go straight to `/quiz` or `/flags`, and start
@@ -2592,7 +2594,7 @@ decision about ingest semantics than this one.
 
 ## ADR 48. Per-contestant support actions, and why they refuse some things
 
-**Status.** Accepted.
+**Status.** Accepted. Amended 2026-11-17 by [ADR 74](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development): records are keyed by the player id, not the GitHub login.
 
 **Context.** The only destructive control in the panel was the master reset,
 which wipes the whole event. So the answer to "one contestant is wedged, the
@@ -2690,7 +2692,7 @@ drift apart.
 
 ## ADR 49. `firstTeamAt` records the funnel's conversion moment; `joinedAt` does not
 
-**Status.** Accepted.
+**Status.** Accepted. Amended 2026-11-17 by [ADR 74](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development): records are keyed by the player id, not the GitHub login.
 
 **Context.** The engagement funnel ([#169](https://github.com/OWASP/owasp-ctf-in-a-box/issues/169))
 is *signed in → got on a team → first solve*. Solves and answers already carry
@@ -2732,7 +2734,7 @@ path, which is a bigger decision than this one.
 
 ## ADR 50. Metrics are computed from stored data; forks report nothing
 
-**Status.** Accepted.
+**Status.** Accepted. Amended 2026-11-17 by [ADR 74](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development): records are keyed by the player id, not the GitHub login.
 
 **Context.** Engagement metrics ([#169](https://github.com/OWASP/owasp-ctf-in-a-box/issues/169))
 raised a design question worth settling once: what may a fork tell the box, and
@@ -4469,3 +4471,71 @@ not read. Deleting an account must also remove its grant (#740).
 race on a public URL. Admins named by username in `.env`: usernames are
 self-chosen at open sign-up, so the name can be taken first. A slow password
 hash for the code: there is no low entropy for it to protect.
+
+## ADR 73. Reserved for Discord announcements
+
+**Status.** Reserved. The number belongs to the Discord announcements
+decision (#590), which its pull request (#639) writes here in full when it
+merges, replacing this entry.
+
+## ADR 74. Players are kit accounts; GitHub is needed only for Secure Development
+
+**Status.** Accepted (#731, built in #736–#744). Amends [ADR 19](#adr-19-organizer-admin-panel-runtime-override-layer), [ADR 40](#adr-40-csrf-assertion-in-the-proxy-rate-limits-keyed-on-the-login), [ADR 47](#adr-47-a-team-is-required-to-score-enforced-at-the-route-and-signposted-at-the-page), [ADR 48](#adr-48-per-contestant-support-actions-and-why-they-refuse-some-things), [ADR 49](#adr-49-firstteamat-records-the-funnels-conversion-moment-joinedat-does-not) and [ADR 50](#adr-50-metrics-are-computed-from-stored-data-forks-report-nothing): wherever they key a record on, or identify a player by, a GitHub login, read the player id. Admin access is [ADR 72](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env).
+
+**Context.** Through v1 a player was a GitHub login. Every event needed a
+GitHub OAuth app, even one that ran only Quiz and Jeopardy, and a GitHub
+outage stopped sign-in for the whole box. Solves, teams, hints, metrics and
+admin access were all keyed on the login, so a renamed GitHub account was a
+different player and a login was the only handle an organizer had.
+
+**Decision.**
+- **The kit owns the accounts.** better-auth runs on a Redis user store
+  (`ctf:auth:*`, behind srh like everything else): users, password hashes,
+  provider accounts and sessions. There is no new service and no SQL
+  database. Username and password sign-up is always available; usernames are
+  unique case-insensitively, and sign-up is rate-limited per address.
+- **Providers are the organizer's choice.** GitHub, Google and Discord each
+  appear once both their keys are in `.env`, and each has an on/off switch in
+  the `/admin` Event tab (absent means on). Keys never go to Redis or an
+  archive. No email is stored from any provider: every account gets a
+  placeholder email. Google and Discord contribute nothing from the profile;
+  GitHub contributes its `login`, and an account created by a GitHub sign-in
+  starts with the GitHub name and avatar.
+- **GitHub is required only for Secure Development.** With SD on, a player
+  links GitHub from their profile (or signs in with it), and sync credits a
+  PR to the player who linked its author's login. One GitHub account links to
+  one player. A score from an author nobody has linked is held
+  ([ADR 70](#adr-70-unattributed-secure-development-scores-are-held-not-dropped)).
+  With SD off, GitHub appears only as a sign-in button the organizer chose.
+- **Every record is keyed by the player id**, the UUID better-auth assigns.
+  The GitHub login is an attribute used to attribute PRs. Names shown
+  anywhere come from the username at display time.
+- **Organizers manage accounts in the Support tab.** A password reset is a
+  single-use code, valid 15 minutes, that the organizer hands over and the
+  player redeems at `/reset`; the organizer never sees or sets a password, and
+  the reset signs the player out everywhere. An organizer can rename a
+  player, unlink a GitHub link that has not scored, and delete an account.
+  A delete releases the player's GitHub link and blocks that login from
+  linking again until the next master reset, so a new account cannot take
+  over points a PR re-scores. **Delete all accounts** in the Event tab hands
+  the box to a new community; it deletes every account and admin grant, and
+  the next admin claims with a rotated code.
+- **A master reset keeps accounts**, admin grants and GitHub links, and wipes
+  the event: solves, teams, hints, progress, held scores and the re-link
+  blocklist. The event archive carries no account data.
+- **v1 is a clean break.** There is no migration of v1 accounts or progress:
+  an upgrade is export the event archive, then master reset.
+
+**Consequences.** A Quiz or Jeopardy event needs no GitHub OAuth app at all.
+Redis now holds credentials, so every auth write checks per-command errors
+and fails closed, multi-key writes are Lua scripts with live
+`*.upstash.test.ts` suites, and account data stays out of logs and archives.
+v2.0 has no email, so a forgotten password costs an organizer a reset code.
+A v1 box's progress does not carry over.
+
+**Alternatives rejected.** Keep GitHub as the identity and add other
+providers beside it: every record would still need a login, and a player
+without GitHub would have none. A SQL database for accounts: a new stateful
+service on every deployment target, for data Redis already holds. Migrating
+v1 progress to player ids: a v1 login maps to no v2 account until that
+person signs up, so the join is a guess.

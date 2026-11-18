@@ -5,7 +5,7 @@
 // else?), the aggregate bookkeeping (the counters are NOT all keyed the same
 // way), and the refusals that keep a team administrable.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   upstashEval: vi.fn<(script: string, keys: string[], args: (string | number)[]) => Promise<unknown>>(),
@@ -31,7 +31,7 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
 // through the reset's own SCAN+DEL walk.
 // unlinkGithub reads the sign-in switches to tell an enabled provider row
 // from one that cannot sign in.
-const storeDeps = vi.hoisted(() => ({ resetEvent: vi.fn(), scanDelByPrefix: vi.fn(), getAdminSettings: vi.fn() }));
+const storeDeps = vi.hoisted(() => ({ resetEvent: vi.fn(), scanDelByPrefix: vi.fn() }));
 vi.mock("@/lib/admin-store", () => ({ ADMIN_AUDIT_KEY: "ctf:admin:audit", AUDIT_CAP: 500, ...storeDeps }));
 // deleteUser refuses an organizer before anything is written.
 const grantDeps = vi.hoisted(() => ({ isAdminGrantee: vi.fn() }));
@@ -1464,9 +1464,6 @@ describe("unlinkGithub", () => {
   const account = (id: string, providerId: string) => ({ id, providerId, userId: OCTO, accountId: id });
   const TAKEN = { login: "octocat", at: "1700000000000", ours: true };
   const GH_AVATAR = "https://avatars.githubusercontent.com/u/583231?v=4";
-  const switches = (on: Partial<Record<"github" | "google" | "discord", boolean>>) => ({
-    signInProviders: { github: false, google: false, discord: false, ...on },
-  });
 
   beforeEach(() => {
     linkDeps.getGithubLink.mockResolvedValue({ login: "octocat", linkedAt: 1700000000000 });
@@ -1476,13 +1473,7 @@ describe("unlinkGithub", () => {
     authDeps.deleteAccount.mockReset().mockResolvedValue(undefined);
     authDeps.findUserById.mockResolvedValue({ id: OCTO, login: "octocat", image: GH_AVATAR });
     authDeps.updateUser.mockReset().mockResolvedValue(undefined);
-    storeDeps.getAdminSettings.mockResolvedValue(switches({}));
-    vi.stubEnv("GOOGLE_CLIENT_ID", "id");
-    vi.stubEnv("GOOGLE_CLIENT_SECRET", "secret");
-    vi.stubEnv("DISCORD_CLIENT_ID", "id");
-    vi.stubEnv("DISCORD_CLIENT_SECRET", "secret");
   });
-  afterEach(() => vi.unstubAllEnvs());
 
   const nothingWritten = () => {
     expect(holdDeps.holdScores).not.toHaveBeenCalled();
@@ -1704,7 +1695,7 @@ describe("unlinkGithub", () => {
       "This player cannot sign in without GitHub. First set a username for them (Username, then Save), then give them a reset code so they can set a password.",
     ],
     [
-      "a provider that is switched off",
+      "an account row of a provider the kit does not offer",
       [account("a1", "github"), account("a4", "discord")],
       "octocat",
       "This player cannot sign in without GitHub. First give them a reset code so they can set a password.",
@@ -1712,36 +1703,9 @@ describe("unlinkGithub", () => {
   ])("refuses a player with %s, before any write", async (_label, rows, username, message) => {
     authDeps.findAccounts.mockResolvedValue(rows);
     nameDeps.currentUsername.mockResolvedValue(username);
-    storeDeps.getAdminSettings.mockResolvedValue(switches({ google: true }));
     const err = await unlinkGithub(OCTO, ADMIN).catch((e) => e);
     expect(err).toBeInstanceOf(OpsValidationError);
     expect(err.message).toBe(message);
-    nothingWritten();
-  });
-
-  it("refuses a provider whose switch is on but has no keys", async () => {
-    vi.stubEnv("DISCORD_CLIENT_SECRET", "");
-    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a4", "discord")]);
-    storeDeps.getAdminSettings.mockResolvedValue(switches({ discord: true }));
-    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow(/cannot sign in without GitHub/);
-    nothingWritten();
-  });
-
-  it("an enabled provider counts as a sign-in method", async () => {
-    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a4", "discord")]);
-    nameDeps.currentUsername.mockResolvedValue(null);
-    storeDeps.getAdminSettings.mockResolvedValue(switches({ discord: true }));
-    mockNoSecureDevKeys();
-    mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1));
-    expect(await unlinkGithub(OCTO, ADMIN)).toEqual({ login: "octocat" });
-    expect(authDeps.deleteAccount.mock.calls.map((c) => c[0])).toEqual(["a1"]);
-  });
-
-  it("a failed sign-in switch read refuses instead of reading as enabled", async () => {
-    authDeps.findAccounts.mockResolvedValue([account("a1", "github"), account("a4", "google")]);
-    storeDeps.getAdminSettings.mockRejectedValue(new Error("NOAUTH"));
-    nameDeps.currentUsername.mockResolvedValue(null);
-    await expect(unlinkGithub(OCTO, ADMIN)).rejects.toThrow("NOAUTH");
     nothingWritten();
   });
 

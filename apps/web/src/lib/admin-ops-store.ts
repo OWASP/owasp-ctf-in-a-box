@@ -1,7 +1,6 @@
 import "server-only";
 import { assertPipelineOk, parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
-import { ADMIN_AUDIT_KEY, AUDIT_CAP, getAdminSettings, resetEvent, scanDelByPrefix } from "@/lib/admin-store";
-import { enabledSignInProviders } from "@/lib/sign-in-providers";
+import { ADMIN_AUDIT_KEY, AUDIT_CAP, resetEvent, scanDelByPrefix } from "@/lib/admin-store";
 import { ADMIN_GRANTS_KEY, isAdminGrantee } from "@/lib/admin-grants";
 import { ADMIN_CODE_PREFIX, ADMIN_GRANT_GEN_KEY } from "@/lib/admin-claim";
 import { RESET_CODE_PREFIX } from "@/lib/password-reset";
@@ -1043,9 +1042,9 @@ export const BLOCKED_DURING_UNLINK =
  * rows, with no re-link block, so the login is free to link again. Sync reads
  * a released login as unlinked and holds its scores.
  *
- * Refused when no usable sign-in method would remain (a password with a
- * username, or another provider that is enabled), read before any write; a
- * failed read throws. Refused while the link has scored (any Secure
+ * Refused when no usable sign-in method would remain: GitHub is the one
+ * OAuth provider, so that is a password with a username, read before any
+ * write; a failed read throws. Refused while the link has scored (any Secure
  * Development solve: the score is attributed through it).
  *
  * The whole unlink runs under the player's score hold (`ctf:score-hold:<id>`,
@@ -1079,16 +1078,9 @@ export async function unlinkGithub(rawId: unknown, actor: AuditActor): Promise<{
     throw new OpsValidationError("id", "No GitHub account is linked.");
   }
 
-  const others = accounts.filter((a) => a.providerId !== "github");
-  const hasPassword = others.some((a) => a.providerId === "credential");
+  const hasPassword = accounts.some((a) => a.providerId === "credential");
   const hasUsername = Boolean(await currentUsername(player));
-  let usable = hasPassword && hasUsername;
-  const social = others.filter((a) => a.providerId !== "credential").map((a) => a.providerId);
-  if (!usable && social.length > 0) {
-    const enabled: readonly string[] = enabledSignInProviders(await getAdminSettings(), process.env);
-    usable = social.some((p) => enabled.includes(p));
-  }
-  if (!usable) throw new OpsValidationError("id", noOtherSignIn(hasUsername, hasPassword));
+  if (!(hasPassword && hasUsername)) throw new OpsValidationError("id", noOtherSignIn(hasUsername, hasPassword));
 
   // The token exists before the hold so a hold of unknown outcome (a
   // timeout) is still lifted below; SREM of a non-member is harmless.

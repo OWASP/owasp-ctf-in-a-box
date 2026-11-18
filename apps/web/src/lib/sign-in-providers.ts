@@ -1,31 +1,25 @@
-// Registry of the OAuth sign-in providers. A dependency-free leaf with no
-// `server-only`, so the admin client bundle can import the ids and labels;
-// the env read takes `env` as a parameter for the same reason.
+// Registry of the OAuth sign-in providers: GitHub is the one provider, next to
+// username and password. A dependency-free leaf with no `server-only`, so the
+// admin client bundle can import the ids and labels; the env read takes `env`
+// as a parameter for the same reason.
 
-export const SIGN_IN_PROVIDERS = ["github", "google", "discord"] as const;
+export const SIGN_IN_PROVIDERS = ["github"] as const;
 export type SignInProviderId = (typeof SIGN_IN_PROVIDERS)[number];
 
 export const PROVIDER_LABEL: Record<SignInProviderId, string> = {
   github: "GitHub",
-  google: "Google",
-  discord: "Discord",
 };
 
 export const PROVIDER_ENV: Record<SignInProviderId, { id: string; secret: string }> = {
   github: { id: "GITHUB_CLIENT_ID", secret: "GITHUB_CLIENT_SECRET" },
-  google: { id: "GOOGLE_CLIENT_ID", secret: "GOOGLE_CLIENT_SECRET" },
-  discord: { id: "DISCORD_CLIENT_ID", secret: "DISCORD_CLIENT_SECRET" },
 };
 
-/** The admin-settings field holding each provider's on/off switch. */
-export const PROVIDER_SWITCH_FIELD: Record<
-  SignInProviderId,
-  "signInGithub" | "signInGoogle" | "signInDiscord"
-> = {
+/** The admin-settings field holding each provider's on/off switch. Reads
+ *  take only these fields, so any other field in the settings hash is
+ *  ignored. */
+export const PROVIDER_SWITCH_FIELD = {
   github: "signInGithub",
-  google: "signInGoogle",
-  discord: "signInDiscord",
-};
+} as const satisfies Record<SignInProviderId, string>;
 
 type Env = Record<string, string | undefined>;
 

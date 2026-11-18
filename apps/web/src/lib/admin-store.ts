@@ -150,9 +150,9 @@ export type AdminSettings = {
   /** The projector board's QR code of the event URL. On unless an
    *  organizer turns it off: absent is on, a stored "0" is off. */
   displayQr: boolean;
-  /** Per-provider sign-in switches. On unless an organizer turns one off:
-   *  absent is on, a stored "0" is off. Keys being present is a separate
-   *  gate (see sign-in-providers). */
+  /** The GitHub sign-in switch, keyed by provider id. On unless an
+   *  organizer turns it off: absent is on, a stored "0" is off. Keys being
+   *  present is a separate gate (see sign-in-providers). */
   signInProviders: Record<SignInProviderId, boolean>;
   // Scheduled "auto dates" — nullable ISO instants. scoring* gates the freeze
   // through outsideScoringWindow (before start / after end = paused, and an
@@ -262,8 +262,6 @@ export type SettingsPatch = {
   teamRegistrationOpen?: boolean;
   displayQr?: boolean;
   signInGithub?: boolean;
-  signInGoogle?: boolean;
-  signInDiscord?: boolean;
   /** The modules this event serves. Replaces the set wholesale;
    *  see updateAdminSettings for the two things it refuses. */
   enabledModules?: ModuleId[];

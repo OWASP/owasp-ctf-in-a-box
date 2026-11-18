@@ -91,8 +91,8 @@ import { APIError } from "better-auth/api";
  *   /sign-up/email     username + password sign-up (refuseSignUpFields closes
  *                      it to every identity field but the username)
  *   /sign-in/username  username + password sign-in
- *   /sign-in/social    authClient.signIn.social({ provider }) for each enabled
- *                      provider (github, google, discord)
+ *   /sign-in/social    authClient.signIn.social({ provider: "github" }) when
+ *                      GitHub sign-in is enabled
  *   /link-social       authClient.linkSocial({ provider: "github" }), the
  *                      signed-in player's Link GitHub button
  *   /callback/:id      GitHub's OAuth redirect back, for sign-in and for a link
@@ -264,7 +264,7 @@ describe("user.update.before", () => {
   const profile = { login: "octocat", name: "Octo", image: "u" };
   // The callback's writes pass the switch gate first.
   beforeEach(() => {
-    getAdminSettings.mockResolvedValue({ signInProviders: { github: true, google: true, discord: true } });
+    getAdminSettings.mockResolvedValue({ signInProviders: { github: true } });
   });
   afterEach(() => getAdminSettings.mockReset());
 
@@ -376,7 +376,7 @@ describe("refuseClientOAuthParams (OAuth for identity only)", () => {
 
   it.each(["/sign-in/social", "/link-social"])("refuses an idToken on %s, the direct sign-in path", async (path) => {
     for (const value of [{ token: "x" }, "x", null, undefined]) {
-      const err = await refused(refuseClientOAuthParams(ctx(path, { provider: "google", idToken: value })));
+      const err = await refused(refuseClientOAuthParams(ctx(path, { provider: "github", idToken: value })));
       expect(err.status).toBe("BAD_REQUEST");
       expect(err.body?.code).toBe("OAUTH_PARAMS_NOT_ALLOWED");
     }
@@ -395,14 +395,10 @@ describe("refuseDisabledProvider (/sign-in/social and /link-social)", () => {
     expect(err).toBeInstanceOf(APIError);
     return err as APIError;
   };
-  const switches = (s: { github: boolean; google: boolean; discord: boolean }) => getAdminSettings.mockResolvedValue({ signInProviders: s });
-  const keyed = () => {
+  const githubSwitch = (on: boolean) => getAdminSettings.mockResolvedValue({ signInProviders: { github: on } });
+  const keyed = (secret = "gh-secret") => {
     vi.stubEnv("GITHUB_CLIENT_ID", "gh-id");
-    vi.stubEnv("GITHUB_CLIENT_SECRET", "gh-secret");
-    vi.stubEnv("GOOGLE_CLIENT_ID", "g-id");
-    vi.stubEnv("GOOGLE_CLIENT_SECRET", "g-secret");
-    vi.stubEnv("DISCORD_CLIENT_ID", "");
-    vi.stubEnv("DISCORD_CLIENT_SECRET", "");
+    vi.stubEnv("GITHUB_CLIENT_SECRET", secret);
   };
 
   afterEach(() => {
@@ -410,32 +406,32 @@ describe("refuseDisabledProvider (/sign-in/social and /link-social)", () => {
     getAdminSettings.mockReset();
   });
 
-  it("lets a configured provider whose switch is on through", async () => {
+  it("lets GitHub sign-in through with keys and the switch on", async () => {
     keyed();
-    switches({ github: true, google: true, discord: true });
-    await expect(refuseDisabledProvider(ctx("/sign-in/social", { provider: "google" }))).resolves.toBeUndefined();
+    githubSwitch(true);
+    await expect(refuseDisabledProvider(ctx("/sign-in/social", { provider: "github" }))).resolves.toBeUndefined();
     expect(getAdminSettings).toHaveBeenCalledOnce();
   });
 
-  it("refuses a provider switched off", async () => {
+  it("refuses GitHub sign-in switched off", async () => {
     keyed();
-    switches({ github: true, google: false, discord: true });
-    const err = await refused(refuseDisabledProvider(ctx("/sign-in/social", { provider: "google" })));
+    githubSwitch(false);
+    const err = await refused(refuseDisabledProvider(ctx("/sign-in/social", { provider: "github" })));
     expect(err.status).toBe("FORBIDDEN");
     expect(err.body?.code).toBe("PROVIDER_DISABLED");
   });
 
-  it("refuses a provider switched on without keys", async () => {
-    keyed();
-    switches({ github: true, google: true, discord: true });
-    const err = await refused(refuseDisabledProvider(ctx("/sign-in/social", { provider: "discord" })));
+  it("refuses GitHub sign-in switched on without keys", async () => {
+    keyed("");
+    githubSwitch(true);
+    const err = await refused(refuseDisabledProvider(ctx("/sign-in/social", { provider: "github" })));
     expect(err.status).toBe("FORBIDDEN");
     expect(err.body?.code).toBe("PROVIDER_DISABLED");
   });
 
-  it.each([{ provider: "twitter" }, { provider: ["google"] }, {}, null, "google"])("refuses an unknown or malformed provider (%o)", async (body) => {
+  it.each([{ provider: "google" }, { provider: "discord" }, { provider: "twitter" }, { provider: ["github"] }, {}, null, "github"])("refuses an unknown or malformed provider (%o)", async (body) => {
     keyed();
-    switches({ github: true, google: true, discord: true });
+    githubSwitch(true);
     const err = await refused(refuseDisabledProvider(ctx("/sign-in/social", body)));
     expect(err.body?.code).toBe("PROVIDER_DISABLED");
   });
@@ -453,31 +449,31 @@ describe("refuseDisabledProvider (/sign-in/social and /link-social)", () => {
 
   it("lets a GitHub link through with the GitHub switch off, without reading the switches", async () => {
     keyed();
-    switches({ github: false, google: true, discord: true });
+    githubSwitch(false);
     await expect(refuseDisabledProvider(ctx("/link-social", { provider: "github" }))).resolves.toBeUndefined();
     expect(getAdminSettings).not.toHaveBeenCalled();
   });
 
   it.each(["google", "discord", undefined])("refuses a %s link", async (provider) => {
     keyed();
-    switches({ github: true, google: true, discord: true });
+    githubSwitch(true);
     const err = await refused(refuseDisabledProvider(ctx("/link-social", { provider })));
     expect(err.status).toBe("BAD_REQUEST");
     expect(err.body?.code).toBe("LINK_PROVIDER_NOT_ALLOWED");
   });
 
   it.each(["/callback/:id", "/get-session", "/sign-up/email", "/sign-in/username"])("ignores %s without reading settings", async (path) => {
-    await expect(refuseDisabledProvider(ctx(path, { provider: "google" }))).resolves.toBeUndefined();
+    await expect(refuseDisabledProvider(ctx(path, { provider: "github" }))).resolves.toBeUndefined();
     expect(getAdminSettings).not.toHaveBeenCalled();
   });
 
   it("is wired into the before hook after the OAuth parameter check", async () => {
     keyed();
-    switches({ github: true, google: false, discord: true });
+    githubSwitch(false);
     const hook = auth.options.hooks?.before as unknown as (c: unknown) => Promise<unknown>;
-    const disabled = await refused(hook({ path: "/sign-in/social", body: { provider: "google" } }));
+    const disabled = await refused(hook({ path: "/sign-in/social", body: { provider: "github" } }));
     expect(disabled.body?.code).toBe("PROVIDER_DISABLED");
-    const params = await refused(hook({ path: "/sign-in/social", body: { provider: "google", idToken: { token: "x" } } }));
+    const params = await refused(hook({ path: "/sign-in/social", body: { provider: "github", idToken: { token: "x" } } }));
     expect(params.body?.code).toBe("OAUTH_PARAMS_NOT_ALLOWED");
   });
 });
@@ -493,7 +489,7 @@ describe("gateOAuthCallback (database hooks on /callback/:id)", () => {
     expect(err).toBeInstanceOf(APIError);
     return (err as APIError).body?.code;
   };
-  const switches = (s: { github: boolean; google: boolean; discord: boolean }) => getAdminSettings.mockResolvedValue({ signInProviders: s });
+  const githubSwitch = (on: boolean) => getAdminSettings.mockResolvedValue({ signInProviders: { github: on } });
 
   afterEach(() => {
     getOAuthState.mockReset();
@@ -503,14 +499,14 @@ describe("gateOAuthCallback (database hooks on /callback/:id)", () => {
 
   it.each(["user", "account", "session"] as const)("refuses a %s write for a switched-off sign-in", async (write) => {
     getOAuthState.mockResolvedValue(signInState());
-    switches({ github: false, google: true, discord: true });
+    githubSwitch(false);
     expect(await code(gateOAuthCallback(cb("github"), write))).toBe("PROVIDER_DISABLED");
   });
 
   it("lets a switched-on sign-in write, reading the switches once per callback", async () => {
     const state = signInState();
     getOAuthState.mockResolvedValue(state);
-    switches({ github: true, google: true, discord: true });
+    githubSwitch(true);
     for (const write of ["user", "account", "session"] as const) {
       await expect(gateOAuthCallback(cb("github"), write)).resolves.toBeUndefined();
     }
@@ -521,13 +517,13 @@ describe("gateOAuthCallback (database hooks on /callback/:id)", () => {
     getOAuthState.mockResolvedValue(signInState());
     getAdminSettings.mockRejectedValue(new Error("NOAUTH"));
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(await code(gateOAuthCallback(cb("discord"), "session"))).toBe("SIGN_IN_SETTINGS_UNREADABLE");
+    expect(await code(gateOAuthCallback(cb("github"), "session"))).toBe("SIGN_IN_SETTINGS_UNREADABLE");
     errors.mockRestore();
   });
 
   it("lets a GitHub link write its account and user with GitHub sign-in switched off, without reading the switches", async () => {
     getOAuthState.mockResolvedValue(linkState);
-    switches({ github: false, google: false, discord: false });
+    githubSwitch(false);
     await expect(gateOAuthCallback(cb("github"), "account")).resolves.toBeUndefined();
     await expect(gateOAuthCallback(cb("github"), "user")).resolves.toBeUndefined();
     expect(getAdminSettings).not.toHaveBeenCalled();
@@ -535,8 +531,14 @@ describe("gateOAuthCallback (database hooks on /callback/:id)", () => {
 
   it.each(["google", "discord"])("refuses a link's account write at the %s callback", async (id) => {
     getOAuthState.mockResolvedValue(linkState);
-    switches({ github: true, google: true, discord: true });
+    githubSwitch(true);
     expect(await code(gateOAuthCallback(cb(id), "account"))).toBe("LINK_PROVIDER_NOT_ALLOWED");
+  });
+
+  it.each(["google", "discord"])("refuses a sign-in write at the %s callback", async (id) => {
+    getOAuthState.mockResolvedValue(signInState());
+    githubSwitch(true);
+    expect(await code(gateOAuthCallback(cb(id), "user"))).toBe("PROVIDER_DISABLED");
   });
 
   it("never lets a link create a session", async () => {
@@ -552,13 +554,13 @@ describe("gateOAuthCallback (database hooks on /callback/:id)", () => {
 
   it("is wired into the user, account and session hooks", async () => {
     getOAuthState.mockResolvedValue(signInState());
-    switches({ github: true, google: true, discord: false });
+    githubSwitch(false);
     type Hook = (data: Record<string, unknown>, ctx: unknown) => Promise<unknown>;
     const hooks = authOptions.databaseHooks as unknown as Record<string, Record<string, { before?: Hook }>>;
     const wired: [string, string][] = [["user", "create"], ["user", "update"], ["account", "create"], ["account", "update"], ["session", "create"]];
     for (const [model, op] of wired) {
       expect(typeof hooks[model][op].before).toBe("function");
-      expect(await code(hooks[model][op].before!({}, cb("discord")))).toBe("PROVIDER_DISABLED");
+      expect(await code(hooks[model][op].before!({}, cb("github")))).toBe("PROVIDER_DISABLED");
     }
   });
 });

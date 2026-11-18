@@ -46,9 +46,9 @@ describe("/sign-in", () => {
 
   it("hands the form the enabled providers", async () => {
     getPlayer.mockResolvedValue(null);
-    enabledSignInProviders.mockReturnValue(["github", "google"]);
+    enabledSignInProviders.mockReturnValue(["github"]);
     const html = renderToStaticMarkup(await SignInPage({ searchParams: Promise.resolve({}) }));
-    expect(html).toContain('data-providers="github,google"');
+    expect(html).toContain('data-providers="github"');
   });
 
   it("renders the form with no providers when the settings read throws", async () => {

@@ -274,6 +274,20 @@ describe("quiz page blurb and progress line", () => {
     const html = renderToStaticMarkup(await QuizPage());
     expect(html).toContain("Answer security questions for points.");
   });
+
+  it("contains read failures for questions, settings, and modules", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    getSession.mockResolvedValue(null);
+    listQuestions.mockRejectedValue(new Error("redis down"));
+    getAdminSettings.mockRejectedValue(new Error("redis down"));
+    getResolvedModules.mockRejectedValue(new Error("redis down"));
+
+    const html = renderToStaticMarkup(await QuizPage());
+    expect(html).toContain("Quiz");
+    expect(html).toMatch(/no quiz questions are available/i);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });
 
 describe("quiz page metadata", () => {

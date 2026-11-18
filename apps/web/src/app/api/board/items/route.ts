@@ -7,6 +7,7 @@ import { getPlayer, PLAYER_ID_RE } from "@/lib/player";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { requireLaunchedApi } from "@/lib/launch";
 import { getViewerQuiz, listQuestions } from "@/lib/quiz-store";
+import { errorLabel } from "@/lib/error-label";
 
 /** How many players one request may union — a team's roster, not a scrape. */
 const MAX_PLAYERS = 8;
@@ -44,14 +45,18 @@ export async function GET(request: Request) {
 
   let quiz: Item[] | null = null;
   if (quizLive) {
-    const [questions, viewers] = await Promise.all([
-      listQuestions(),
-      Promise.all(players.map((p) => getViewerQuiz(p))),
-    ]);
-    quiz = questions.map((q) => {
-      const hit = viewers.map((v) => v.answered[q.id]).find(Boolean);
-      return { id: q.id, label: q.prompt, points: q.points, done: Boolean(hit), earnedPoints: hit?.points };
-    });
+    try {
+      const [questions, viewers] = await Promise.all([
+        listQuestions(),
+        Promise.all(players.map((p) => getViewerQuiz(p))),
+      ]);
+      quiz = questions.map((q) => {
+        const hit = viewers.map((v) => v.answered[q.id]).find(Boolean);
+        return { id: q.id, label: q.prompt, points: q.points, done: Boolean(hit), earnedPoints: hit?.points };
+      });
+    } catch (err) {
+      console.error("[board-items] quiz items read failed:", errorLabel(err));
+    }
   }
 
   let classic: Item[] | null = null;

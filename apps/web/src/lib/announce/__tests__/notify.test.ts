@@ -171,6 +171,39 @@ describe("notifyFirstBlood", () => {
     expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
   });
 
+  it("revalidates classic challenge existence after enriching with team data and drops announcement if hidden", async () => {
+    let releaseTeams: (() => void) | undefined;
+    mocks.listTeams.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseTeams = () => resolve([{ slug: "t1", name: "Team One", members: ["alice"] }]);
+        }),
+    );
+    mocks.readChallengeRecords.mockResolvedValueOnce([
+      { id: "web-1", title: "Web 1", category: "web", points: 100 },
+    ]);
+
+    const notify = notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
+    await vi.waitFor(() => expect(mocks.listTeams).toHaveBeenCalledTimes(1));
+
+    mocks.readChallengeRecords.mockResolvedValueOnce([
+      { id: "web-1", title: "Web 1", category: "web", points: 100, enabled: false },
+    ]);
+
+    releaseTeams?.();
+    await notify;
+
+    expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it("enqueues once when a classic challenge remains public through team lookup", async () => {
+    mocks.readChallengeRecords.mockResolvedValue([
+      { id: "web-1", title: "Web 1", category: "web", points: 100 },
+    ]);
+    await notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
+    expect(mocks.enqueueLedgerAnnouncement).toHaveBeenCalledTimes(1);
+  });
+
   it("never announces a HIDDEN challenge — returns without claiming or enqueueing", async () => {
     mocks.readChallengeRecords.mockResolvedValue([{ id: "web-9", title: "Secret Unreleased Title", category: "web", points: 100, enabled: false }]);
     await notifyFirstBlood({ module: "classic", challengeId: "web-9", playerId: "alice" });

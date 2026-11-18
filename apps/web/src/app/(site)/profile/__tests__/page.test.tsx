@@ -405,4 +405,19 @@ describe("profile header stats", () => {
     // …and the standalone not-done headline is gone.
     expect(html).not.toContain("non-patched");
   });
+
+  it("contains quiz read failures, logging the error and still loading profile page", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    moduleLive.mockImplementation((id: string) => id === "quiz" || id === "secure-development");
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
+    getUser.mockResolvedValue(baseProfile);
+    getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
+    getQuizTotals.mockRejectedValue(new Error("redis down"));
+    listQuestions.mockRejectedValue(new Error("redis down"));
+
+    const html = renderToStaticMarkup(await ProfilePage());
+    expect(html).toContain("patched");
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });

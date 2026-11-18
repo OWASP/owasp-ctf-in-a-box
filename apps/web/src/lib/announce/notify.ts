@@ -77,6 +77,25 @@ async function lookupItem(id: string): Promise<{ title: string; points: number }
   return q ? { title: q.prompt, points: q.points } : null;
 }
 
+/** Public title and points for a classic challenge the no-solve view can show,
+ *  or null when it is hidden, unreleased, deleted, or story-locked. Unreadable
+ *  state throws to the caller. */
+async function lookupClassicItem(id: string): Promise<{ title: string; points: number } | null> {
+  const visible = visibleNow(await readChallengeRecords());
+  const c = visible.find((x) => x.id === id);
+  if (!c) return null;
+  // Secrecy gate (ADR 60): the board redacts a story step to any reader
+  // whose team has not unlocked it — title, points AND id — and an
+  // announcement's audience is everyone in the channel, so a step locked
+  // for even one of them may appear in no part of the post. Evaluated
+  // with the board's own isLocked from the no-solve view: step 1 has no
+  // prereq and passes, every later step withholds the whole announcement.
+  const positions = storyPositions(await listStories(), new Set(visible.map((x) => x.id)));
+  const pos = positions.get(id);
+  if (pos && isLocked(pos, new Set())) return null;
+  return { title: c.title, points: c.points };
+}
+
 /** Resolves an absolute HTTP(S) URL for a challenge/board link from
  *  BETTER_AUTH_URL. Returns undefined when BETTER_AUTH_URL is missing,
  *  not an absolute URL, or uses a non-HTTP(S) protocol so an invalid
@@ -130,30 +149,8 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
 
     let item: { title: string; points: number } | null;
     if (input.module === "classic") {
-      const all = await readChallengeRecords();
-      const visible = visibleNow(all);
-      const c = visible.find((x) => x.id === input.challengeId);
-      // Not on the VISIBLE board — hidden, unreleased, or deleted between
-      // the solve and this lookup. No post, and no fallback to the bare id:
-      // a deleted story step leaves no record for `storyPositions` (below)
-      // to place, so the lock gate could not run and the id itself is what
-      // the board redacts.
-      if (!c) return;
-      // Secrecy gate (ADR 60): the board redacts a story step to any reader
-      // whose team has not unlocked it — title, points AND id — and an
-      // announcement's audience is everyone in the channel, so a step locked
-      // for even one of them may appear in no part of the post. Evaluated
-      // with the board's own isLocked from the no-solve view (api/board/
-      // items/route.ts pairs it with the viewer's solves; the empty set is
-      // the most locked view there is, and every other reader only opens
-      // further): step 1 has no prereq and passes, every later step withholds
-      // the whole announcement — not even the bare id, which the board also
-      // redacts because ids are derived from titles. A read that throws lands
-      // in the outer catch: unreadable means NO post, never a guess.
-      const positions = storyPositions(await listStories(), new Set(visible.map((x) => x.id)));
-      const pos = positions.get(input.challengeId);
-      if (pos && isLocked(pos, new Set())) return;
-      item = { title: c.title, points: c.points };
+      item = await lookupClassicItem(input.challengeId);
+      if (!item) return;
     } else {
       // FAIL CLOSED: a failed or absent quiz lookup posts nothing. The ID embeds
       // the prompt slug (generateQuestionId), so it must not be named without a
@@ -169,13 +166,14 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
     const who = team?.name || profiles.get(input.playerId)?.name || input.playerId;
     const url = challengeEmbedUrl(input.module, input.challengeId);
 
-    // Revalidate question existence after enriching with team and player data:
-    // an organizer may have deleted the question while those lookups were pending.
-    if (input.module === "quiz") {
-      const fresh = await lookupItem(input.challengeId);
-      if (!fresh) return;
-      item = fresh;
-    }
+    // Revalidate the content state after enriching with team and player data:
+    // an organizer may hide, delete, or re-lock the item while those lookups are pending.
+    const fresh =
+      input.module === "classic"
+        ? await lookupClassicItem(input.challengeId)
+        : await lookupItem(input.challengeId);
+    if (!fresh) return;
+    item = fresh;
 
     await enqueueLedgerAnnouncement(
       "first-blood",

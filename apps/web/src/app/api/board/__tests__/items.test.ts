@@ -299,4 +299,16 @@ describe("GET /api/board/items and hidden challenges", () => {
     expect(body.classic.map((i: { id: string }) => i.id)).toEqual(["one", "three"]);
     mocks.listStories.mockResolvedValue([]);
   });
+
+  it("contains quiz read failures, logging the error and still returning classic items", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.listQuestions.mockRejectedValue(new Error("redis down"));
+    const res = await GET(req("alice"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.quiz).toBeNull();
+    expect(body.classic).toEqual([{ id: "c1", label: "Robots Only", points: 50, done: false }]);
+    expect(errorSpy).toHaveBeenCalledWith("[board-items] quiz items read failed:", expect.any(String));
+    errorSpy.mockRestore();
+  });
 });

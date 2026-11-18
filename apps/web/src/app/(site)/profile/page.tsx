@@ -168,8 +168,18 @@ export default async function ProfilePage({
       getLeaderboardSource().then((source) => source.getUser(playerId)),
       getViewerTeam(playerId),
       getViewerHints(playerId),
-      quizEnabled ? getQuizTotals() : Promise.resolve(new Map<string, QuizTotal>()),
-      quizEnabled ? listQuestions() : Promise.resolve([] as Question[]),
+      quizEnabled
+        ? getQuizTotals().catch((err) => {
+            console.error(`profile: quiz totals read failed: ${errorLabel(err)}`);
+            return new Map<string, QuizTotal>();
+          })
+        : Promise.resolve(new Map<string, QuizTotal>()),
+      quizEnabled
+        ? listQuestions().catch((err) => {
+            console.error(`profile: quiz questions read failed: ${errorLabel(err)}`);
+            return [] as Question[];
+          })
+        : Promise.resolve([] as Question[]),
       classicEnabled ? getClassicTotals() : Promise.resolve(new Map<string, ClassicTotal>()),
       // Visible challenges only: a hidden one (disabled, or not yet released)
       // is out of the list, every denominator and the points ceiling. Points

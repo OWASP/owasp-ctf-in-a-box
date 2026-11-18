@@ -26,7 +26,8 @@ import { redirectIfNotLaunched } from "@/lib/launch";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
 import TeamlessNotice from "@/components/teamless-notice";
-import { getViewerQuiz, listQuestions, QUIZ_MAX_ATTEMPTS, QUIZ_RETRY_AFTER_MIN, type ViewerQuiz } from "@/lib/quiz-store";
+import { getViewerQuiz, listQuestions, QUIZ_MAX_ATTEMPTS, QUIZ_RETRY_AFTER_MIN, type Question, type ViewerQuiz } from "@/lib/quiz-store";
+import { errorLabel } from "@/lib/error-label";
 
 // `metadata` is a static export and cannot await Redis for the organizer's
 // resolved title, so this is `generateMetadata` instead — see
@@ -98,10 +99,24 @@ export default async function QuizPage() {
   const viewerIsTeamless = await redirectIfTeamless(playerId, { isAdmin: viewerIsAdmin });
 
   const [questions, viewerQuiz, settings, modules] = await Promise.all([
-    listQuestions(),
-    playerId ? getViewerQuiz(playerId) : Promise.resolve<ViewerQuiz>({ answered: {}, attempts: {} }),
-    getAdminSettings(),
-    getResolvedModules(),
+    listQuestions().catch((err) => {
+      console.error("[quiz] questions read failed:", errorLabel(err));
+      return [] as Question[];
+    }),
+    playerId
+      ? getViewerQuiz(playerId).catch((err) => {
+          console.error("[quiz] viewer quiz read failed:", errorLabel(err));
+          return { answered: {}, attempts: {} } as ViewerQuiz;
+        })
+      : Promise.resolve<ViewerQuiz>({ answered: {}, attempts: {} }),
+    getAdminSettings().catch((err) => {
+      console.error("[quiz] admin settings read failed:", errorLabel(err));
+      return null;
+    }),
+    getResolvedModules().catch((err) => {
+      console.error("[quiz] resolved modules read failed:", errorLabel(err));
+      return [];
+    }),
   ]);
 
   const mod = modules.find((m) => m.id === "quiz");
@@ -112,8 +127,8 @@ export default async function QuizPage() {
   // they were looking at not change at all.
   const blurb = mod?.blurb ?? "Answer security questions for points.";
 
-  const maxAttempts = settings.quizMaxAttempts ?? QUIZ_MAX_ATTEMPTS;
-  const cooldownMs = (settings.quizRetryAfterMin ?? QUIZ_RETRY_AFTER_MIN) * 60_000;
+  const maxAttempts = settings?.quizMaxAttempts ?? QUIZ_MAX_ATTEMPTS;
+  const cooldownMs = (settings?.quizRetryAfterMin ?? QUIZ_RETRY_AFTER_MIN) * 60_000;
 
   // Built field by field from the public `Question` shape — never a spread
   // of a raw store record, which is how an answer key would leak.

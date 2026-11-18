@@ -174,8 +174,9 @@ export async function runAnnounceTick(nowMs?: number): Promise<TickCadence> {
       try {
         settings = await getAdminSettings();
       } catch (err) {
-        // Without settings there is no lifecycle or marks observation to make;
-        // the outbox sweeps below do not need them and still run.
+        // FAIL CLOSED: a settings read error posts no lifecycle or milestone
+        // message. It never assumes not-launched or not-paused. The outbox
+        // sweep still runs.
         console.error("[announce] settings read failed, skipping lifecycle/milestones:", errorLabel(err));
       }
       // Sample the default observation time only once both reads are done.

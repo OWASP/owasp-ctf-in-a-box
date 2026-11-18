@@ -99,16 +99,27 @@ describe("first-blood enqueue race", () => {
     await vi.waitFor(() => expect(mocks.listTeams).toHaveBeenCalledTimes(1));
 
     // Disable and re-enable while the producer is suspended in listTeams().
-    // Each edge advances the kind epoch, so the captured epoch is now stale.
+    // Disabling advances the kind epoch to 1; re-enabling leaves it at 1,
+    // so the producer's captured epoch (0) is stale even though the switch is back on.
     mocks.state.config.firstBlood = false;
     mocks.state.config.kindEpochs["first-blood"] += 1;
     mocks.state.config.firstBlood = true;
-    mocks.state.config.kindEpochs["first-blood"] += 1;
+
+    expect(mocks.state.config.kindEpochs["first-blood"]).toBe(1);
 
     releaseTeams?.();
     await notify;
 
     expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledWith(
+      "ctf:announce:first-announced",
+      ["classic:web-1"],
+      0, // captured webhookGeneration
+      "first-blood",
+      0, // captured kindEpoch
+      expect.any(String),
+      expect.anything(),
+    );
     expect(mocks.state.entries).toHaveLength(0);
   });
 
@@ -157,33 +168,42 @@ describe("first-blood enqueue race", () => {
   });
 
   it("accepts a notification when stream and webhook generation remain unchanged through listTeams", async () => {
-    let releaseTeams: (() => void) | undefined;
-    mocks.listTeams.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          releaseTeams = () => resolve([{ slug: "t1", name: "Team One", members: ["alice"] }]);
-        }),
-    );
+    vi.useFakeTimers();
+    try {
+      mocks.state.config.webhookGeneration = 3;
+      mocks.state.config.kindEpochs["first-blood"] = 7;
 
-    const notify = notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
-    await vi.waitFor(() => expect(mocks.listTeams).toHaveBeenCalledTimes(1));
+      let releaseTeams: (() => void) | undefined;
+      mocks.listTeams.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            releaseTeams = () => resolve([{ slug: "t1", name: "Team One", members: ["alice"] }]);
+          }),
+      );
 
-    // State remains untouched
-    releaseTeams?.();
-    await notify;
+      const notify = notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
+      await vi.waitFor(() => expect(mocks.listTeams).toHaveBeenCalledTimes(1));
 
-    expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledTimes(1);
-    expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledWith(
-      "ctf:announce:first-announced",
-      ["classic:web-1"],
-      0,
-      "first-blood",
-      0,
-      expect.any(String),
-      expect.anything(),
-    );
+      // State remains untouched
+      releaseTeams?.();
+      await notify;
 
-    expect(mocks.state.entries).toHaveLength(1);
-    expect(mocks.state.entries[0].stamp).toEqual({ webhookGeneration: 0, kindEpoch: 0 });
+      expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledTimes(1);
+      expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledWith(
+        "ctf:announce:first-announced",
+        ["classic:web-1"],
+        3,
+        "first-blood",
+        7,
+        expect.any(String),
+        expect.anything(),
+      );
+
+      expect(mocks.state.entries).toHaveLength(1);
+      expect(mocks.state.entries[0].stamp).toEqual({ webhookGeneration: 3, kindEpoch: 7 });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 });

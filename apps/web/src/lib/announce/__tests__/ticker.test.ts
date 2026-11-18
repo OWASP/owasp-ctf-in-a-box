@@ -453,6 +453,18 @@ describe("lifecycle tick", () => {
     await runAnnounceTick(T0);
     expect(mocks.stateCompareSet).not.toHaveBeenCalled();
   });
+
+  it("fails closed when settings read fails: announces no lifecycle or milestone, but sweeps outbox", async () => {
+    mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true, milestones: true, marks: "30m" }));
+    mocks.getAdminSettings.mockRejectedValue(new Error("settings unavailable"));
+
+    await runAnnounceTick(T0);
+
+    expect(mocks.stateCompareSet).not.toHaveBeenCalled();
+    expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
+    expect(mocks.outboxPrune).toHaveBeenCalled();
+    expect(mocks.flushRetries).toHaveBeenCalled();
+  });
 });
 
 describe("milestones tick", () => {

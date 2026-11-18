@@ -183,11 +183,10 @@ still holds the placeholder) and prints the code once; sign in and enter it at
 `./deploy.sh --skip-build --new-admin-code` writes a new one and rolls the app
 so it reads it. `github_client_id` must be the
 GitHub OAuth app's client id whenever `enable_secure_development` is true;
-otherwise it is optional. `google_client_id` and `discord_client_id` are
-optional too: set one to turn that provider on, and put its secret in SSM as
-`<ssm_prefix>/GOOGLE_CLIENT_SECRET` or `<ssm_prefix>/DISCORD_CLIENT_SECRET`
-(the parameter is read only when the id is set). Each provider's callback is
-`<EVENT_URL>/api/auth/callback/<google|discord>`. `github_org` and
+otherwise it is optional, and empty leaves GitHub sign-in off (the
+`<ssm_prefix>/GITHUB_CLIENT_SECRET` parameter is read only when the id is
+set). GitHub is the one OAuth provider; its callback is
+`<EVENT_URL>/api/auth/callback/github`. `github_org` and
 `github_app_id` are required whenever `enable_secure_development` is true:
 `sync` authenticates as a GitHub App and exits at startup without either. All
 of these are refused at plan time, not at apply. The Secure Development

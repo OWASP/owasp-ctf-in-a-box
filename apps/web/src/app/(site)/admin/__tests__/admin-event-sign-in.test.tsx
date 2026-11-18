@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-// The Event tab's Sign-in section: one switch per provider whose keys are in
-// .env, each writing its own settings field.
+// The Event tab's Sign-in section: the GitHub switch when its keys are in
+// .env, writing its settings field.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
@@ -11,7 +11,7 @@ const settings = {
   paused: false,
   teamRegistrationOpen: true,
   displayQr: true,
-  signInProviders: { github: true, google: true, discord: false },
+  signInProviders: { github: true },
   moduleOverrides: {},
   enabledModuleIds: null,
   eventIdentity: {},
@@ -25,7 +25,7 @@ const props = (over: Partial<AdminEventTabProps>): AdminEventTabProps => ({
   pending: false,
   resetInfo: null,
   eventName: "Fixture CTF",
-  configuredSignInProviders: ["google"],
+  configuredSignInProviders: ["github"],
   applyField: vi.fn(async () => true),
   statusOf: () => ({ state: "idle" }) as ReturnType<AdminEventTabProps["statusOf"]>,
   setConfirm: () => {},
@@ -45,24 +45,24 @@ const props = (over: Partial<AdminEventTabProps>): AdminEventTabProps => ({
 afterEach(cleanup);
 
 describe("AdminEventTab Sign-in section", () => {
-  it("renders one switch for the one configured provider and writes its field", () => {
+  it("renders the GitHub switch when GitHub is configured and writes its field", () => {
     const applyField = vi.fn(async () => true);
     const { container } = render(<AdminEventTab {...props({ applyField })} />);
     expect(container.querySelectorAll('input[id^="event-sign-in-"]')).toHaveLength(1);
-    const sw = screen.getByRole("switch", { name: /Google sign-in/ });
-    expect(sw.id).toBe("event-sign-in-google");
+    const sw = screen.getByRole("switch", { name: /GitHub sign-in/ });
+    expect(sw.id).toBe("event-sign-in-github");
     fireEvent.click(sw);
-    expect(applyField).toHaveBeenCalledWith("signInGoogle", { signInGoogle: false }, "Google sign-in");
+    expect(applyField).toHaveBeenCalledWith("signInGithub", { signInGithub: false }, "GitHub sign-in");
     expect(container.textContent).toContain(
-      "Username and password is always on. A provider appears here once its client id and secret are in .env and the app has restarted.",
+      "Username and password is always on. GitHub sign-in appears here once its client id and secret are in .env and the app has restarted.",
     );
   });
 
-  it("says so when no provider is configured", () => {
+  it("says so when GitHub is not configured", () => {
     const { container } = render(<AdminEventTab {...props({ configuredSignInProviders: [] })} />);
     expect(container.querySelectorAll('input[id^="event-sign-in-"]')).toHaveLength(0);
     expect(container.textContent).toContain(
-      "No sign-in providers are configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (or DISCORD_ or GITHUB_) to .env and restart.",
+      "GitHub sign-in is not configured. Add GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET to .env and restart.",
     );
   });
 

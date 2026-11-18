@@ -1,36 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { configuredProviders, enabledSignInProviders } from "../sign-in-providers";
+import { SIGN_IN_PROVIDERS, configuredProviders, enabledSignInProviders } from "../sign-in-providers";
 
-const allSix = {
-  GITHUB_CLIENT_ID: "a", GITHUB_CLIENT_SECRET: "b",
-  GOOGLE_CLIENT_ID: "c", GOOGLE_CLIENT_SECRET: "d",
-  DISCORD_CLIENT_ID: "e", DISCORD_CLIENT_SECRET: "f",
-};
+const githubKeys = { GITHUB_CLIENT_ID: "a", GITHUB_CLIENT_SECRET: "b" };
+
+describe("SIGN_IN_PROVIDERS", () => {
+  it("is GitHub alone", () => {
+    expect(SIGN_IN_PROVIDERS).toEqual(["github"]);
+  });
+});
 
 describe("configuredProviders", () => {
   it("needs both id and a non-blank secret", () => {
-    expect(configuredProviders({
-      GITHUB_CLIENT_ID: "a", GITHUB_CLIENT_SECRET: "b",
-      GOOGLE_CLIENT_ID: "c", GOOGLE_CLIENT_SECRET: "  ",
-    })).toEqual(["github"]);
+    expect(configuredProviders(githubKeys)).toEqual(["github"]);
+    expect(configuredProviders({ GITHUB_CLIENT_ID: "a", GITHUB_CLIENT_SECRET: "  " })).toEqual([]);
+    expect(configuredProviders({ GITHUB_CLIENT_SECRET: "b" })).toEqual([]);
   });
   it("is empty with no keys", () => {
     expect(configuredProviders({})).toEqual([]);
   });
-  it("follows registry order", () => {
-    expect(configuredProviders(allSix)).toEqual(["github", "google", "discord"]);
-  });
 });
 
 describe("enabledSignInProviders", () => {
-  it("drops providers whose switch is off", () => {
-    expect(enabledSignInProviders({ signInProviders: { github: false, google: true, discord: true } }, allSix))
-      .toEqual(["google", "discord"]);
+  it("is GitHub when it has keys and its switch is on", () => {
+    expect(enabledSignInProviders({ signInProviders: { github: true } }, githubKeys)).toEqual(["github"]);
   });
-  it("never enables a provider without keys", () => {
-    expect(enabledSignInProviders(
-      { signInProviders: { github: true, google: true, discord: true } },
-      { DISCORD_CLIENT_ID: "x", DISCORD_CLIENT_SECRET: "y" },
-    )).toEqual(["discord"]);
+  it("drops GitHub when its switch is off", () => {
+    expect(enabledSignInProviders({ signInProviders: { github: false } }, githubKeys)).toEqual([]);
+  });
+  it("never enables GitHub without keys", () => {
+    expect(enabledSignInProviders({ signInProviders: { github: true } }, {})).toEqual([]);
   });
 });

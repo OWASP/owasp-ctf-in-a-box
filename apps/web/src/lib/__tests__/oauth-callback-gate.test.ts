@@ -1,9 +1,8 @@
 // Drives the OAuth callback over HTTP with the app's auth config, an in-memory
-// database and the providers' token and profile endpoints stubbed, to pin that
-// the admin switches gate the COMPLETION of a flow and not only its start: the
-// OAuth state names no provider and the callback takes it from the URL, so a
-// state minted by an allowed sign-in or a GitHub link can be replayed at any
-// configured provider's callback.
+// database and GitHub's token and profile endpoints stubbed, to pin that the
+// admin switch gates the COMPLETION of a GitHub sign-in and not only its
+// start: the OAuth state names no provider, so a state minted while the
+// switch was on can still reach the callback after an organizer turns it off.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -38,10 +37,6 @@ vi.hoisted(() => {
   process.env.BETTER_AUTH_SECRET ??= "0123456789abcdef0123456789abcdef";
   process.env.GITHUB_CLIENT_ID = "gh-id";
   process.env.GITHUB_CLIENT_SECRET = "gh-secret";
-  process.env.GOOGLE_CLIENT_ID = "g-id";
-  process.env.GOOGLE_CLIENT_SECRET = "g-secret";
-  process.env.DISCORD_CLIENT_ID = "d-id";
-  process.env.DISCORD_CLIENT_SECRET = "d-secret";
 });
 
 import { betterAuth } from "better-auth";
@@ -66,8 +61,8 @@ const cookiesOf = (res: Response) =>
     .map((c) => c.split(";")[0])
     .join("; ");
 
-function switches(s: { github: boolean; google: boolean; discord: boolean }) {
-  getAdminSettings.mockResolvedValue({ signInProviders: s });
+function githubSwitch(on: boolean) {
+  getAdminSettings.mockResolvedValue({ signInProviders: { github: on } });
 }
 
 // The provider side of the code exchange and the profile read.
@@ -76,11 +71,8 @@ function stubProviders() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
-    if (url.startsWith("https://discord.com/api/oauth2/token") || url.startsWith("https://github.com/login/oauth/access_token")) {
-      return json({ access_token: "provider-token", token_type: "Bearer", scope: "identify email" });
-    }
-    if (url.startsWith("https://discord.com/api/users/%40me")) {
-      return json({ id: "80351110224678912", username: "nelly", global_name: "Nelly", discriminator: "0", avatar: null, email: "nelly@discord.test", verified: true });
+    if (url.startsWith("https://github.com/login/oauth/access_token")) {
+      return json({ access_token: "provider-token", token_type: "Bearer", scope: "read:user user:email" });
     }
     if (url.startsWith("https://api.github.com/user/emails")) {
       return json([{ email: "octo@github.test", primary: true, verified: true }]);
@@ -132,7 +124,7 @@ async function signedInPlayer(instance: Instance) {
   return cookiesOf(res);
 }
 
-describe("OAuth callback completion is gated on the provider switches", () => {
+describe("OAuth callback completion is gated on the GitHub sign-in switch", () => {
   let fetchSpy: ReturnType<typeof stubProviders>;
   beforeEach(() => {
     fetchSpy = stubProviders();
@@ -143,23 +135,24 @@ describe("OAuth callback completion is gated on the provider switches", () => {
     getAdminSettings.mockReset();
   });
 
-  it("completes a sign-in at a switched-on provider (the control)", async () => {
+  it("completes a GitHub sign-in with the switch on (the control)", async () => {
     const { db, instance } = build();
-    switches({ github: true, google: true, discord: true });
-    const res = await callback(instance, "discord", await start(instance, "/sign-in/social", "discord"));
+    githubSwitch(true);
+    const res = await callback(instance, "github", await start(instance, "/sign-in/social", "github"));
     expect(res.status).toBe(302);
     expect(errorOf(res)).toBeNull();
     expect(setsSession(res)).toBe(true);
-    expect(db.account.map((a) => a.providerId)).toEqual(["discord"]);
+    expect(db.account.map((a) => a.providerId)).toEqual(["github"]);
     expect(db.session).toHaveLength(1);
     expect(fetchSpy).toHaveBeenCalled();
   });
 
-  it("refuses an allowed sign-in's state replayed at a switched-off provider's callback", async () => {
+  it("refuses a sign-in state minted while GitHub was on, completed after it is switched off", async () => {
     const { db, instance } = build();
-    switches({ github: true, google: true, discord: false });
-    const flow = await start(instance, "/sign-in/social", "google");
-    const res = await callback(instance, "discord", flow);
+    githubSwitch(true);
+    const flow = await start(instance, "/sign-in/social", "github");
+    githubSwitch(false);
+    const res = await callback(instance, "github", flow);
     expect(errorOf(res)).toBe("PROVIDER_DISABLED");
     expect(setsSession(res)).toBe(false);
     expect(db.user).toEqual([]);
@@ -167,30 +160,22 @@ describe("OAuth callback completion is gated on the provider switches", () => {
     expect(db.session).toEqual([]);
   });
 
-  it("refuses a returning player's sign-in once the provider is switched off", async () => {
+  it("refuses a returning player's sign-in once GitHub is switched off", async () => {
     const { db, instance } = build();
-    switches({ github: true, google: true, discord: true });
-    await callback(instance, "discord", await start(instance, "/sign-in/social", "discord"));
+    githubSwitch(true);
+    await callback(instance, "github", await start(instance, "/sign-in/social", "github"));
     expect(db.session).toHaveLength(1);
-    switches({ github: true, google: true, discord: false });
-    const res = await callback(instance, "discord", await start(instance, "/sign-in/social", "google"));
+    const flow = await start(instance, "/sign-in/social", "github");
+    githubSwitch(false);
+    const res = await callback(instance, "github", flow);
     expect(errorOf(res)).toBe("PROVIDER_DISABLED");
     expect(setsSession(res)).toBe(false);
     expect(db.session).toHaveLength(1);
-  });
-
-  it("refuses a GitHub sign-in with GitHub switched off", async () => {
-    const { db, instance } = build();
-    switches({ github: false, google: true, discord: true });
-    const res = await callback(instance, "github", await start(instance, "/sign-in/social", "google"));
-    expect(errorOf(res)).toBe("PROVIDER_DISABLED");
-    expect(setsSession(res)).toBe(false);
-    expect(db.user).toEqual([]);
   });
 
   it("still completes a GitHub link with GitHub sign-in switched off", async () => {
     const { db, instance } = build();
-    switches({ github: false, google: true, discord: true });
+    githubSwitch(false);
     const player = await signedInPlayer(instance);
     const sessions = db.session.length;
     const res = await callback(instance, "github", await start(instance, "/link-social", "github", player));
@@ -200,24 +185,33 @@ describe("OAuth callback completion is gated on the provider switches", () => {
     expect(db.session).toHaveLength(sessions);
   });
 
-  it("refuses a GitHub link's state completed at another provider's callback", async () => {
+  // Only GitHub is mounted, so a callback naming any other provider has no
+  // handler behind it, whatever the state.
+  it.each(["google", "discord"])("a callback at /callback/%s writes nothing", async (provider) => {
     const { db, instance } = build();
-    switches({ github: true, google: true, discord: true });
+    githubSwitch(true);
     const player = await signedInPlayer(instance);
-    const res = await callback(instance, "discord", await start(instance, "/link-social", "github", player));
-    // The link branch of the callback does not turn a hook's APIError into an
-    // error redirect, so the refusal is the endpoint's own 400.
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { code?: string }).code).toBe("LINK_PROVIDER_NOT_ALLOWED");
-    expect(db.account.filter((a) => a.providerId === "discord")).toEqual([]);
+    const users = db.user.length;
+    const sessions = db.session.length;
+    for (const flow of [
+      await start(instance, "/sign-in/social", "github"),
+      await start(instance, "/link-social", "github", player),
+    ]) {
+      const res = await callback(instance, provider, flow);
+      expect(errorOf(res)).toBe("oauth_provider_not_found");
+      expect(setsSession(res)).toBe(false);
+    }
+    expect(db.user).toHaveLength(users);
+    expect(db.account.filter((a) => a.providerId !== "credential")).toEqual([]);
+    expect(db.session).toHaveLength(sessions);
   });
 
-  it("fails closed when the switches cannot be read on the callback", async () => {
+  it("fails closed when the switch cannot be read on the callback", async () => {
     const { db, instance } = build();
-    switches({ github: true, google: true, discord: true });
-    const flow = await start(instance, "/sign-in/social", "discord");
+    githubSwitch(true);
+    const flow = await start(instance, "/sign-in/social", "github");
     getAdminSettings.mockRejectedValue(new Error("HGETALL failed: NOAUTH"));
-    const res = await callback(instance, "discord", flow);
+    const res = await callback(instance, "github", flow);
     expect(errorOf(res)).toBe("SIGN_IN_SETTINGS_UNREADABLE");
     expect(setsSession(res)).toBe(false);
     expect(db.user).toEqual([]);

@@ -84,7 +84,7 @@ describe("getAdminSettings", () => {
     mocks.upstashPipeline.mockResolvedValue([{ result: [] }]);
     expect(await getAdminSettings()).toEqual({
       paused: false, hintsEnabled: null, hintCost: null, teamRegistrationOpen: true, displayQr: true,
-      signInProviders: { github: true, google: true, discord: true },
+      signInProviders: { github: true },
       hintsMinSolves: null, hintsUnlockAfterMin: null,
       quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
       scoringStartsAt: null, scoringEndsAt: null, registrationStartsAt: null, registrationEndsAt: null,
@@ -151,7 +151,7 @@ describe("getAdminSettings", () => {
     }]);
     expect(await getAdminSettings()).toEqual({
       paused: true, hintsEnabled: false, hintCost: 25, teamRegistrationOpen: true, displayQr: true,
-      signInProviders: { github: true, google: true, discord: true },
+      signInProviders: { github: true },
       hintsMinSolves: null, hintsUnlockAfterMin: null,
       quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
       scoringStartsAt: null, scoringEndsAt: null, registrationStartsAt: null, registrationEndsAt: null,
@@ -173,11 +173,27 @@ describe("getAdminSettings", () => {
     expect((await getAdminSettings()).displayQr).toBe(false);
   });
 
-  it("decodes signInProviders: all on when absent, a stored \"0\" is off", async () => {
+  it("decodes signInProviders: GitHub on when absent, a stored \"0\" is off", async () => {
     mocks.upstashPipeline.mockResolvedValue([{ result: [] }]);
-    expect((await getAdminSettings()).signInProviders).toEqual({ github: true, google: true, discord: true });
-    mocks.upstashPipeline.mockResolvedValue([{ result: ["signInGoogle", "0"] }]);
-    expect((await getAdminSettings()).signInProviders).toEqual({ github: true, google: false, discord: true });
+    expect((await getAdminSettings()).signInProviders).toEqual({ github: true });
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["signInGithub", "0"] }]);
+    expect((await getAdminSettings()).signInProviders).toEqual({ github: false });
+  });
+
+  // A box that ran a build with Google and Discord sign-in may hold their
+  // switch fields. They read without error, change nothing, and cannot be
+  // written.
+  it("ignores stale signInGoogle and signInDiscord fields in the settings hash", async () => {
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["signInGoogle", "0", "signInDiscord", "1", "signInGithub", "0"] }]);
+    expect((await getAdminSettings()).signInProviders).toEqual({ github: false });
+    mocks.upstashPipeline.mockResolvedValue([{ result: ["signInGoogle", "0", "signInDiscord", "0"] }]);
+    expect((await getAdminSettings()).signInProviders).toEqual({ github: true });
+    for (const field of ["signInGoogle", "signInDiscord"]) {
+      await expect(updateAdminSettings({ [field]: false } as never, actor("alice"))).rejects.toMatchObject({
+        name: "AdminValidationError", field, message: `unknown setting: ${field}`,
+      });
+    }
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
 
   it("decodes a stored \"0\" for teamRegistrationOpen as closed", async () => {
@@ -430,24 +446,24 @@ describe("updateAdminSettings write", () => {
     expect(args[5]).toBe("displayQr");
   });
 
-  it("turning a sign-in switch off writes \"0\", and on HDELs it", async () => {
-    mocks.upstashEval.mockResolvedValue(["signInDiscord", "0", "updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
-    expect((await updateAdminSettings({ signInDiscord: false }, actor("alice"))).signInProviders.discord).toBe(false);
+  it("turning the GitHub sign-in switch off writes \"0\", and on HDELs it", async () => {
+    mocks.upstashEval.mockResolvedValue(["signInGithub", "0", "updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
+    expect((await updateAdminSettings({ signInGithub: false }, actor("alice"))).signInProviders.github).toBe(false);
     let args = mocks.upstashEval.mock.calls[0][2].map(String);
-    expect(args[args.indexOf("signInDiscord") + 1]).toBe("0");
+    expect(args[args.indexOf("signInGithub") + 1]).toBe("0");
     expect(args[4]).toBe("0");
 
     mocks.upstashEval.mockClear();
     mocks.upstashEval.mockResolvedValue(["updatedBy", "alice", "updatedAt", "2026-08-14T00:00:00Z"]);
-    expect((await updateAdminSettings({ signInDiscord: true }, actor("alice"))).signInProviders.discord).toBe(true);
+    expect((await updateAdminSettings({ signInGithub: true }, actor("alice"))).signInProviders.github).toBe(true);
     args = mocks.upstashEval.mock.calls[0][2].map(String);
     expect(args[4]).toBe("1");
-    expect(args[5]).toBe("signInDiscord");
+    expect(args[5]).toBe("signInGithub");
   });
 
   it("rejects a non-boolean sign-in switch", async () => {
-    await expect(updateAdminSettings({ signInGoogle: "yes" } as never, actor("alice"))).rejects.toMatchObject({
-      name: "AdminValidationError", field: "signInGoogle",
+    await expect(updateAdminSettings({ signInGithub: "yes" } as never, actor("alice"))).rejects.toMatchObject({
+      name: "AdminValidationError", field: "signInGithub",
     });
   });
 
@@ -548,7 +564,7 @@ describe("getSyncStatus", () => {
 describe("scheduled windows", () => {
   const base: AdminSettings = {
     paused: false, hintsEnabled: null, hintCost: null, teamRegistrationOpen: true, displayQr: true,
-      signInProviders: { github: true, google: true, discord: true },
+      signInProviders: { github: true },
     hintsMinSolves: null, hintsUnlockAfterMin: null,
     quizMaxAttempts: null, quizRetryAfterMin: null, classicCooldownSec: null, teamMaxMembers: null, scoreCooldownMin: null,
     scoringStartsAt: null, scoringEndsAt: null, registrationStartsAt: null, registrationEndsAt: null,

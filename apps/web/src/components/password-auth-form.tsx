@@ -1,7 +1,7 @@
 "use client";
 
 // The sign-in page's form: username + password sign-in, username + password
-// account creation, and one button per enabled OAuth provider. Success navigates (full load) to
+// account creation, and the GitHub button when GitHub sign-in is enabled. Success navigates (full load) to
 // the post-signin step, so a password sign-in meets the same team steering as
 // an OAuth one.
 

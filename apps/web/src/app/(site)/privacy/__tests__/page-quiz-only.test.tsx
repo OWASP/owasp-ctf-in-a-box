@@ -65,7 +65,7 @@ describe("/privacy in a quiz-only event", () => {
   it("keeps every platform promise", () => {
     expect(rendered).toContain("What we never do");
     expect(rendered).toContain("No advertising, no tracking pixels, no third-party analytics");
-    expect(rendered).toContain("We never ask GitHub, Google or Discord for write access.");
+    expect(rendered).toContain("We never ask GitHub for write access.");
     expect(rendered).toContain("Cookies");
     expect(rendered).toContain("Counting where the event reached");
     expect(rendered).toContain("Your choices, and how to reach a human");

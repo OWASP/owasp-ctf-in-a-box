@@ -147,10 +147,6 @@ ensure_env() {
     echo "REDIS_PASSWORD=$(openssl rand -hex 24)"
     echo "GITHUB_CLIENT_ID="
     echo "GITHUB_CLIENT_SECRET="
-    echo "GOOGLE_CLIENT_ID="
-    echo "GOOGLE_CLIENT_SECRET="
-    echo "DISCORD_CLIENT_ID="
-    echo "DISCORD_CLIENT_SECRET="
     echo "GITHUB_APP_ID="
     echo "GITHUB_APP_PRIVATE_KEY="
     echo "GITHUB_APP_INSTALLATION_ID="
@@ -533,9 +529,7 @@ cmd_up() {
    the new hash (a plain restart keeps the old environment). Signing in with
    GitHub needs a real OAuth app: callback
    <EVENT_URL>/api/auth/callback/github, client id/secret in $ENV_FILE
-   (GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET). Google and Discord are
-   optional extras: GOOGLE_CLIENT_ID/SECRET and DISCORD_CLIENT_ID/SECRET
-   (callbacks <EVENT_URL>/api/auth/callback/<google|discord>).
+   (GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET).
    Everything else — leaderboard, challenge browsing, seeded scores — works now.
 
  Tear down: ./scripts/dev-stack down            (keeps seeded state)

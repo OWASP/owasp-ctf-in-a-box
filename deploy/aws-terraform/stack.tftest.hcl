@@ -723,9 +723,6 @@ run "every_compose_variable_reaches_its_ecs_task" {
 
   variables {
     enable_secure_development = true
-    // The optional providers' secrets are listed only when their id is set.
-    google_client_id  = "google-client-id.apps.example"
-    discord_client_id = "123456789012345678"
   }
 
   assert {
@@ -769,70 +766,31 @@ run "every_compose_variable_reaches_its_ecs_task" {
   }
 }
 
-// Optional sign-in providers: a client id carries its secret. The secret is
-// listed only when the id is set, because a task whose `secrets` names an SSM
-// parameter that does not exist never starts.
-run "a_google_client_id_gives_the_app_the_id_and_the_secret" {
-  command = plan
-
-  variables {
-    google_client_id  = "google-client-id.apps.example"
-    discord_client_id = "123456789012345678"
-  }
-
-  assert {
-    condition = anytrue([
-      for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment :
-      e.name == "GOOGLE_CLIENT_ID" && e.value == "google-client-id.apps.example"
-    ])
-    error_message = "A set google_client_id must reach the app as GOOGLE_CLIENT_ID."
-  }
-
-  assert {
-    condition = anytrue([
-      for s in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].secrets :
-      s.name == "GOOGLE_CLIENT_SECRET" && endswith(s.valueFrom, "/GOOGLE_CLIENT_SECRET")
-    ])
-    error_message = "A set google_client_id must bring GOOGLE_CLIENT_SECRET from SSM."
-  }
-
-  assert {
-    condition = anytrue([
-      for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment :
-      e.name == "DISCORD_CLIENT_ID" && e.value == "123456789012345678"
-    ])
-    error_message = "A set discord_client_id must reach the app as DISCORD_CLIENT_ID."
-  }
-
-  assert {
-    condition = anytrue([
-      for s in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].secrets :
-      s.name == "DISCORD_CLIENT_SECRET" && endswith(s.valueFrom, "/DISCORD_CLIENT_SECRET")
-    ])
-    error_message = "A set discord_client_id must bring DISCORD_CLIENT_SECRET from SSM."
-  }
-}
-
-run "no_google_or_discord_id_means_no_env_and_no_secret" {
+// GitHub is the one OAuth provider: its client id carries its secret, and no
+// other provider's id or secret reaches the app.
+run "a_github_client_id_gives_the_app_the_id_and_the_secret_and_no_other_provider" {
   command = plan
 
   assert {
-    condition = !anytrue([
-      for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment :
-      e.name == "GOOGLE_CLIENT_ID" && e.value != ""
-      ]) && !anytrue([
-      for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment :
-      e.name == "DISCORD_CLIENT_ID" && e.value != ""
+    condition = anytrue([
+      for s in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].secrets :
+      s.name == "GITHUB_CLIENT_SECRET" && endswith(s.valueFrom, "/GITHUB_CLIENT_SECRET")
     ])
-    error_message = "With no Google or Discord client id the app must carry no value for either."
+    error_message = "A set github_client_id must bring GITHUB_CLIENT_SECRET from SSM."
   }
 
   assert {
-    condition = !anytrue([
-      for s in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].secrets :
-      contains(["GOOGLE_CLIENT_SECRET", "DISCORD_CLIENT_SECRET"], s.name)
-    ])
-    error_message = "A secret whose SSM parameter nobody created would stop the task from starting: list it only when its id is set."
+    condition = !anytrue(concat(
+      [
+        for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment :
+        can(regex("^[A-Z]+_CLIENT_(ID|SECRET)$", e.name)) && !startswith(e.name, "GITHUB_")
+      ],
+      [
+        for s in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].secrets :
+        can(regex("^[A-Z]+_CLIENT_(ID|SECRET)$", s.name)) && !startswith(s.name, "GITHUB_")
+      ],
+    ))
+    error_message = "Only GitHub's OAuth client id and secret may reach the app."
   }
 }
 
@@ -845,7 +803,6 @@ run "no_secure_development_and_no_github_id_plans_without_the_secret" {
   variables {
     github_client_id          = ""
     enable_secure_development = false
-    google_client_id          = "google-client-id.apps.example"
   }
 
   assert {

@@ -24,8 +24,8 @@
 ## What this is
 
 Everything a security event needs, on one machine you control: player
-accounts (username and password, plus GitHub, Google or Discord sign-in if
-you turn them on), teams, a live leaderboard, an organizer admin panel, and the
+accounts (username and password, plus GitHub sign-in if you turn it on),
+teams, a live leaderboard, an organizer admin panel, and the
 scoring behind it. You pick which challenge **modules** run, alone or
 together on one leaderboard:
 

@@ -7,7 +7,7 @@
 // change this page in the SAME PR. Sources for the claims below:
 //   src/lib/auth.ts .................. accounts, sessions, cookies, password rules
 //   src/lib/auth-store/redis-adapter.ts  provider tokens nulled on every write
-//   src/lib/social-providers.ts ...... what each provider's profile leaves on the row
+//   src/lib/social-providers.ts ...... what GitHub's profile leaves on the row
 //   src/lib/placeholder-email.ts ..... the never-deliverable account email
 //   src/lib/github-link.ts ........... the GitHub login link
 //   src/lib/password-reset.ts ........ organizer-issued reset codes
@@ -84,13 +84,13 @@ function neverLines(secureDev: boolean): string[] {
   return [
     "No advertising, no tracking pixels, no third-party analytics, no data broker. Nothing about you is sold or shared.",
     "No consent banner, because there is nothing to consent to. Every cookie we set is doing a job you asked for.",
-    "We never ask for your email address or your real name, and no email address from a sign-in provider is written to our databases.",
+    "We never ask for your email address or your real name, and no email address from GitHub is written to our databases.",
     // Same promise either way; it just can't be made concrete with artifacts
     // an event without secure-development has no notion of.
     secureDev
-      ? "We never ask GitHub, Google or Discord for write access. We cannot push code, open pull requests, change your repositories, or act as you."
-      : "We never ask GitHub, Google or Discord for write access. The scopes we ask for are read-only, so we cannot write anything to those accounts or act as you.",
-    "We don't keep the access token a provider issues when you sign in or link an account, so there is no key to your GitHub, Google or Discord account sitting in our systems.",
+      ? "We never ask GitHub for write access. We cannot push code, open pull requests, change your repositories, or act as you."
+      : "We never ask GitHub for write access. The scopes we ask for are read-only, so we cannot write anything to your GitHub account or act as you.",
+    "We don't keep the access token GitHub issues when you sign in or link an account, so there is no key to your GitHub account sitting in our systems.",
     "We don't build a location history. The only geographic data we hold is a per-country tally with nobody's name on it.",
   ];
 }
@@ -99,7 +99,7 @@ function cookieRows(): { name: string; what: string; life: string }[] {
   return [
     {
       name: "Sign-in session",
-      what: "Set by any sign-in, with a password or with a provider. Holds a signed random token that points at your session on the server. Your browser can't read it, and neither can any script on the page.",
+      what: "Set by any sign-in, with a password or with GitHub. Holds a signed random token that points at your session on the server. Your browser can't read it, and neither can any script on the page.",
       life: "7 days",
     },
     {
@@ -109,7 +109,7 @@ function cookieRows(): { name: string; what: string; life: string }[] {
     },
     {
       name: "Sign-in handshake",
-      what: "Set only when you sign in with GitHub, Google or Discord, or link GitHub. Protects the redirect against tampering, and is discarded the moment it finishes.",
+      what: "Set only when you sign in with or link GitHub. Protects the redirect against tampering, and is discarded the moment it finishes.",
       life: "5 minutes",
     },
     {
@@ -211,31 +211,26 @@ export default async function PrivacyPage() {
         />
       </Card>
 
-      <Card heading="Signing in with GitHub, Google or Discord">
+      <Card heading="Signing in with GitHub">
         <p className="mb-4 text-sm leading-relaxed text-zinc-400">
-          The organizers can also turn on sign-in with GitHub, Google or Discord. Each asks for
-          read-only scopes:{" "}
+          The organizers can also turn on sign-in with GitHub. It asks for read-only scopes:{" "}
           <span className="font-mono text-xs text-zinc-200">read:user</span> and{" "}
-          <span className="font-mono text-xs text-zinc-200">user:email</span> on GitHub,{" "}
-          <span className="font-mono text-xs text-zinc-200">openid email profile</span> on
-          Google, and{" "}
-          <span className="font-mono text-xs text-zinc-200">identify email</span> on Discord.
+          <span className="font-mono text-xs text-zinc-200">user:email</span>.
         </p>
         <Bullets
           items={[
-            "The provider hands us your account id, name, avatar, and email address.",
+            "GitHub hands us your account id, login, name, avatar, and email address.",
             <>
-              We keep the provider&apos;s <span className="text-white">account id</span>, so we
-              recognise you next time. From GitHub we also keep your{" "}
-              <span className="text-white">GitHub login</span>, and a new account made by
-              signing in with GitHub starts with your GitHub name and avatar URL. Nothing else
-              from Google or Discord is kept.
+              We keep your GitHub <span className="text-white">account id</span>, so we
+              recognise you next time, and your{" "}
+              <span className="text-white">GitHub login</span>. A new account made by signing
+              in with GitHub starts with your GitHub name and avatar URL.
             </>,
-            "The email address is never kept from any provider. Your account gets a placeholder address instead.",
+            "The email address is never kept. Your account gets a placeholder address instead.",
             <>
-              We <span className="text-white">do not store the access token</span> a provider
-              issues. This app never calls a provider&apos;s API, so keeping that token would
-              mean holding a credential we have no use for.
+              We <span className="text-white">do not store the access token</span> GitHub
+              issues. This app never calls GitHub&apos;s API, so keeping that token
+              would mean holding a credential we have no use for.
             </>,
             ...(secureDev
               ? [
@@ -414,10 +409,6 @@ export default async function PrivacyPage() {
                 : "handles sign-in when the organizers turn it on, and serves avatar images."}{" "}
               Worth knowing: avatars load straight from GitHub, so GitHub sees the IP of anyone
               viewing a page with avatars on it, including the leaderboard.
-            </>,
-            <>
-              <span className="text-white">Google and Discord</span>: each handles sign-in
-              when the organizers turn it on, and sees that you signed in to this site.
             </>,
             <>
               <span className="text-white">The event organizer</span>: hosts this site on their

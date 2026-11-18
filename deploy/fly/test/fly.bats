@@ -969,50 +969,30 @@ EOF
   echo "$output" | grep -qF 'UPSTASH_REDIS_REST_TOKEN=<redacted>'
 }
 
-@test "optional Google and Discord keys reach the app, and their secrets are redacted in the dry-run" {
-  need_docker
-  cd "$REPO"
-  {
-    echo "GOOGLE_CLIENT_ID=fixture-google-id"
-    echo "GOOGLE_CLIENT_SECRET=FIXTUREGOOGLESECRETaaaaaaaa"
-    echo "DISCORD_CLIENT_ID=fixture-discord-id"
-    echo "DISCORD_CLIENT_SECRET=FIXTUREDISCORDSECRETbbbbbbb"
-  } >> "$BATS_TEST_TMPDIR/env"
-  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env"
-  [ "$status" -eq 0 ]
-  for value in FIXTUREGOOGLESECRETaaaaaaaa FIXTUREDISCORDSECRETbbbbbbb; do
-    if echo "$output" | grep -qF -- "$value"; then
-      echo "LEAKED in dry-run output: $value"
-      return 1
-    fi
-  done
-  echo "$output" | grep -qF 'GOOGLE_CLIENT_SECRET=<redacted>'
-  echo "$output" | grep -qF 'DISCORD_CLIENT_SECRET=<redacted>'
-  render
-  app_env="$(awk '/^  app:/{f=1;next} /^  [a-z]+:/{f=0} f' "$RENDERED")"
-  echo "$app_env" | grep -qF 'GOOGLE_CLIENT_ID: fixture-google-id'
-  echo "$app_env" | grep -qF 'DISCORD_CLIENT_ID: fixture-discord-id'
-  echo "$app_env" | grep -qF 'GOOGLE_CLIENT_SECRET: FIXTUREGOOGLESECRETaaaaaaaa'
-}
-
-@test "a deploy is not refused when the optional provider keys are missing" {
+@test "GitHub is the one OAuth provider the deploy sets and the app receives" {
   need_docker
   cd "$REPO"
   run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -qF 'GOOGLE_CLIENT_SECRET=<redacted>'
+  echo "$output" | grep -qF 'GITHUB_CLIENT_SECRET=<redacted>'
+  # One name per match, not per line: `fly secrets set` prints every
+  # assignment on one line, so a line-level filter would hide a second secret
+  # sitting next to GitHub's.
+  others="$(echo "$output" | grep -oE '[A-Z_]+_CLIENT_SECRET=' | grep -vxF 'GITHUB_CLIENT_SECRET=' || true)"
+  if [ -n "$others" ]; then
+    echo "a non-GitHub OAuth secret is set by the deploy: $others"
+    return 1
+  fi
   render
   app_env="$(awk '/^  app:/{f=1;next} /^  [a-z]+:/{f=0} f' "$RENDERED")"
-  [ -n "$app_env" ]
-  [ -z "$(echo "$app_env" | grep -E 'GOOGLE_CLIENT_ID: [^"[:space:]]' )" ]
+  echo "$app_env" | grep -qE '^ +GITHUB_CLIENT_ID:'
+  [ -z "$(echo "$app_env" | grep -E '^ +[A-Z]+_CLIENT_(ID|SECRET):' | grep -vE '^ +GITHUB_CLIENT_')" ]
 }
 
-@test "GitHub keys stay required on Fly even when another provider is set" {
+@test "GitHub keys stay required on Fly" {
   need_docker
   cd "$REPO"
   grep -v '^GITHUB_CLIENT_ID=' "$BATS_TEST_TMPDIR/env" > "$BATS_TEST_TMPDIR/env2"
-  echo "GOOGLE_CLIENT_ID=fixture-google-id" >> "$BATS_TEST_TMPDIR/env2"
-  echo "GOOGLE_CLIENT_SECRET=FIXTUREGOOGLESECRETaaaaaaaa" >> "$BATS_TEST_TMPDIR/env2"
   run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env2"
   [ "$status" -ne 0 ]
   echo "$output" | grep -qF 'GITHUB_CLIENT_ID'

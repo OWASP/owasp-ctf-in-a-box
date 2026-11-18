@@ -94,9 +94,9 @@ const providerDisabled = () =>
 const linkNotAllowed = () =>
   new APIError("BAD_REQUEST", { code: "LINK_PROVIDER_NOT_ALLOWED", message: "Only a GitHub account can be linked." });
 
-/** Throws unless `provider` has keys and its admin switch is on. An unreadable
- *  switch fails closed: an organizer may have switched a provider off for a
- *  reason. */
+/** Throws unless `provider` is GitHub, its keys are set and its admin switch
+ *  is on. An unreadable switch fails closed: an organizer may have switched
+ *  GitHub sign-in off for a reason. */
 async function assertSignInEnabled(provider: unknown): Promise<void> {
   if (!isSignInProvider(provider)) throw providerDisabled();
   let enabled: SignInProviderId[];
@@ -113,8 +113,8 @@ async function assertSignInEnabled(provider: unknown): Promise<void> {
 }
 
 /**
- * The `/sign-in/social` and `/link-social` before hook. Sign-in takes only a
- * provider that has keys and whose admin switch is on. A link is to GitHub
+ * The `/sign-in/social` and `/link-social` before hook. Sign-in takes only
+ * GitHub, with keys set and its admin switch on. A link is to GitHub
  * alone (it is what ties a player to a PR author) and ignores the switch: an
  * organizer can close GitHub sign-in and still let Secure Development players
  * link. This gates only the start of a flow; gateOAuthCallback gates its
@@ -143,13 +143,16 @@ const callbackVerdicts = new WeakMap<object, Promise<void>>();
 /**
  * Gates the completion of an OAuth flow, from the user, account and session
  * database hooks on `/callback/:id`. The OAuth state does not name a provider
- * and the callback takes it from the URL, so a state minted by an allowed
- * sign-in or by a GitHub link can be completed at any configured provider's
- * callback; refuseDisabledProvider alone would not stop that. So, judged by
- * the provider in the URL and by the state the callback parsed (better-auth
- * takes the link branch on a truthy `link`, and so does this):
+ * and the callback takes it from the URL, and a state minted while GitHub
+ * sign-in was on can reach the callback after an organizer switches it off;
+ * refuseDisabledProvider alone would not stop that. So, judged by the
+ * provider in the URL and by the state the callback parsed (better-auth takes
+ * the link branch on a truthy `link`, and so does this):
  *   - a link writes only a GitHub account and never creates a session;
- *   - a sign-in writes nothing unless that provider's switch is on.
+ *   - a sign-in writes nothing unless GitHub's switch is on.
+ * GitHub is the only provider mounted (social-providers.ts), so a callback
+ * naming any other id never reaches these hooks; the provider check stays so
+ * the gate does not depend on that.
  * On a sign-in the thrown APIError's code becomes the callback's error
  * redirect, and a refused create inside the user-and-account transaction
  * rolls both rows back. The link branch does not catch it, so a refused link
@@ -425,8 +428,8 @@ export const authOptions = {
       await recordSignIn(ctx.path, ctx.context.newSession);
     }),
   },
-  // One entry per provider with keys; refuseDisabledProvider applies the
-  // admin switches per request.
+  // GitHub when its keys are set; refuseDisabledProvider applies the admin
+  // switch per request.
   socialProviders: buildSocialProviders(),
   user: {
     additionalFields: {

@@ -2,12 +2,12 @@
 
 // The landing page's OAuth callback error banner (issue #380).
 //
-// The provider (GitHub, Google or Discord) redirects an authorize failure
-// straight back to the app with `?error=<code>&error_description=<text>`: a
-// suspended/deleted OAuth app, a contestant who cancelled the provider
-// prompt, or a redirect URI the provider doesn't recognize. A callback the
-// sign-in switches refuse redirects the same way. The banner is what keeps
-// the sign-in button from looking like it did nothing.
+// GitHub redirects an authorize failure straight back to the app with
+// `?error=<code>&error_description=<text>`: a suspended/deleted OAuth app, a
+// contestant who cancelled the GitHub prompt, or a redirect URI GitHub
+// doesn't recognize. A callback the GitHub sign-in switch refuses redirects
+// the same way. The banner is what keeps the sign-in button from looking like
+// it did nothing.
 //
 // Reuses the mock-data/hint notice's amber `ds-card` look (server-only
 // components) but as `role="alert"`, since this is something that JUST

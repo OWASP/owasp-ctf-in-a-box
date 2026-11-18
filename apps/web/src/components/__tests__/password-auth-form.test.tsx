@@ -255,20 +255,19 @@ describe("PasswordAuthForm providers", () => {
     expect(container.querySelector("[data-provider-divider]")).toBeNull();
   });
 
-  it("renders one button per enabled provider, in order, with the terminal label", () => {
-    render(<PasswordAuthForm next="/profile" providers={["google", "discord"]} />);
+  it("renders the GitHub button with the terminal label when GitHub is enabled", () => {
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
     const names = screen.getAllByRole("button", { name: /Sign in with/ }).map((b) => b.getAttribute("aria-label"));
-    expect(names).toEqual(["Sign in with Google", "Sign in with Discord"]);
-    expect(screen.getByText(/sign-in --google/)).toBeTruthy();
-    expect(screen.getByText(/sign-in --discord/)).toBeTruthy();
+    expect(names).toEqual(["Sign in with GitHub"]);
+    expect(screen.getByText(/sign-in --github/)).toBeTruthy();
   });
 
-  it("starts the clicked provider", () => {
+  it("starts GitHub sign-in on click", () => {
     signInSocial.mockResolvedValue({});
-    render(<PasswordAuthForm next="/flags" providers={["google", "discord"]} />);
-    fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
+    render(<PasswordAuthForm next="/flags" providers={["github"]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with GitHub" }));
     expect(signInSocial).toHaveBeenCalledWith({
-      provider: "google",
+      provider: "github",
       callbackURL: "/api/post-signin?next=%2Fflags",
       errorCallbackURL: "/?next=%2Fflags",
     });
@@ -277,16 +276,16 @@ describe("PasswordAuthForm providers", () => {
   it("shows copy for a PROVIDER_DISABLED refusal", async () => {
     signInSocial.mockResolvedValue({ error: { status: 403, code: "PROVIDER_DISABLED" } });
     vi.spyOn(console, "error").mockImplementation(() => {});
-    render(<PasswordAuthForm next="/profile" providers={["google"]} />);
-    fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with GitHub" }));
     expect(await screen.findByText("That sign-in option is not available.")).toBeTruthy();
   });
 
   it("shows copy when the sign-in settings cannot be read", async () => {
     signInSocial.mockResolvedValue({ error: { status: 503, code: "SIGN_IN_SETTINGS_UNREADABLE" } });
     vi.spyOn(console, "error").mockImplementation(() => {});
-    render(<PasswordAuthForm next="/profile" providers={["google"]} />);
-    fireEvent.click(screen.getByRole("button", { name: "Sign in with Google" }));
+    render(<PasswordAuthForm next="/profile" providers={["github"]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with GitHub" }));
     expect(await screen.findByText("Sign-in options could not be loaded. Try again.")).toBeTruthy();
   });
 });

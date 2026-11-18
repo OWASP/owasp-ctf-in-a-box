@@ -1,6 +1,6 @@
 // Where every "sign in" control leads. A signed-in visitor is sent straight to
 // where they were headed; everyone else gets the username + password form and
-// one button per enabled OAuth provider. `next` is attacker-influenceable, so it is sanitized here
+// the GitHub button when GitHub sign-in is enabled. `next` is attacker-influenceable, so it is sanitized here
 // and again by /api/post-signin.
 //
 // Dynamic (reads the session), like its siblings.

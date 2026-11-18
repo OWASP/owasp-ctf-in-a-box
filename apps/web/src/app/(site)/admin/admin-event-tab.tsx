@@ -355,12 +355,12 @@ export default function AdminEventTab({
         <div>
           <h3 className="text-white">Sign-in</h3>
           <p className="text-sm text-muted">
-            Username and password is always on. A provider appears here once its client id and secret are in .env and the app has restarted. Switching one off also stops players whose only way in is that provider; they can add a password from their profile first, or an organizer can help.
+            Username and password is always on. GitHub sign-in appears here once its client id and secret are in .env and the app has restarted. Switching it off also stops players whose only way in is GitHub; they can add a password from their profile first, or an organizer can help.
           </p>
         </div>
         {configuredSignInProviders.length === 0 ? (
           <p className="text-sm text-muted">
-            No sign-in providers are configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (or DISCORD_ or GITHUB_) to .env and restart.
+            GitHub sign-in is not configured. Add GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET to .env and restart.
           </p>
         ) : (
           configuredSignInProviders.map((id) => {

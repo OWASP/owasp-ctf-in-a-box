@@ -33,7 +33,7 @@ the registry still fails the build loudly; the boundary is the
 | The platform (control plane) owns | A module provides |
 |---|---|
 | The disposable per-event GitHub **org** and its lifecycle (`setup/ctf-setup.sh`). | The **targets** it forks/provisions per event, and its teardown equivalents (contract §7). |
-| **Auth** (kit accounts: username and password, optional GitHub, Google and Discord sign-in; the account store and the GitHub link keys) and **admin grants** (claim codes, [ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)). | — (uses the platform's identity). |
+| **Auth** (kit accounts: username and password, optional GitHub sign-in; the account store and the GitHub link keys) and **admin grants** (claim codes, [ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)). | — (uses the platform's identity). |
 | **Team** registration, roster, join codes, the dedupe rollup, and the requirement that a contestant be on a team before anything scores (`apps/web`, `ctf:team:*`). | — (scores are per player id; the platform maps players to teams). |
 | The **scoring pipeline**: the single audited writer `POST /score`, the poll transport, the `github-actions[bot]` trust filter (`sync/`, `scorer/`). | Its **scoring workflow** and the score payloads it submits through that one writer (contract §2–3, §6). |
 | **Leaderboard** ranking, points aggregation, the score-over-time series, and rendering (`scorer/src/serve.js`, `apps/web`). | Its **challenge catalogue** — stable target/challenge IDs with totals — plus display metadata and progress semantics (contract §4–5). |

@@ -39,7 +39,9 @@ import {
 import {
   CONFIG_PATCH_SCRIPT,
   getAnnounceConfig,
+  outboxClaim,
   outboxEnqueue,
+  OUTBOX_CLAIM_SCRIPT,
   OUTBOX_ENQUEUE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
   WEBHOOK_TARGET_SCRIPT,
@@ -76,6 +78,20 @@ function pipelineFor(runtime: typeof state) {
       }
       if (verb === "HSET" && key === ANNOUNCE_OUTBOX_KEY) {
         runtime.outbox.set(String(cmd[2]), JSON.parse(String(cmd[3])) as OutboxEntry);
+        return { result: 1 };
+      }
+      if (verb === "EVAL" && cmd[1] === OUTBOX_CLAIM_SCRIPT) {
+        const id = String(cmd[7]);
+        const seenStatus = String(cmd[8]);
+        const seenN = Number(cmd[9]);
+        const switchField = String(cmd[12]);
+        const epochField = String(cmd[13]);
+        const entry = runtime.outbox.get(id);
+        if (!entry) return { result: 0 };
+        if (entry.status !== seenStatus || entry.n !== seenN) return { result: 0 };
+        if (runtime.config.get(switchField) !== "1") return { result: 0 };
+        const currentEpoch = Number(runtime.config.get(epochField) ?? 0);
+        if (entry.kindEpoch !== currentEpoch) return { result: 0 };
         return { result: 1 };
       }
       if (verb === "EVAL" && cmd[1] === OUTBOX_SKIP_SCRIPT) {
@@ -181,5 +197,37 @@ describe("switch epochs", () => {
     const freshAccepted = await outboxEnqueue("race-current", "first-blood", { embeds: [] }, after.webhookGeneration, after.kindEpochs["first-blood"]);
     expect(freshAccepted).toBe(true);
     expect(state.outbox.get("race-current")?.kindEpoch).toBe(1);
+  });
+
+  it("OUTBOX_CLAIM_SCRIPT refuses lease when switch is disabled or epoch mismatched, and claims when valid", async () => {
+    // Seed an entry with epoch 0
+    state.outbox.set("entry-1", {
+      kind: "first-blood",
+      payload: {},
+      at: new Date().toISOString(),
+      seq: 1,
+      n: 0,
+      status: "pending",
+      webhookGeneration: 0,
+      kindEpoch: 0,
+    });
+
+    // 1. Valid pending entry with switch=1 and epoch=0 claims successfully
+    state.config.set("firstBlood", "1");
+    state.config.set("epoch:first-blood", "0");
+    const validClaim = await outboxClaim("entry-1", { status: "pending", n: 0, kind: "first-blood" });
+    expect(validClaim).not.toBeNull();
+    expect(typeof validClaim).toBe("string");
+
+    // 2. Disabled switch: claim returns null (no lease)
+    state.config.set("firstBlood", "0");
+    const disabledClaim = await outboxClaim("entry-1", { status: "pending", n: 0, kind: "first-blood" });
+    expect(disabledClaim).toBeNull();
+
+    // 3. Mismatched epoch: switch is re-enabled but epoch is bumped to 1
+    state.config.set("firstBlood", "1");
+    state.config.set("epoch:first-blood", "1");
+    const staleEpochClaim = await outboxClaim("entry-1", { status: "pending", n: 0, kind: "first-blood" });
+    expect(staleEpochClaim).toBeNull();
   });
 });

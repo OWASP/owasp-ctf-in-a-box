@@ -287,4 +287,15 @@ describe("preview POST", () => {
     expect((await PREVIEW(req("POST", { kind: "release" }, "/api/admin/announcements/preview"))).status).toBe(400);
     expect((await PREVIEW(req("POST", { kind: "daily" }, "/api/admin/announcements/preview"))).status).toBe(400);
   });
+
+  it("never enqueues or sends an announcement during preview", async () => {
+    mocks.postToDiscord.mockClear();
+    mocks.nudgeAnnounceTicker.mockClear();
+    mocks.setAnnounceWebhook.mockClear();
+    const res = await PREVIEW(req("POST", { kind: "first-blood" }, "/api/admin/announcements/preview"));
+    expect(res.status).toBe(200);
+    expect(mocks.postToDiscord).not.toHaveBeenCalled();
+    expect(mocks.nudgeAnnounceTicker).not.toHaveBeenCalled();
+    expect(mocks.setAnnounceWebhook).not.toHaveBeenCalled();
+  });
 });

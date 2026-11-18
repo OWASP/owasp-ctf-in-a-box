@@ -102,8 +102,18 @@ export function clearWebhookConfirm(): { title: string; body: string; confirmLab
 /** The Event tab"s self-contained Discord announcements panel: webhook
  *  (write-only), per-type switches, previews, Send test and the delivery
  *  status line. */
-export default function AdminEventAnnouncements({ setConfirm, timeZone }: { setConfirm: (c: ConfirmState) => void; timeZone: string }) {
-  const [load, setLoad] = useState<Load>({ state: "loading" });
+export default function AdminEventAnnouncements({
+  setConfirm,
+  timeZone,
+  initial,
+}: {
+  setConfirm: (c: ConfirmState) => void;
+  timeZone: string;
+  initial?: { config: DiscordPublicConfig; status: AnnounceStatus };
+}) {
+  const [load, setLoad] = useState<Load>(
+    initial ? { state: "ready", config: initial.config, status: initial.status } : { state: "loading" },
+  );
   const [fieldStatus, setFieldStatus] = useState<Partial<Record<string, FieldStatus>>>({});
   const [webhookInput, setWebhookInput] = useState("");
   const [webhookBusy, setWebhookBusy] = useState(false);
@@ -139,6 +149,7 @@ export default function AdminEventAnnouncements({ setConfirm, timeZone }: { setC
   }, [readConfig]);
 
   useEffect(() => {
+    if (initial) return;
     let cancelled = false;
     readConfig().then(
       (body) => {
@@ -151,7 +162,7 @@ export default function AdminEventAnnouncements({ setConfirm, timeZone }: { setC
     return () => {
       cancelled = true;
     };
-  }, [readConfig]);
+  }, [initial, readConfig]);
 
   const config = load.state === "ready" ? load.config : null;
   const status = load.state === "ready" ? load.status : null;

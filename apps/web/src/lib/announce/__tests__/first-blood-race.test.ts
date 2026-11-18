@@ -102,4 +102,45 @@ describe("first-blood enqueue race", () => {
 
     expect(mocks.state.entries).toHaveLength(0);
   });
+
+  it("rejects a notification whose webhook was cleared or rotated while suspended in listTeams", async () => {
+    let releaseTeams: (() => void) | undefined;
+    mocks.listTeams.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseTeams = () => resolve([{ slug: "t1", name: "Team One", members: ["alice"] }]);
+        }),
+    );
+
+    const notify = notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
+    await vi.waitFor(() => expect(mocks.listTeams).toHaveBeenCalledTimes(1));
+
+    // Rotate or clear webhook generation while suspended
+    mocks.state.config.webhookGeneration += 1;
+
+    releaseTeams?.();
+    await notify;
+
+    expect(mocks.state.entries).toHaveLength(0);
+  });
+
+  it("accepts a notification when stream and webhook generation remain unchanged through listTeams", async () => {
+    let releaseTeams: (() => void) | undefined;
+    mocks.listTeams.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseTeams = () => resolve([{ slug: "t1", name: "Team One", members: ["alice"] }]);
+        }),
+    );
+
+    const notify = notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
+    await vi.waitFor(() => expect(mocks.listTeams).toHaveBeenCalledTimes(1));
+
+    // State remains untouched
+    releaseTeams?.();
+    await notify;
+
+    expect(mocks.state.entries).toHaveLength(1);
+    expect(mocks.state.entries[0].stamp).toEqual({ webhookGeneration: 0, kindEpoch: 0 });
+  });
 });

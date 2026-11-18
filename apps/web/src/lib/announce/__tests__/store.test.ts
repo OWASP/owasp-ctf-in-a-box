@@ -712,6 +712,16 @@ describe("outbox", () => {
     expect(await outboxClaim("id-1", { status: "pending", n: 0, kind: "first-blood" })).toBeNull();
   });
 
+  it("refuses a delivery lease when the announcement kind switch is disabled", async () => {
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: 0 }]);
+    expect(await outboxClaim("id-1", { status: "pending", n: 0, kind: "first-blood" })).toBeNull();
+  });
+
+  it("refuses a delivery lease when the entry kind epoch does not match current epoch", async () => {
+    mocks.upstashPipeline.mockImplementation(async () => [{ result: 0 }]);
+    expect(await outboxClaim("id-1", { status: "pending", n: 0, kind: "first-blood" })).toBeNull();
+  });
+
   it("returns no lease and logs when Redis returns a command error", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.upstashPipeline.mockImplementation(async () => [{ error: "ERR timeout" }]);

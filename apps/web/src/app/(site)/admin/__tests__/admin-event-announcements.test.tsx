@@ -47,6 +47,58 @@ describe("AdminEventAnnouncements", () => {
     expect(html).toContain("Discord announcements");
     expect(html).toContain("Loading…");
   });
+
+  it("renders a functional Preview button for each announcement type when all switches are disabled", () => {
+    const html = renderToStaticMarkup(
+      <AdminEventAnnouncements
+        setConfirm={() => {}}
+        timeZone="UTC"
+        initial={{
+          config: config({ firstBlood: false, launch: false, pause: false, milestones: false }),
+          status: status(),
+        }}
+      />,
+    );
+    expect(html).toContain("Discord announcements");
+    expect(html).toContain("First blood");
+    expect(html).toContain("Event launch");
+    expect(html).toContain("Scoring paused / resumed");
+    expect(html).toContain("Remaining-time checks");
+
+    // All four switches are rendered in the off position
+    const switches = html.match(/role="switch"[^>]*aria-checked="false"/g);
+    expect(switches).toHaveLength(4);
+
+    // Each row renders a Preview button that is available (not disabled)
+    const previewButtons = html.match(/<button[^>]*>Preview<\/button>/g);
+    expect(previewButtons).toHaveLength(4);
+    for (const btn of previewButtons ?? []) {
+      expect(btn).not.toMatch(/\sdisabled([=\s>]|$)/);
+    }
+  });
+
+  it("keeps Preview buttons available for disabled types when other types are enabled", () => {
+    const html = renderToStaticMarkup(
+      <AdminEventAnnouncements
+        setConfirm={() => {}}
+        timeZone="UTC"
+        initial={{
+          config: config({ firstBlood: true, launch: false, pause: true, milestones: false }),
+          status: status(),
+        }}
+      />,
+    );
+    // 2 enabled, 2 disabled switches
+    expect(html.match(/role="switch"[^>]*aria-checked="true"/g)).toHaveLength(2);
+    expect(html.match(/role="switch"[^>]*aria-checked="false"/g)).toHaveLength(2);
+
+    // All 4 Preview buttons remain available regardless of individual switch state
+    const previewButtons = html.match(/<button[^>]*>Preview<\/button>/g);
+    expect(previewButtons).toHaveLength(4);
+    for (const btn of previewButtons ?? []) {
+      expect(btn).not.toMatch(/\sdisabled([=\s>]|$)/);
+    }
+  });
 });
 
 // A blur that only moves focus must not write: no POST, no audit entry.

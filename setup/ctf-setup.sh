@@ -1184,14 +1184,10 @@ cmd_secrets() {
     # not optional for a working stack. Only srh ever uses it; no other
     # service is given it, and no other service can reach redis.
     echo "REDIS_PASSWORD=$(openssl rand -hex 24)"
+    echo "# GitHub sign-in: offered only when both the id and secret are set."
+    echo "# Callback URL: <EVENT_URL>/api/auth/callback/github"
     echo "GITHUB_CLIENT_ID="
     echo "GITHUB_CLIENT_SECRET="
-    echo "# Optional sign-in providers: a provider is offered only when both its id and"
-    echo "# secret are set. Callback URL: <EVENT_URL>/api/auth/callback/<google|discord>"
-    echo "GOOGLE_CLIENT_ID="
-    echo "GOOGLE_CLIENT_SECRET="
-    echo "DISCORD_CLIENT_ID="
-    echo "DISCORD_CLIENT_SECRET="
     echo "GITHUB_APP_ID="
     echo "GITHUB_APP_PRIVATE_KEY="
     echo "GITHUB_APP_INSTALLATION_ID="
@@ -1215,7 +1211,7 @@ cmd_secrets() {
     echo "# SCORE_IMAGE=ghcr.io/<your-event-org>/score:latest"
   } > "$out"
   )
-  echo "wrote $out — fill in GITHUB_ORG, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY (the GitHub keys are needed only with SCORE_IMAGE, which runs Secure Development); GOOGLE_CLIENT_ID/SECRET and DISCORD_CLIENT_ID/SECRET are optional extra sign-in providers"
+  echo "wrote $out — fill in GITHUB_ORG, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY (the GitHub keys are needed only with SCORE_IMAGE, which runs Secure Development; without it, GitHub sign-in is optional)"
   claim_code_announce "$code" "<EVENT_URL>" "$recover"
 }
 
@@ -2633,8 +2629,7 @@ cmd_wizard() {
 # subshell, and a caller such as `[ -n "$(env_val X)" ]` would read it as
 # empty. `check` reads no env file, so a broken one does not block it.
 ENV_KEYS="SCORE_IMAGE GITHUB_ORG ADMIN_CLAIM_CODE_HASH EVENT_URL GITHUB_APP_ID
-GITHUB_APP_PRIVATE_KEY GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
-DISCORD_CLIENT_ID DISCORD_CLIENT_SECRET"
+GITHUB_APP_PRIVATE_KEY GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET"
 if [ "$CMD" != "__selftest" ]; then
   if [ "$CMD" != check ]; then
     # shellcheck disable=SC2086 # the key list is split into words on purpose

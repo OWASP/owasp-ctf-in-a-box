@@ -1220,13 +1220,13 @@ _stub_prereqs() {
   echo "$output" | grep -qF "would open the OAuth-app page, then prompt Client ID"
 }
 
-@test "secrets template carries blank optional Google and Discord keys" {
+@test "secrets template carries the GitHub OAuth keys and no other provider's" {
   run bash "$SCRIPT" secrets --out .env.providers.test
   [ "$status" -eq 0 ]
-  grep -q '^GOOGLE_CLIENT_ID=$' .env.providers.test
-  grep -q '^GOOGLE_CLIENT_SECRET=$' .env.providers.test
-  grep -q '^DISCORD_CLIENT_ID=$' .env.providers.test
-  grep -q '^DISCORD_CLIENT_SECRET=$' .env.providers.test
+  grep -q '^GITHUB_CLIENT_ID=$' .env.providers.test
+  grep -q '^GITHUB_CLIENT_SECRET=$' .env.providers.test
+  grep -qF 'Callback URL: <EVENT_URL>/api/auth/callback/github' .env.providers.test
+  [ -z "$(grep -E '^[A-Z]+_CLIENT_(ID|SECRET)=' .env.providers.test | grep -v '^GITHUB_')" ]
 }
 
 # A fresh box has no claim code yet: the rehearsal names the write it would

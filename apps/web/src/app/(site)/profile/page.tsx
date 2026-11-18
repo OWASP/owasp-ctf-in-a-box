@@ -171,7 +171,7 @@ export default async function ProfilePage({
       quizEnabled
         ? getQuizTotals().catch((err) => {
             console.error(`profile: quiz totals read failed: ${errorLabel(err)}`);
-            return new Map<string, QuizTotal>();
+            return null;
           })
         : Promise.resolve(new Map<string, QuizTotal>()),
       quizEnabled
@@ -233,17 +233,23 @@ export default async function ProfilePage({
   // withHintPenalties (subtract, floor at 0) followed by
   // withModuleContributions (add quiz and classic points on top) — so the
   // profile matches the contestant's public row.
-  const quizTotal = quizTotals.get(playerId);
+  const quizTotalsAvailable = quizTotals !== null;
+  const quizTotal = quizTotals?.get(playerId);
   const quizPoints = quizTotal?.points ?? 0;
   const classicTotal = classicTotals.get(playerId);
   const classicPoints = classicTotal?.points ?? 0;
+  const pointsAvailable = !quizEnabled || quizTotalsAvailable;
   // Net-of-hints TOTAL: the penalty subtracts from the all-module sum,
   // floored at 0 — the same math (and the same single application) as the
   // board's withHintPenalties, which now runs as the pipeline's LAST stage.
   // Netting scorer points alone (the old form) made hints free whenever the
   // spend exceeded scorer points — every classic- or quiz-heavy
   // contestant.
-  const netPoints = Math.max(0, (profile?.points ?? 0) + quizPoints + classicPoints - viewerHints.spent);
+  // When an enabled module's totals read failed, the total is unavailable
+  // rather than understated as complete without banked points.
+  const netPoints = pointsAvailable
+    ? Math.max(0, (profile?.points ?? 0) + quizPoints + classicPoints - viewerHints.spent)
+    : null;
   // The bar's denominator covers every enabled module, because its numerator
   // does: netPoints already includes quiz and classic. Dividing an all-module
   // numerator by secure-development's maxPoints alone (the old behaviour) let
@@ -354,7 +360,7 @@ export default async function ProfilePage({
   // Sources without per-challenge point data (lambda/upstash) report
   // maxPoints 0 — fall back to patched/total so the bar still means something.
   const progressPct =
-    maxPointsAllModules > 0
+    netPoints !== null && maxPointsAllModules > 0
       ? Math.min(100, (netPoints / maxPointsAllModules) * 100)
       : challengeCount > 0
         ? (patchedCount / challengeCount) * 100
@@ -362,7 +368,7 @@ export default async function ProfilePage({
   // Whichever numerator actually drove progressPct above — points when the
   // bar has point data, the patched count when it fell back — so the fill
   // floor triggers exactly when there is genuine nonzero progress to show.
-  const progressValue = maxPointsAllModules > 0 ? netPoints : patchedCount;
+  const progressValue = netPoints !== null && maxPointsAllModules > 0 ? netPoints : patchedCount;
 
   const moduleProgress = buildModuleProgress(moduleInput);
   const classicOffBoard = offBoardClassicPoints(moduleInput);
@@ -376,7 +382,7 @@ export default async function ProfilePage({
     name: player.name,
     image: player.image,
     team: effectiveTeam,
-    points: netPoints,
+    points: netPoints ?? (profile?.points ?? 0),
     patched: profile?.patched ?? 0,
     failed: profile?.failed ?? 0,
     total: profile?.total ?? 0,
@@ -396,7 +402,7 @@ export default async function ProfilePage({
       total: Math.max(challengeCount, patchedCount),
       accent: "#22c55e",
     },
-    quizEnabled && quizQuestions.length > 0 && {
+    quizEnabled && quizQuestions.length > 0 && quizTotalsAvailable && {
       unit: moduleUnit("quiz"),
       done: quizTotal?.answered ?? 0,
       total: Math.max(quizQuestions.length, quizTotal?.answered ?? 0),
@@ -481,7 +487,7 @@ export default async function ProfilePage({
               is not guessable. Falls back to the same done/total pair the
               percentage itself falls back to. */}
           <p className="mt-1.5 font-mono text-[11px] tabular-nums text-muted">
-            {maxPointsAllModules > 0
+            {netPoints !== null && maxPointsAllModules > 0
               ? `${netPoints.toLocaleString("en-US")} of ${maxPointsAllModules.toLocaleString("en-US")} pts available`
               : challengeCount > 0
                 ? `${patchedCount} of ${challengeCount} done`

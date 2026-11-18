@@ -12,6 +12,7 @@
 // enforced by /api/quiz/answer itself.
 
 import type { Metadata } from "next";
+import Link from "next/link";
 import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
@@ -127,22 +128,28 @@ export default async function QuizPage() {
   // they were looking at not change at all.
   const blurb = mod?.blurb ?? "Answer security questions for points.";
 
-  const maxAttempts = settings?.quizMaxAttempts ?? QUIZ_MAX_ATTEMPTS;
-  const cooldownMs = (settings?.quizRetryAfterMin ?? QUIZ_RETRY_AFTER_MIN) * 60_000;
+  const settingsAvailable = settings !== null;
+  const maxAttempts = settingsAvailable ? (settings.quizMaxAttempts ?? QUIZ_MAX_ATTEMPTS) : QUIZ_MAX_ATTEMPTS;
+  const cooldownMs = settingsAvailable ? (settings.quizRetryAfterMin ?? QUIZ_RETRY_AFTER_MIN) * 60_000 : 0;
 
   // Built field by field from the public `Question` shape — never a spread
   // of a raw store record, which is how an answer key would leak.
-  const viewQuestions: QuizQuestionView[] = questions.map((q) => ({
-    id: q.id,
-    prompt: q.prompt,
-    type: q.type,
-    choices: q.choices,
-    points: q.points,
-    // Read from the SAME attempts row `deriveStatus` gates on, so the
-    // "2 of 3 attempts left" chip and the exhausted state can never disagree.
-    attemptsUsed: viewerQuiz.attempts[q.id]?.attempts ?? 0,
-    ...deriveStatus(viewerQuiz.answered[q.id], viewerQuiz.attempts[q.id], maxAttempts, cooldownMs),
-  }));
+  // Questions are only classified via deriveStatus when settings loaded
+  // successfully; if settings failed, an unavailable card is shown instead
+  // of deriving false exhaustion from a fallback attempts limit.
+  const viewQuestions: QuizQuestionView[] = settingsAvailable
+    ? questions.map((q) => ({
+        id: q.id,
+        prompt: q.prompt,
+        type: q.type,
+        choices: q.choices,
+        points: q.points,
+        // Read from the SAME attempts row `deriveStatus` gates on, so the
+        // "2 of 3 attempts left" chip and the exhausted state can never disagree.
+        attemptsUsed: viewerQuiz.attempts[q.id]?.attempts ?? 0,
+        ...deriveStatus(viewerQuiz.answered[q.id], viewerQuiz.attempts[q.id], maxAttempts, cooldownMs),
+      }))
+    : [];
 
   // Per-VIEWER state, so it sits above the board rather than in the header.
   // Signed in, the board's own progress strip (answered/total, points, bar)
@@ -172,7 +179,14 @@ export default async function QuizPage() {
           them answer the moment questions appear. */}
       <div className="flex flex-col gap-4">
         {progress && <p className="text-sm text-zinc-400">{progress}</p>}
-        {questions.length === 0 ? (
+        {!settingsAvailable ? (
+          <div className="ds-card rounded-lg border border-white/[0.06] bg-[#16162a] px-5 py-8 text-center">
+            <p className="text-sm text-zinc-400">Quiz settings are temporarily unavailable.</p>
+            <Link href="/quiz" className="mt-3 inline-block text-sm ds-link">
+              Retry
+            </Link>
+          </div>
+        ) : questions.length === 0 ? (
           <ModuleEmptyState
             message={
               viewerIsAdmin

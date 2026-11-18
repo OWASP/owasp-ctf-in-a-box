@@ -420,4 +420,24 @@ describe("profile header stats", () => {
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
   });
+
+  it("preserves an unavailable state when quiz totals read fails and avoids presenting an understated total", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    moduleLive.mockImplementation((id: string) => id === "quiz" || id === "secure-development");
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
+    getUser.mockResolvedValue({ ...baseProfile, points: 40 });
+    getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
+    listQuestions.mockResolvedValue([
+      { id: "q1", prompt: "Question 1", points: 15, type: "single", choices: ["A", "B"] },
+    ]);
+    getQuizTotals.mockRejectedValue(new Error("redis down"));
+
+    const html = renderToStaticMarkup(await ProfilePage());
+    expect(html).toContain("patched");
+    expect(html).toContain("points (unavailable)");
+    expect(html).toContain("—");
+    expect(html).not.toMatch(/40\s*of\s*.*pts available/);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });

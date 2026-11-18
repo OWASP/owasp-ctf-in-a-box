@@ -284,9 +284,48 @@ describe("quiz page blurb and progress line", () => {
 
     const html = renderToStaticMarkup(await QuizPage());
     expect(html).toContain("Quiz");
-    expect(html).toMatch(/no quiz questions are available/i);
+    expect(html).toMatch(/quiz settings are temporarily unavailable/i);
+    expect(html).toContain("Retry");
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+
+  it("shows an unavailable state with retry action when settings read fails instead of classifying questions as exhausted", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    getSession.mockResolvedValue({ user: { id: "p1", name: "Player 1" } });
+    listQuestions.mockResolvedValue([
+      { id: "q1", prompt: "Security question", points: 10, type: "single", choices: ["A", "B"] },
+    ]);
+    getViewerQuiz.mockResolvedValue({
+      answered: {},
+      attempts: { q1: { attempts: 3, lastAt: new Date().toISOString() } },
+    });
+    getAdminSettings.mockRejectedValue(new Error("redis down"));
+    getResolvedModules.mockResolvedValue([]);
+
+    const html = renderToStaticMarkup(await QuizPage());
+    expect(html).toContain("Quiz");
+    expect(html).toMatch(/quiz settings are temporarily unavailable/i);
+    expect(html).toContain("Retry");
+    expect(html).not.toMatch(/exhausted/i);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("treats quizMaxAttempts=0 as unlimited attempts", async () => {
+    getSession.mockResolvedValue({ user: { id: "p1", name: "Player 1" } });
+    listQuestions.mockResolvedValue([
+      { id: "q1", prompt: "Security question", points: 10, type: "single", choices: ["A", "B"] },
+    ]);
+    getViewerQuiz.mockResolvedValue({
+      answered: {},
+      attempts: { q1: { attempts: 3, lastAt: new Date(Date.now() - 3600_000).toISOString() } },
+    });
+    getAdminSettings.mockResolvedValue({ quizMaxAttempts: 0, quizRetryAfterMin: 1 });
+    getResolvedModules.mockResolvedValue([]);
+
+    const html = renderToStaticMarkup(await QuizPage());
+    expect(html).not.toMatch(/exhausted/i);
   });
 });
 

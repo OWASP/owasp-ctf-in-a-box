@@ -22,8 +22,13 @@ const mocks = vi.hoisted(() => {
     },
     entries: [] as { id: string; kind: string; stamp: { webhookGeneration: number; kindEpoch: number } }[],
     listTeams: vi.fn(),
+    claimLedgerFieldsAndEnqueue: vi.fn(),
   };
-  return { state, listTeams: state.listTeams };
+  return {
+    state,
+    listTeams: state.listTeams,
+    claimLedgerFieldsAndEnqueue: state.claimLedgerFieldsAndEnqueue,
+  };
 });
 
 vi.mock("server-only", () => ({}));
@@ -34,21 +39,7 @@ vi.mock("@/lib/announce/store", () => ({
   newOutboxId: (kind: string) => `id-${kind}`,
   // The atomic claim+enqueue contract: write only while the captured
   // counters still match the live config and the switch is on.
-  claimLedgerFieldsAndEnqueue: async (
-    _ledger: string,
-    _fields: string[],
-    webhookGeneration: number,
-    kind: string,
-    kindEpoch: number,
-    id: string,
-  ) => {
-    const config = mocks.state.config;
-    if (!config.firstBlood || config.webhookGeneration !== webhookGeneration || config.kindEpochs["first-blood"] !== kindEpoch) {
-      return false;
-    }
-    mocks.state.entries.push({ id, kind, stamp: { webhookGeneration, kindEpoch } });
-    return true;
-  },
+  claimLedgerFieldsAndEnqueue: mocks.claimLedgerFieldsAndEnqueue,
   getWebhookDeliveryTarget: async () => ({ url: mocks.state.config.webhookUrl, generation: mocks.state.config.webhookGeneration }),
   outboxPending: async () => [],
   outboxRetryable: async () => [],
@@ -75,6 +66,23 @@ beforeEach(() => {
   mocks.state.config.kindEpochs["first-blood"] = 0;
   mocks.state.entries = [];
   mocks.listTeams.mockReset();
+  mocks.claimLedgerFieldsAndEnqueue.mockReset().mockImplementation(
+    async (
+      _ledger: string,
+      _fields: string[],
+      webhookGeneration: number,
+      kind: string,
+      kindEpoch: number,
+      id: string,
+    ) => {
+      const config = mocks.state.config;
+      if (!config.firstBlood || config.webhookGeneration !== webhookGeneration || config.kindEpochs["first-blood"] !== kindEpoch) {
+        return false;
+      }
+      mocks.state.entries.push({ id, kind, stamp: { webhookGeneration, kindEpoch } });
+      return true;
+    },
+  );
 });
 
 describe("first-blood enqueue race", () => {
@@ -100,6 +108,7 @@ describe("first-blood enqueue race", () => {
     releaseTeams?.();
     await notify;
 
+    expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledTimes(1);
     expect(mocks.state.entries).toHaveLength(0);
   });
 
@@ -112,19 +121,38 @@ describe("first-blood enqueue race", () => {
         }),
     );
 
+    // Initial state: producer captures webhook generation 0 at the start of notify
+    expect(mocks.state.config.webhookGeneration).toBe(0);
+
     const notify = notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
     await vi.waitFor(() => expect(mocks.listTeams).toHaveBeenCalledTimes(1));
 
-    // Clear-and-reconfigure: advances generation and configures a new webhook URL
+    // Clear-and-reconfigure: advances live generation to 1 and configures a new webhook URL
     // before the suspended notifier resumes. The webhook remains configured, so
     // enqueue rejection is specifically due to the stale captured generation.
-    mocks.state.config.webhookGeneration += 1;
+    mocks.state.config.webhookGeneration = 1;
     mocks.state.config.webhookUrl = "https://discord.com/api/webhooks/2/bbbbbbbbbbbbbbbbbbbbbb";
     mocks.state.config.webhookConfigured = true;
+
+    // Live webhook generation is now 1
+    expect(mocks.state.config.webhookGeneration).toBe(1);
 
     releaseTeams?.();
     await notify;
 
+    // Verify claimLedgerFieldsAndEnqueue was called exactly once with captured generation 0
+    expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledWith(
+      "ctf:announce:first-announced",
+      ["classic:web-1"],
+      0, // captured webhookGeneration
+      "first-blood",
+      0, // captured kindEpoch
+      expect.any(String),
+      expect.anything(),
+    );
+
+    // No outbox entry created because atomic enqueue gate rejects stale generation (0 != 1)
     expect(mocks.state.entries).toHaveLength(0);
   });
 
@@ -143,6 +171,17 @@ describe("first-blood enqueue race", () => {
     // State remains untouched
     releaseTeams?.();
     await notify;
+
+    expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledWith(
+      "ctf:announce:first-announced",
+      ["classic:web-1"],
+      0,
+      "first-blood",
+      0,
+      expect.any(String),
+      expect.anything(),
+    );
 
     expect(mocks.state.entries).toHaveLength(1);
     expect(mocks.state.entries[0].stamp).toEqual({ webhookGeneration: 0, kindEpoch: 0 });

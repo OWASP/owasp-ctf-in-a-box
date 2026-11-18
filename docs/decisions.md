@@ -4512,11 +4512,12 @@ work an event without the feature must never pay for.
   `instrumentation.ts`, nodejs runtime, unref'd, fire-and-forget), not a
   cron and not the request path. Each tick reads its own configuration
   FIRST, and a box with no webhook or with every switch off ends the tick
-  there: one Redis read, no settings read, no state write, no outbox sweep —
+  there: one pipeline carrying three reads (the config hash, the webhook URL
+  and its generation), no settings read, no state write, no outbox sweep —
   the default state of an event that never opted in. While the box stays in
   that state the loop backs off from its 30-second active interval to a
-  much longer one (one config read per backoff period per process), and an
-  armed tick restores the normal interval — an idle box must not hammer
+  much longer one (one config pipeline per backoff period per process),
+  and an armed tick restores the normal interval — an idle box must not hammer
   Redis from every process, and a config read that FAILS keeps the current
   interval rather than masquerading as "all off"; the boot default is the
   ACTIVE interval, so a first read that fails does not push a configured
@@ -4623,8 +4624,8 @@ work an event without the feature must never pay for.
 **Consequences.** Announcements are an organizer opt-in with no new
 credential to manage beyond the webhook itself, and no new process to
 deploy — and the opt-in is cheap to leave half-done: the switches are
-independent, and a webhook with nothing enabled costs one Redis read per
-tick. The `ctf:announce:*` state is wiped by the master reset (so a fresh
+independent, and a webhook with nothing enabled costs one pipeline of
+three reads per tick. The `ctf:announce:*` state is wiped by the master reset (so a fresh
 run starts silent: the lifecycle pack re-seeds without replaying, and a
 fresh first blood is claimable again) while the webhook setup survives with
 the other organizer-set things. The pause/schedule contract is NOT

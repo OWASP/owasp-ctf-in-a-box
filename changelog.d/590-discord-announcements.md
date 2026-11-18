@@ -6,10 +6,13 @@
   checks at organizer-set marks — the time checks only while the event is
   live and unpaused, and never after the scoring window closes. Nothing
   posts by default: an observation loop reads its config first and ends the
-  tick there for a box with no webhook or every announcement off (one Redis
-  read, and the loop backs off to a much longer interval while the box
-  stays unconfigured; a config/webhook save nudges an immediate pass, so
-  enabling announcements just before launch still announces the launch),
+  tick there for a box with no webhook or every announcement off (one
+  pipeline carrying three reads, and the loop backs off to a much longer
+  interval while the box stays unconfigured; a config/webhook save
+  schedules an immediate pass without waiting for it. Enabling
+  announcements shortly before launch announces the launch only when that
+  pass records the pre-launch state first; a launch that starts before the
+  pass runs is seeded silently),
   lifecycle edges go through an atomic compare-and-swap so exactly one
   replica announces each edge — and the first observation a box makes seeds
   silently, so configuring a webhook never replays history, while a freeze

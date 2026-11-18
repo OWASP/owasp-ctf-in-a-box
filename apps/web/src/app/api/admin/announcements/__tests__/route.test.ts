@@ -25,7 +25,6 @@ const mocks = vi.hoisted(() => ({
   getAdminSettings: vi.fn(),
   writeAdminAudit: vi.fn(),
   nudgeAnnounceTicker: vi.fn(),
-  deleteLifecycleState: vi.fn(),
 }));
 
 class AnnounceValidationError extends Error {}
@@ -51,8 +50,6 @@ vi.mock("@/lib/announce/store", () => ({
 vi.mock("@/lib/announce/sender", () => ({ postToDiscord: mocks.postToDiscord }));
 vi.mock("@/lib/announce/ticker", () => ({
   nudgeAnnounceTicker: mocks.nudgeAnnounceTicker,
-  deleteLifecycleState: mocks.deleteLifecycleState,
-  isLifecyclePassEnabled: (c: { launch?: boolean; pause?: boolean }) => Boolean(c?.launch || c?.pause),
 }));
 
 const { GET, POST } = await import("@/app/api/admin/announcements/route");
@@ -82,7 +79,6 @@ beforeEach(() => {
   mocks.setAnnounceCooldown.mockResolvedValue(undefined);
   mocks.postToDiscord.mockResolvedValue({ ok: true });
   mocks.getAdminSettings.mockRejectedValue(new Error("no settings"));
-  mocks.deleteLifecycleState.mockResolvedValue(undefined);
 });
 
 describe("the admin gate", () => {
@@ -100,7 +96,6 @@ describe("the admin gate", () => {
     expect(mocks.setAnnounceWebhook).not.toHaveBeenCalled();
     expect(mocks.postToDiscord).not.toHaveBeenCalled();
     expect(mocks.nudgeAnnounceTicker).not.toHaveBeenCalled();
-    expect(mocks.deleteLifecycleState).not.toHaveBeenCalled();
     expect(mocks.readStatus).not.toHaveBeenCalled();
     expect(mocks.writeAdminAudit).not.toHaveBeenCalled();
   });
@@ -144,13 +139,13 @@ describe("config POST", () => {
     expect(mocks.nudgeAnnounceTicker).toHaveBeenCalledTimes(1);
   });
 
-  it("deletes lifecycle state before saving config and nudging ticker on off-to-on transition", async () => {
-    mocks.getAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: false, pause: false });
-    mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: true, pause: false });
+  it("saves the patch and nudges the ticker — the baseline wipe is the store script's job", async () => {
+    // The off→on decision (and the lifecycle-state wipe) happens inside
+    // CONFIG_PATCH_SCRIPT against the STORED switches, so this route must
+    // neither read the config first nor delete anything itself: a route-level
+    // snapshot would let a second concurrent save wipe a baseline it did not
+    // seed.
     const order: string[] = [];
-    mocks.deleteLifecycleState.mockImplementation(async () => {
-      order.push("delete");
-    });
     mocks.updateAnnounceConfig.mockImplementation(async () => {
       order.push("save");
       return { webhookConfigured: true, launch: true, pause: false };
@@ -161,41 +156,21 @@ describe("config POST", () => {
 
     const res = await POST(req("POST", { launch: true }));
     expect(res.status).toBe(200);
-    expect(mocks.deleteLifecycleState).toHaveBeenCalledTimes(1);
     expect(mocks.updateAnnounceConfig).toHaveBeenCalledTimes(1);
     expect(mocks.nudgeAnnounceTicker).toHaveBeenCalledTimes(1);
-    expect(order).toEqual(["delete", "save", "nudge"]);
+    expect(order).toEqual(["save", "nudge"]);
+    // POST does not pre-read the config: every save goes through the one
+    // atomic write, whatever the switches currently are.
+    expect(mocks.getAnnounceConfig).not.toHaveBeenCalled();
   });
 
-  it("fails closed without saving config or nudging ticker when deleteLifecycleState fails", async () => {
-    mocks.getAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: false, pause: false });
-    mocks.deleteLifecycleState.mockRejectedValue(new Error("redis delete error"));
-
-    const res = await POST(req("POST", { launch: true }));
-    expect(res.status).toBe(503);
-    expect(mocks.deleteLifecycleState).toHaveBeenCalledTimes(1);
-    expect(mocks.updateAnnounceConfig).not.toHaveBeenCalled();
-    expect(mocks.nudgeAnnounceTicker).not.toHaveBeenCalled();
-  });
-
-  it("does not delete lifecycle state on unrelated saves", async () => {
-    // Already enabled -> enabling pause does not transition from disabled
-    mocks.getAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: true, pause: false });
-    mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: true, pause: true });
-    expect((await POST(req("POST", { pause: true }))).status).toBe(200);
-    expect(mocks.deleteLifecycleState).not.toHaveBeenCalled();
-
-    // Completely unrelated switches (firstBlood, milestones) while lifecycle stays off
-    mocks.getAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: false, pause: false, milestones: false });
-    mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: false, pause: false, milestones: true });
-    expect((await POST(req("POST", { milestones: true }))).status).toBe(200);
-    expect(mocks.deleteLifecycleState).not.toHaveBeenCalled();
-
-    // Disabling lifecycle does not delete lifecycle state
-    mocks.getAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: true, pause: false });
-    mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, launch: false, pause: false });
-    expect((await POST(req("POST", { launch: false }))).status).toBe(200);
-    expect(mocks.deleteLifecycleState).not.toHaveBeenCalled();
+  it("passes the patch through untouched on every kind of save, relying on the store for transitions", async () => {
+    for (const patch of [{ pause: true }, { milestones: true }, { launch: false }]) {
+      mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, ...patch });
+      expect((await POST(req("POST", patch))).status).toBe(200);
+      expect(mocks.updateAnnounceConfig).toHaveBeenCalledTimes(1);
+      mocks.updateAnnounceConfig.mockClear();
+    }
   });
 
   it("maps a store failure to 503 without nudging the ticker", async () => {

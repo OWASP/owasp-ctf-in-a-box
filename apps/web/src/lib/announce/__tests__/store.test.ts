@@ -60,7 +60,7 @@ import {
   STATE_CAS_RECONCILE_SCRIPT,
   STATE_CAS_SCRIPT,
   stateCompareSet,
-  SWITCH_DISABLE_SCRIPT,
+  CONFIG_PATCH_SCRIPT,
   updateAnnounceConfig,
   WEBHOOK_CLEAR_SCRIPT,
   WEBHOOK_TARGET_SCRIPT,
@@ -68,8 +68,10 @@ import {
 import {
   ANNOUNCE_COOLDOWN_KEY,
   ANNOUNCE_FIRST_KEY,
+  ANNOUNCE_LIFECYCLE_KEY,
   ANNOUNCE_LIFECYCLE_REV_KEY,
   ANNOUNCE_OUTBOX_KEY,
+  ANNOUNCE_SEQ_KEY,
   ANNOUNCE_WEBHOOK_GENERATION_KEY,
   DISCORD_CONFIG_KEY,
   DISCORD_WEBHOOK_KEY,
@@ -201,9 +203,10 @@ describe("updateAnnounceConfig", () => {
     const config = await updateAnnounceConfig(ADMIN, { firstBlood: true, marks: "15m, 5m" });
     expect(config.firstBlood).toBe(true);
     expect(config.marks).toBe("15m, 5m");
-    const hset = mocks.upstashPipeline.mock.calls[0][0][0];
-    expect(hset[0]).toBe("HSET");
-    expect(hset).toContain(DISCORD_CONFIG_KEY);
+    const write = mocks.upstashEval.mock.calls.find((call) => call[0] === CONFIG_PATCH_SCRIPT);
+    expect(write).toBeDefined();
+    expect(write![1]).toEqual([DISCORD_CONFIG_KEY, ANNOUNCE_LIFECYCLE_KEY]);
+    expect(write![2]).toEqual(["2", "firstBlood", "1", "marks", "15m, 5m"]);
     expect(mocks.writeAdminAudit).toHaveBeenCalledWith(ADMIN, "announce-config", { firstBlood: true, marks: "15m, 5m" });
   });
 
@@ -236,13 +239,13 @@ describe("updateAnnounceConfig", () => {
       call[0].some((cmd) => cmd[0] === "EVAL" && cmd[1] === OUTBOX_SKIP_SCRIPT),
     );
     expect(firstSkipCall).toBeGreaterThan(-1);
-    const disable = mocks.upstashEval.mock.calls.find((call) => call[0] === SWITCH_DISABLE_SCRIPT);
-    expect(disable).toBeDefined();
+    const write = mocks.upstashEval.mock.calls.find((call) => call[0] === CONFIG_PATCH_SCRIPT);
+    expect(write).toBeDefined();
     expect(mocks.upstashPipeline.mock.invocationCallOrder[firstSkipCall]).toBeLessThan(
       mocks.upstashEval.mock.invocationCallOrder[0],
     );
-    const [, keys, args] = disable!;
-    expect(keys).toEqual([DISCORD_CONFIG_KEY]);
+    const [, keys, args] = write!;
+    expect(keys).toEqual([DISCORD_CONFIG_KEY, ANNOUNCE_LIFECYCLE_KEY]);
     expect(args).toEqual([
       "2",
       "pause",
@@ -262,7 +265,7 @@ describe("updateAnnounceConfig", () => {
     await expect(updateAnnounceConfig(ADMIN, { launch: false })).rejects.toThrow(/outbox read failed/);
     const commands = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]);
     expect(commands.some((cmd) => cmd[0] === "HSET" && cmd.includes(DISCORD_CONFIG_KEY))).toBe(false);
-    expect(mocks.upstashEval.mock.calls.some((call) => call[0] === SWITCH_DISABLE_SCRIPT)).toBe(false);
+    expect(mocks.upstashEval.mock.calls.some((call) => call[0] === CONFIG_PATCH_SCRIPT)).toBe(false);
   });
 });
 
@@ -626,6 +629,7 @@ describe("stateCompareSet / readStatePack", () => {
     ]);
     expect(args.slice(0, 4)).toEqual(["v1|L0P0", "v1|L1P0", expect.any(String), "1"]);
     expect(args[4]).toBe("id-1");
+    expect(String(args[5])).toContain('"seq":-1');
     expect(args.slice(6)).toEqual(["launch", "epoch:launch", "2", "3", "1", ""]);
   });
 
@@ -657,9 +661,10 @@ describe("outbox", () => {
     expect(await outboxEnqueue("id-1", "first-blood", { embeds: [] }, 7, 3)).toBe(true);
     const [script, keys, args] = mocks.upstashEval.mock.calls[0];
     expect(script).toBe(OUTBOX_ENQUEUE_SCRIPT);
-    expect(keys).toEqual([ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY]);
+    expect(keys).toEqual([ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY, ANNOUNCE_SEQ_KEY]);
     expect(args[0]).toBe("id-1");
     expect(String(args[1])).toContain('"status":"pending"');
+    expect(String(args[1])).toContain('"seq":-1');
     expect(String(args[1])).toContain('"webhookGeneration":7');
     expect(String(args[1])).toContain('"kindEpoch":3');
     expect(args[2]).toBe(7);

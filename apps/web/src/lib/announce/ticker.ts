@@ -60,7 +60,6 @@ import { buildLifecycleMessage } from "./messages";
 import { enqueueLedgerAnnouncement, flushRetries } from "./sender";
 import { ANNOUNCE_LIFECYCLE_KEY, ANNOUNCE_MILESTONE_KEY } from "./keys";
 import {
-  deleteLifecycleState,
   getAnnounceConfig,
   newOutboxId,
   outboxPrune,
@@ -68,8 +67,6 @@ import {
   stateCompareSet,
   type StateCasEntry,
 } from "./store";
-
-export { deleteLifecycleState };
 
 /** Whether the ticker's lifecycle observation pass is enabled: both switches
  *  off means no observation and no posts. */

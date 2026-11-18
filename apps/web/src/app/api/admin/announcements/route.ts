@@ -4,7 +4,7 @@ import { requireAdmin } from "@/lib/admin-auth";
 import { auditActor } from "@/lib/admin-audit-keys";
 import { adminErrorLabel } from "@/lib/admin-store";
 import type { DiscordConfigPatch } from "@/lib/discord-config";
-import { deleteLifecycleState, isLifecyclePassEnabled, nudgeAnnounceTicker } from "@/lib/announce/ticker";
+import { nudgeAnnounceTicker } from "@/lib/announce/ticker";
 import { AnnounceValidationError, getAnnounceConfig, publicConfig, readStatus, updateAnnounceConfig } from "@/lib/announce/store";
 
 /**
@@ -69,21 +69,12 @@ export async function POST(request: Request) {
 
   try {
     const patch = body as DiscordConfigPatch;
-    const prev = await getAnnounceConfig();
-    // Derive the will-be-enabled decision from the typed fields only: an
-    // untyped value (the store refuses it later) must not delete the state
-    // on its way to a 400.
-    const willEnable = isLifecyclePassEnabled({
-      launch: typeof patch.launch === "boolean" ? patch.launch : prev.launch,
-      pause: typeof patch.pause === "boolean" ? patch.pause : prev.pause,
-    });
-    // Delete BEFORE the write: while lifecycle is off the ticker does not
-    // read this state, so an early delete is safe; a failed delete then
-    // leaves the switch untouched, and a later validation failure only
-    // costs a silent re-seed on the next tick.
-    if (!isLifecyclePassEnabled(prev) && willEnable) {
-      await deleteLifecycleState();
-    }
+    // The off→on baseline wipe lives INSIDE the config write script
+    // (CONFIG_PATCH_SCRIPT), decided against the switches as they are stored
+    // at write time. A route-level snapshot cannot be trusted: two saves
+    // that both read lifecycle as off would both wipe, and the second would
+    // delete the baseline the first save's nudge tick just seeded — a
+    // launch landing in that gap would then be consumed silently.
     const config = await updateAnnounceConfig(auditActor(gate.player), patch);
     // The write landed: observe it now rather than waiting out an idle
     // backoff, so an opt-in just before launch still sees the pre-launch

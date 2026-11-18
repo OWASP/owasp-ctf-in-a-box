@@ -28,7 +28,7 @@ import {
   STATE_CAS_ENQUEUE_SCRIPT,
   STATE_CAS_RECONCILE_SCRIPT,
   STATE_CAS_SCRIPT,
-  SWITCH_DISABLE_SCRIPT,
+  CONFIG_PATCH_SCRIPT,
   WEBHOOK_CLEAR_SCRIPT,
   WEBHOOK_TARGET_SCRIPT,
   claimLedgerField,
@@ -166,39 +166,89 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, CLAIM_GEN_KEY, SWITCH_KEY]]);
   });
 
-  it("OUTBOX_ENQUEUE_SCRIPT writes only when the switch is on and the captured epoch and generation are current", async () => {
-    const generationKey = liveKey("announce-enqueue", "generation");
-    const id = `${RUN}-enqueue`;
-    const entry = JSON.stringify({ kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending", kindEpoch: 2 });
+  it("OUTBOX_CLAIM_SCRIPT orders lifecycle edges by the committed seq, not the writers' clocks", async () => {
+    const boxKey = liveKey("announce-order", "box");
+    const leaseKey = liveKey("announce-order", "lease");
+    const cfgKey = liveKey("announce-order", "config");
+    const genKey = liveKey("announce-order", "generation");
+    // The resume committed FIRST (seq 1) but its replica's clock ran ahead
+    // of the pause that committed after it (seq 2) — `at` alone would sort
+    // the pause first and strand it behind a resume that is still pending.
+    const resume = { kind: "resume", payload: {}, at: "2026-11-17T12:00:10.000Z", seq: 1, ord: 0, n: 0, status: "pending", webhookGeneration: 7, kindEpoch: 0 };
+    const pause = { kind: "pause", payload: {}, at: "2026-11-17T12:00:00.000Z", seq: 2, ord: 0, n: 0, status: "pending", webhookGeneration: 7, kindEpoch: 0 };
 
     await upstashPipeline([
-      ["DEL", OUTBOX_KEY, SWITCH_KEY, generationKey],
+      ["DEL", boxKey, leaseKey, cfgKey, genKey],
+      ["SET", genKey, "7"],
+      ["HSET", cfgKey, "pause", "1", "epoch:pause", "0", "epoch:resume", "0"],
+      ["HSET", boxKey, `${RUN}-order-resume`, JSON.stringify(resume), `${RUN}-order-pause`, JSON.stringify(pause)],
+    ]);
+
+    // The later-committed pause is refused while the earlier resume is live.
+    const claimPause = await upstashEval(OUTBOX_CLAIM_SCRIPT, [boxKey, leaseKey, cfgKey, genKey], [`${RUN}-order-pause`, "pending", 0, 90_000, `${RUN}-order-token-a`, "pause", "epoch:pause"]);
+    expect(claimPause).toBe(0);
+    const [leaseAfterRefusal] = await upstashPipeline([["GET", leaseKey]]);
+    expect(leaseAfterRefusal.result).toBeNull();
+
+    // The earlier-committed resume claims: its successor does not block it.
+    const claimResume = await upstashEval(OUTBOX_CLAIM_SCRIPT, [boxKey, leaseKey, cfgKey, genKey], [`${RUN}-order-resume`, "pending", 0, 90_000, `${RUN}-order-token-b`, "pause", "epoch:resume"]);
+    expect(claimResume).toBe(1);
+
+    // Once the earlier entry is delivered, the pause flows.
+    await upstashPipeline([
+      ["HSET", boxKey, `${RUN}-order-resume`, JSON.stringify({ ...resume, status: "sent" })],
+      ["DEL", leaseKey],
+    ]);
+    const claimPause2 = await upstashEval(OUTBOX_CLAIM_SCRIPT, [boxKey, leaseKey, cfgKey, genKey], [`${RUN}-order-pause`, "pending", 0, 90_000, `${RUN}-order-token-c`, "pause", "epoch:pause"]);
+    expect(claimPause2).toBe(1);
+
+    await upstashPipeline([["DEL", boxKey, leaseKey, cfgKey, genKey]]);
+  });
+
+  it("OUTBOX_ENQUEUE_SCRIPT writes only when the switch is on and the captured epoch and generation are current", async () => {
+    const generationKey = liveKey("announce-enqueue", "generation");
+    const seqKey = liveKey("announce-enqueue", "seq");
+    const id = `${RUN}-enqueue`;
+    const entry = JSON.stringify({ kind: "first-blood", payload: {}, at: new Date().toISOString(), seq: -1, n: 0, status: "pending", kindEpoch: 2 });
+    const keys = [OUTBOX_KEY, SWITCH_KEY, generationKey, seqKey];
+
+    await upstashPipeline([
+      ["DEL", OUTBOX_KEY, SWITCH_KEY, generationKey, seqKey],
       ["SET", generationKey, "3"],
       ["HSET", SWITCH_KEY, "firstBlood", "1", "epoch:first-blood", "2"],
     ]);
 
     // Stale epoch: the switch was disabled and re-enabled after this
     // producer's config read.
-    const staleEpoch = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, [OUTBOX_KEY, SWITCH_KEY, generationKey], [`${id}-stale-epoch`, entry, 3, 1, "firstBlood", "epoch:first-blood"]);
+    const staleEpoch = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, keys, [`${id}-stale-epoch`, entry, 3, 1, "firstBlood", "epoch:first-blood"]);
     expect(staleEpoch).toBe(0);
 
     // Stale generation: the webhook rotated after this producer's read.
-    const staleGeneration = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, [OUTBOX_KEY, SWITCH_KEY, generationKey], [`${id}-stale-gen`, entry, 2, 2, "firstBlood", "epoch:first-blood"]);
+    const staleGeneration = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, keys, [`${id}-stale-gen`, entry, 2, 2, "firstBlood", "epoch:first-blood"]);
     expect(staleGeneration).toBe(0);
 
     // Disabled switch: the captured epoch alone is not enough.
     await upstashPipeline([["HSET", SWITCH_KEY, "firstBlood", "0"]]);
-    const disabled = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, [OUTBOX_KEY, SWITCH_KEY, generationKey], [`${id}-disabled`, entry, 3, 2, "firstBlood", "epoch:first-blood"]);
+    const disabled = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, keys, [`${id}-disabled`, entry, 3, 2, "firstBlood", "epoch:first-blood"]);
     expect(disabled).toBe(0);
 
-    // Current switch, epoch and generation: the write lands.
-    await upstashPipeline([["HSET", SWITCH_KEY, "firstBlood", "1"]]);
-    const accepted = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, [OUTBOX_KEY, SWITCH_KEY, generationKey], [id, entry, 3, 2, "firstBlood", "epoch:first-blood"]);
-    expect(accepted).toBe(1);
-    const [raw] = await upstashPipeline([["HGET", OUTBOX_KEY, id]]);
-    expect(raw.result).toBe(entry);
+    // A refused write must not burn a sequence number: the ordering counter
+    // moves only with the entry it orders.
+    const [seqAfterRefusals] = await upstashPipeline([["GET", seqKey]]);
+    expect(seqAfterRefusals.result).toBeNull();
 
-    await upstashPipeline([["DEL", OUTBOX_KEY, SWITCH_KEY, generationKey]]);
+    // Current switch, epoch and generation: the write lands, and the
+    // "-1" placeholder is replaced by the sequence this script just took.
+    await upstashPipeline([["HSET", SWITCH_KEY, "firstBlood", "1"]]);
+    const accepted = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, keys, [id, entry, 3, 2, "firstBlood", "epoch:first-blood"]);
+    expect(accepted).toBe(1);
+    const [raw, seq] = await upstashPipeline([["HGET", OUTBOX_KEY, id], ["GET", seqKey]]);
+    const stored = JSON.parse(raw.result as string);
+    expect(stored.seq).toBe(1);
+    expect(seq.result).toBe("1");
+    expect({ ...stored, seq: -1 }).toEqual(JSON.parse(entry));
+
+    await upstashPipeline([["DEL", OUTBOX_KEY, SWITCH_KEY, generationKey, seqKey]]);
   });
 
   it("OUTBOX_COMPLETE_SCRIPT writes only for the current lease owner", async () => {
@@ -263,12 +313,16 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY]]);
   });
 
-  it("SWITCH_DISABLE_SCRIPT writes switches and advances only the disabled kinds' epochs", async () => {
+  it("CONFIG_PATCH_SCRIPT writes switches and advances only the disabled kinds' epochs", async () => {
+    const lifecycleKey = liveKey("announce-switch", "lifecycle");
     await upstashPipeline([
-      ["DEL", SWITCH_KEY],
+      ["DEL", SWITCH_KEY, lifecycleKey],
       ["HSET", SWITCH_KEY, "firstBlood", "1", "launch", "1", "epoch:first-blood", "4", "epoch:pause", "2", "epoch:resume", "2", "epoch:milestone", "3"],
+      ["SET", lifecycleKey, "v1|L0P0"],
     ]);
-    const res = await upstashEval(SWITCH_DISABLE_SCRIPT, [SWITCH_KEY], [
+    // launch is already ON, so this patch is not an off->on transition:
+    // the baseline must survive and the script returns 0 (no wipe).
+    const res = await upstashEval(CONFIG_PATCH_SCRIPT, [SWITCH_KEY, lifecycleKey], [
       "2",
       "firstBlood", "0",
       "launch", "1",
@@ -276,8 +330,9 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
       "epoch:pause",
       "epoch:resume",
     ]);
-    expect(res).toBe(1);
-    const [flat] = await upstashPipeline([["HGETALL", SWITCH_KEY]]);
+    expect(res).toBe(0);
+    const [flat, baseline] = await upstashPipeline([["HGETALL", SWITCH_KEY], ["GET", lifecycleKey]]);
+    expect(baseline.result).toBe("v1|L0P0");
     const config = new Map<string, string>();
     const arr = flat.result as string[];
     for (let i = 0; i < arr.length; i += 2) config.set(arr[i], arr[i + 1]);
@@ -287,7 +342,65 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     expect(config.get("epoch:pause")).toBe("3");
     expect(config.get("epoch:resume")).toBe("3");
     expect(config.get("epoch:milestone")).toBe("3");
-    await upstashPipeline([["DEL", SWITCH_KEY]]);
+    await upstashPipeline([["DEL", SWITCH_KEY, lifecycleKey]]);
+  });
+
+  it("CONFIG_PATCH_SCRIPT wipes the lifecycle baseline on off->on, decided against the STORED switches", async () => {
+    const lifecycleKey = liveKey("announce-wipe", "lifecycle");
+    const configKey = liveKey("announce-wipe", "config");
+    await upstashPipeline([
+      ["DEL", configKey, lifecycleKey],
+      ["SET", lifecycleKey, "v1|L0P0"],
+    ]);
+
+    // off -> on: the pre-launch baseline is stale and must go, in the same
+    // step as the switch write (return 1).
+    const on = await upstashEval(CONFIG_PATCH_SCRIPT, [configKey, lifecycleKey], ["1", "launch", "1"]);
+    expect(on).toBe(1);
+    const [afterOn, packAfterOn] = await upstashPipeline([["HGET", configKey, "launch"], ["GET", lifecycleKey]]);
+    expect(afterOn.result).toBe("1");
+    expect(packAfterOn.result).toBeNull();
+
+    // A second save that also believes it is turning launch on (a stale
+    // concurrent writer) must NOT wipe again: the baseline the first
+    // save's nudge tick seeds has to survive.
+    await upstashPipeline([["SET", lifecycleKey, "v1|L0P0"]]);
+    const again = await upstashEval(CONFIG_PATCH_SCRIPT, [configKey, lifecycleKey], ["1", "launch", "1"]);
+    expect(again).toBe(0);
+    const [packAfterAgain] = await upstashPipeline([["GET", lifecycleKey]]);
+    expect(packAfterAgain.result).toBe("v1|L0P0");
+
+    // on -> off -> on is a real transition again: wipe resumes.
+    await upstashEval(CONFIG_PATCH_SCRIPT, [configKey, lifecycleKey], ["1", "launch", "0"]);
+    const third = await upstashEval(CONFIG_PATCH_SCRIPT, [configKey, lifecycleKey], ["1", "launch", "1"]);
+    expect(third).toBe(1);
+    const [packAfterThird] = await upstashPipeline([["GET", lifecycleKey]]);
+    expect(packAfterThird.result).toBeNull();
+
+    await upstashPipeline([["DEL", configKey, lifecycleKey]]);
+  });
+
+  it("CONFIG_PATCH_SCRIPT never wipes on a save that does not touch lifecycle (interleaved saves)", async () => {
+    const lifecycleKey = liveKey("announce-interleave", "lifecycle");
+    const configKey = liveKey("announce-interleave", "config");
+    await upstashPipeline([
+      ["DEL", configKey, lifecycleKey],
+      ["HSET", configKey, "launch", "0"],
+      ["SET", lifecycleKey, "v1|L0P0"],
+    ]);
+
+    // Save A takes lifecycle off->on and seeds the baseline via its nudge
+    // tick; save B, written concurrently from the same stale read, must
+    // find launch already ON and leave the seed alone.
+    const saveA = await upstashEval(CONFIG_PATCH_SCRIPT, [configKey, lifecycleKey], ["1", "launch", "1"]);
+    expect(saveA).toBe(1);
+    await upstashPipeline([["SET", lifecycleKey, "v1|L0P0"]]);
+    const saveB = await upstashEval(CONFIG_PATCH_SCRIPT, [configKey, lifecycleKey], ["1", "launch", "1"]);
+    expect(saveB).toBe(0);
+    const [seeded] = await upstashPipeline([["GET", lifecycleKey]]);
+    expect(seeded.result).toBe("v1|L0P0");
+
+    await upstashPipeline([["DEL", configKey, lifecycleKey]]);
   });
 
   it("WEBHOOK_TARGET_SCRIPT reads the URL and generation as one coherent snapshot across a clear/re-arm", async () => {
@@ -338,6 +451,7 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
       kind: "launch",
       payload: { embeds: [] },
       at: new Date().toISOString(),
+      seq: -1,
       n: 0,
       status: "pending",
       webhookGeneration: 5,
@@ -393,7 +507,11 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     expect(arr[3]).toBe(1);
     const [pack2, box2] = await upstashPipeline([["GET", stateKey], ["HGET", boxKey, `${RUN}-enq-launch`]]);
     expect(pack2.result).toBe("v1|L1P0");
-    expect(box2.result).toBe(entry);
+    // The write replaced the "-1" placeholder with the sequence this CAS
+    // committed — delivery order must follow the transition, not a clock.
+    const storedLaunch = JSON.parse(box2.result as string);
+    expect(storedLaunch.seq).toBe(arr[1]);
+    expect({ ...storedLaunch, seq: -1 }).toEqual(JSON.parse(entry));
 
     // A disabled edge captured as OFF still fences the CAS: if the switch is
     // turned ON before the write, the observation is stale and must lose —

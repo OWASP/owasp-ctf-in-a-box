@@ -30,17 +30,18 @@ vi.mock("@/lib/upstash", async (importOriginal) => {
 
 import { flushRetries } from "@/lib/announce/sender";
 import {
+  ANNOUNCE_LIFECYCLE_KEY,
   ANNOUNCE_OUTBOX_KEY,
   ANNOUNCE_WEBHOOK_GENERATION_KEY,
   DISCORD_CONFIG_KEY,
   DISCORD_WEBHOOK_KEY,
 } from "@/lib/announce/keys";
 import {
+  CONFIG_PATCH_SCRIPT,
   getAnnounceConfig,
   outboxEnqueue,
   OUTBOX_ENQUEUE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
-  SWITCH_DISABLE_SCRIPT,
   WEBHOOK_TARGET_SCRIPT,
   updateAnnounceConfig,
   type OutboxEntry,
@@ -53,6 +54,7 @@ const state = {
   config: new Map<string, string>([["firstBlood", "1"]]),
   outbox: new Map<string, OutboxEntry>(),
   skipped: [] as string[],
+  baseline: "v1|L0P0" as string | null,
 };
 
 function pipelineFor(runtime: typeof state) {
@@ -111,9 +113,27 @@ beforeEach(() => {
       state.outbox.set(String(args[0]), JSON.parse(String(args[1])) as OutboxEntry);
       return 1;
     }
-    if (script === SWITCH_DISABLE_SCRIPT) {
-      expect(keys).toEqual([DISCORD_CONFIG_KEY]);
+    if (script === CONFIG_PATCH_SCRIPT) {
+      expect(keys).toEqual([DISCORD_CONFIG_KEY, ANNOUNCE_LIFECYCLE_KEY]);
       const n = Number(args[0]);
+      // The script decides off→on against the STORED switches: this mock
+      // mirrors that (DEL the baseline on an off→on transition) so a test
+      // cannot pass by having the caller wipe the state instead.
+      const wasLaunch = state.config.get("launch") === "1";
+      const wasPause = state.config.get("pause") === "1";
+      let willLaunch = wasLaunch;
+      let willPause = wasPause;
+      for (let i = 0; i < n; i += 1) {
+        const field = String(args[1 + i * 2]);
+        const value = String(args[2 + i * 2]);
+        if (field === "launch") willLaunch = value === "1";
+        if (field === "pause") willPause = value === "1";
+      }
+      let wiped = 0;
+      if (!wasLaunch && !wasPause && (willLaunch || willPause)) {
+        state.baseline = null;
+        wiped = 1;
+      }
       for (let i = 0; i < n; i += 1) {
         state.config.set(String(args[1 + i * 2]), String(args[2 + i * 2]));
       }
@@ -121,7 +141,7 @@ beforeEach(() => {
         const name = String(field);
         state.config.set(name, String(Number(state.config.get(name) ?? 0) + 1));
       }
-      return 1;
+      return wiped;
     }
     return 1;
   });

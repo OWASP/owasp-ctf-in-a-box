@@ -181,16 +181,40 @@ export function publicConfig(config: DiscordFullConfig): DiscordPublicConfig {
   };
 }
 
-/** Applies switch writes and advances the epochs of every kind they turn
- *  off in ONE atomic step. A producer can read `firstBlood: true` and then
- *  enqueue after the cancellation scan; the epoch it stamps is the one it
- *  read, and the switch-off moves past it before the producer can write.
- *  Doing the switch write and the bumps in one script also means no reader
- *  can observe the switch ON with the new epoch — which would stamp a fresh
- *  entry from a state that was already disabled. */
-export const SWITCH_DISABLE_SCRIPT = `
+/** Applies a config patch in ONE atomic step: the switch writes, the epoch
+ *  bumps of every kind they turn off, and — when the patch takes lifecycle
+ *  from off to on — the baseline wipe. A producer can read `firstBlood:
+ *  true` and then enqueue after the cancellation scan; the epoch it stamps
+ *  is the one it read, and the switch-off moves past it before the producer
+ *  can write. Doing the switch write and the bumps in one script also means
+ *  no reader can observe the switch ON with the new epoch — which would
+ *  stamp a fresh entry from a state that was already disabled.
+ *
+ *  The off→on check reads the STORED switches, not a config snapshot the
+ *  caller took earlier: two saves that both believed lifecycle was off must
+ *  not both wipe — the second would delete the baseline the first save's
+ *  nudge tick just seeded, and a launch landing in that gap would then be
+ *  consumed silently by the next tick's seed. Returns 1 when this write
+ *  wiped the baseline, 0 otherwise. */
+export const CONFIG_PATCH_SCRIPT = `
 local n = tonumber(ARGV[1])
+local wasLaunch = redis.call('HGET', KEYS[1], 'launch') == '1'
+local wasPause = redis.call('HGET', KEYS[1], 'pause') == '1'
+local willLaunch, willPause = wasLaunch, wasPause
 local i = 2
+for _ = 1, n do
+  local f, v = ARGV[i], ARGV[i + 1]
+  if f == 'launch' then willLaunch = v == '1'
+  elseif f == 'pause' then willPause = v == '1'
+  end
+  i = i + 2
+end
+local wiped = 0
+if not (wasLaunch or wasPause) and (willLaunch or willPause) then
+  redis.call('DEL', KEYS[2])
+  wiped = 1
+end
+i = 2
 for _ = 1, n do
   redis.call('HSET', KEYS[1], ARGV[i], ARGV[i + 1])
   i = i + 2
@@ -198,7 +222,7 @@ end
 for j = i, #ARGV do
   redis.call('HINCRBY', KEYS[1], ARGV[j], 1)
 end
-return 1
+return wiped
 `;
 
 /** Validates a patch field-by-field and writes only the recognised,
@@ -248,17 +272,12 @@ export async function updateAnnounceConfig(actor: AuditActor, patch: DiscordConf
   // switch ON and the entries deliverable rather than silently stranded.
   if (disabledKinds.length > 0) await cancelOutboxEntriesFor(disabledKinds);
   if (writes.length > 0) {
-    if (disabledKinds.length > 0) {
-      const epochFields = disabledKinds.map((kind) => KIND_EPOCH_FIELDS[kind]);
-      await upstashEval(SWITCH_DISABLE_SCRIPT, [DISCORD_CONFIG_KEY], [
-        String(writes.length),
-        ...writes.flat(),
-        ...epochFields,
-      ]);
-    } else {
-      const [res] = await upstashPipeline([["HSET", DISCORD_CONFIG_KEY, ...writes.flat()]]);
-      if (res.error) throw new Error(`config write failed: ${res.error}`);
-    }
+    const epochFields = disabledKinds.map((kind) => KIND_EPOCH_FIELDS[kind]);
+    await upstashEval(CONFIG_PATCH_SCRIPT, [DISCORD_CONFIG_KEY, ANNOUNCE_LIFECYCLE_KEY], [
+      String(writes.length),
+      ...writes.flat(),
+      ...epochFields,
+    ]);
   }
   if (Object.keys(changed).length > 0) {
     // The patch's values are all public prefs — no secret can be in here —
@@ -720,6 +739,13 @@ if code == 1 and n > 0 then
     -- Validation above already matched the captured switch/epoch/generation;
     -- only an ON edge is written to the outbox.
     if capturedEnabled == '1' and enabled == '1' and currentEpoch == tonumber(kindEpoch) and currentGeneration == tonumber(generation) then
+      -- Replace the "-1" placeholder with the sequence this CAS just took:
+      -- delivery order must follow the committed transition, not a replica's
+      -- clock. Plain find/sub, not gsub: "-" is a Lua pattern quantifier.
+      local p = string.find(entry, '"seq":-1', 1, true)
+      if p then
+        entry = string.sub(entry, 1, p - 1) .. '"seq":' .. tostring(seq) .. string.sub(entry, p + 8)
+      end
       redis.call('HSET', KEYS[3], id, entry)
       enqueued = enqueued + 1
     end
@@ -760,6 +786,7 @@ export async function stateCompareSet(
       payload: entry.payload,
       at,
       ord: index,
+      seq: -1,
       n: 0,
       status: "pending",
       webhookGeneration: entry.webhookGeneration,
@@ -857,14 +884,6 @@ async function readStatePackStrictWithRev(
   };
 }
 
-/** Deletes the stored lifecycle observation so the next pass seeds silently
- *  from the current reality rather than announcing transitions that happened
- *  while lifecycle announcements were disabled. */
-export async function deleteLifecycleState(): Promise<void> {
-  const [res] = await upstashPipeline([["DEL", ANNOUNCE_LIFECYCLE_KEY]]);
-  if (res.error) throw new Error(`lifecycle state delete failed: ${res.error}`);
-}
-
 /** Advances the stored observation to the CURRENT event state without
  *  announcing anything. The lifecycle pass only runs while a webhook is
  *  configured, so clearing it freezes the pack at the last observed edge;
@@ -921,6 +940,14 @@ export type OutboxEntry = {
   /** Position within a multi-entry lifecycle CAS, which stamps every entry
    *  with one `at`. Absent (`0`) on standalone enqueues. */
   ord?: number;
+  /** The outbox order counter the write stamped (`ANNOUNCE_SEQ_KEY`,
+   *  INCR'd inside the same script as the entry). Lifecycle edges from
+   *  different replicas carry the Redis sequence, not their writers' clocks,
+   *  so a pause cannot sort after the resume that follows it just because
+   *  one replica's clock ran ahead. `-1` is the pre-write placeholder the
+   *  Lua scripts replace with the counter they just took. Absent on entries
+   *  written before this field existed — they fall back to `at` ordering. */
+  seq?: number;
   n: number;
   status: OutboxStatus;
   webhookGeneration: number;
@@ -959,7 +986,13 @@ local currentEpoch = tonumber(redis.call('HGET', KEYS[2], ARGV[6])) or 0
 if currentEpoch ~= tonumber(ARGV[4]) then return 0 end
 local currentGeneration = tonumber(redis.call('GET', KEYS[3])) or 0
 if currentGeneration ~= tonumber(ARGV[3]) then return 0 end
-redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+local seq = redis.call('INCR', KEYS[4])
+local entry = ARGV[2]
+local p = string.find(entry, '"seq":-1', 1, true)
+if p then
+  entry = string.sub(entry, 1, p - 1) .. '"seq":' .. tostring(seq) .. string.sub(entry, p + 8)
+end
+redis.call('HSET', KEYS[1], ARGV[1], entry)
 return 1
 `;
 
@@ -974,6 +1007,7 @@ export async function outboxEnqueue(
     kind,
     payload,
     at: new Date().toISOString(),
+    seq: -1,
     n: 0,
     status: "pending",
     webhookGeneration,
@@ -982,7 +1016,7 @@ export async function outboxEnqueue(
   try {
     const res = await upstashEval(
       OUTBOX_ENQUEUE_SCRIPT,
-      [ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY],
+      [ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY, ANNOUNCE_SEQ_KEY],
       [id, JSON.stringify(entry), webhookGeneration, kindEpoch, KIND_SWITCH_FIELDS[kind], KIND_EPOCH_FIELDS[kind]],
     );
     return res === 1;
@@ -1012,8 +1046,10 @@ local currentGeneration = tonumber(redis.call('GET', KEYS[4])) or 0
 if tonumber(e.webhookGeneration) ~= currentGeneration then return 0 end
 -- Lifecycle edges stay in stream order across replicas: a later launch/pause/
 -- resume must not overtake an earlier one that is still pending or retryable.
--- Compare (at, ord), the same order deliveryCandidates uses; sent/skipped are
--- delivered/cancelled, and a failed entry past its retry budget no longer blocks.
+-- Compare (seq, ord) — the committed order, the same order
+-- deliveryCandidates uses — falling back to (at, ord) for entries written
+-- before seq existed; sent/skipped are delivered/cancelled, and a failed
+-- entry past its retry budget no longer blocks.
 local kind = e.kind
 if kind == 'launch' or kind == 'pause' or kind == 'resume' then
   local flat = redis.call('HGETALL', KEYS[1])
@@ -1022,11 +1058,24 @@ if kind == 'launch' or kind == 'pause' or kind == 'resume' then
     if otherId ~= ARGV[1] then
       local ok2, o = pcall(cjson.decode, flat[j + 1])
       if ok2 and type(o) == 'table' and (o.kind == 'launch' or o.kind == 'pause' or o.kind == 'resume') then
-        local earlierAt = tostring(o.at or '')
-        local currentAt = tostring(e.at or '')
-        local earlierOrd = tonumber(o.ord) or 0
-        local currentOrd = tonumber(e.ord) or 0
-        if earlierAt < currentAt or (earlierAt == currentAt and earlierOrd < currentOrd) then
+        local earlier, current = false, false
+        local os, es = tonumber(o.seq), tonumber(e.seq)
+        if os ~= nil and es ~= nil then
+          if os < es then earlier = true
+          elseif os > es then current = true
+          elseif (tonumber(o.ord) or 0) < (tonumber(e.ord) or 0) then earlier = true
+          else current = true
+          end
+        else
+          local earlierAt = tostring(o.at or '')
+          local currentAt = tostring(e.at or '')
+          local earlierOrd = tonumber(o.ord) or 0
+          local currentOrd = tonumber(e.ord) or 0
+          if earlierAt < currentAt or (earlierAt == currentAt and earlierOrd < currentOrd) then earlier = true
+          elseif currentAt < earlierAt or (currentAt == earlierAt and currentOrd < earlierOrd) then current = true
+          end
+        end
+        if earlier and not current then
           local exhausted = o.status == 'failed' and (tonumber(o.n) or 0) >= tonumber(ARGV[8])
           if o.status ~= 'sent' and o.status ~= 'skipped' and not exhausted then return 0 end
         end

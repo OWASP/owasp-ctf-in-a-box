@@ -103,7 +103,7 @@ describe("first-blood enqueue race", () => {
     expect(mocks.state.entries).toHaveLength(0);
   });
 
-  it("rejects a notification whose webhook was cleared or rotated while suspended in listTeams", async () => {
+  it("rejects a notification whose webhook was cleared and reconfigured while suspended in listTeams", async () => {
     let releaseTeams: (() => void) | undefined;
     mocks.listTeams.mockImplementation(
       () =>
@@ -115,8 +115,12 @@ describe("first-blood enqueue race", () => {
     const notify = notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
     await vi.waitFor(() => expect(mocks.listTeams).toHaveBeenCalledTimes(1));
 
-    // Rotate or clear webhook generation while suspended
+    // Clear-and-reconfigure: advances generation and configures a new webhook URL
+    // before the suspended notifier resumes. The webhook remains configured, so
+    // enqueue rejection is specifically due to the stale captured generation.
     mocks.state.config.webhookGeneration += 1;
+    mocks.state.config.webhookUrl = "https://discord.com/api/webhooks/2/bbbbbbbbbbbbbbbbbbbbbb";
+    mocks.state.config.webhookConfigured = true;
 
     releaseTeams?.();
     await notify;

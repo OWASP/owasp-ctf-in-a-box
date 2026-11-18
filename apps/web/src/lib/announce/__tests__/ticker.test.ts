@@ -455,11 +455,22 @@ describe("lifecycle tick", () => {
   });
 
   it("fails closed when settings read fails: announces no lifecycle or milestone, but sweeps outbox", async () => {
+    // Control: valid settings with scoring open, a 12:20 UTC close, and a 30m mark at T0 (12:00 UTC) enqueues the milestone.
     mocks.getAnnounceConfig.mockResolvedValue(config({ launch: true, milestones: true, marks: "30m" }));
-    mocks.getAdminSettings.mockRejectedValue(new Error("settings unavailable"));
+    mocks.getAdminSettings.mockResolvedValue(settings({ scoringEndsAt: "2026-10-14T12:20:00Z" }));
+    await runAnnounceTick(T0);
+    expect(mocks.enqueueLedgerAnnouncement).toHaveBeenCalledTimes(1);
+
+    // Rejection case: with the exact same config, a settings failure posts no milestone or lifecycle.
+    mocks.enqueueLedgerAnnouncement.mockClear();
+    mocks.stateCompareSet.mockClear();
+    mocks.outboxPrune.mockClear();
+    mocks.flushRetries.mockClear();
+    mocks.getAdminSettings.mockReset().mockRejectedValue(new Error("settings unavailable"));
 
     await runAnnounceTick(T0);
 
+    expect(mocks.getAdminSettings).toHaveBeenCalled();
     expect(mocks.stateCompareSet).not.toHaveBeenCalled();
     expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
     expect(mocks.outboxPrune).toHaveBeenCalled();

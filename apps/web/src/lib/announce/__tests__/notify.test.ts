@@ -120,29 +120,28 @@ describe("notifyFirstBlood", () => {
     expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
   });
 
-  it("falls back to the display name and to the (escaped) id for a vanished quiz item", async () => {
+  it("displays the player display name when the solver has no team", async () => {
     mocks.listTeams.mockResolvedValue([]);
     mocks.getPlayerProfiles.mockResolvedValue(
       new Map([["alice", { id: "alice", name: "Alice Display", image: null, githubLogin: "alice" }]]),
     );
-    mocks.listQuestions.mockResolvedValue([]);
-    await notifyFirstBlood({ module: "quiz", challengeId: "q-missing", playerId: "alice" });
+    mocks.listQuestions.mockResolvedValue([{ id: "q-1", prompt: "Quiz Prompt", points: 50 }]);
+    await notifyFirstBlood({ module: "quiz", challengeId: "q-1", playerId: "alice" });
+    expect(mocks.enqueueLedgerAnnouncement).toHaveBeenCalledTimes(1);
     const msg = mocks.enqueueLedgerAnnouncement.mock.calls[0][1] as { embeds: { description?: string }[] };
     expect(msg.embeds[0].description).toContain("Alice Display");
-    // The id is escaped like any other untrusted text — `-` is Markdown.
-    expect(msg.embeds[0].description).toContain("q\\-missing");
   });
 
-  it("fails open to the bare id and 0 points when the quiz list read rejects", async () => {
+  it("withholds a quiz challenge that vanished after the solve — a deleted item must not leak its id", async () => {
+    mocks.listQuestions.mockResolvedValue([]);
+    await notifyFirstBlood({ module: "quiz", challengeId: "q-missing", playerId: "alice" });
+    expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the quiz list read rejects", async () => {
     mocks.listQuestions.mockRejectedValue(new Error("redis down"));
     await notifyFirstBlood({ module: "quiz", challengeId: "qmissing", playerId: "alice" });
-
-    expect(mocks.enqueueLedgerAnnouncement).toHaveBeenCalledTimes(1);
-    const msg = mocks.enqueueLedgerAnnouncement.mock.calls[0][1] as {
-      embeds: { description?: string; fields?: { name: string; value: string }[] }[];
-    };
-    expect(msg.embeds[0].description).toContain("qmissing");
-    expect(msg.embeds[0].fields).toEqual([{ name: "Points", value: "0", inline: true }]);
+    expect(mocks.enqueueLedgerAnnouncement).not.toHaveBeenCalled();
   });
 
   it("never announces a HIDDEN challenge — returns without claiming or enqueueing", async () => {

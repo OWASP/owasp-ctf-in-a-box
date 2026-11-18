@@ -65,13 +65,12 @@ export type FirstBloodInput = {
   points?: number;
 };
 
-/** Public prompt + points for one quiz item, from the module's PUBLIC
+/** Public prompt + points for one quiz item, from the module's public
  *  list (the same one the board reads — no flags, no answers ride along).
- *  Null when the challenge no longer exists or is no longer public: a hidden
- *  challenge's TITLE must never ride an announcement (the caller then falls
- *  back to the bare id, which leaks nothing). Classic goes through the
- *  secrecy gate below instead, because a story step must be judged before
- *  even its id is safe to name. */
+ *  Null when the challenge no longer exists or is unreadable: a missing or
+ *  unverified challenge must never post, because its ID embeds the prompt
+ *  slug. Classic goes through the secrecy gate below instead, because a
+ *  story step must be judged before even its ID is safe to name. */
 async function lookupItem(id: string): Promise<{ title: string; points: number } | null> {
   const q = (await listQuestions()).find((x) => x.id === id);
   return q ? { title: q.prompt, points: q.points } : null;
@@ -155,15 +154,11 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
       if (pos && isLocked(pos, new Set())) return;
       item = { title: c.title, points: c.points };
     } else {
-      // A failed lookup fails OPEN to the bare challenge id with 0 points.
-      // That leaks nothing: these lists are the public boards (never admin
-      // data or a flag), so a title/points can only come from an item that
-      // is actually public, and the fallback is only the id the submit
-      // route already knows. The record already names this solver, so not
-      // posting would silently drop that first blood; no claim has been
-      // spent yet. (Classic never lands here: an invisible record returned
-      // above.)
+      // FAIL CLOSED: a failed or absent quiz lookup posts nothing. The ID embeds
+      // the prompt slug (generateQuestionId), so it must not be named without a
+      // verified public item.
       item = await lookupItem(input.challengeId).catch(() => null);
+      if (!item) return;
     }
 
     // Team membership and display names are keyed by player id, never login.
@@ -176,10 +171,8 @@ export async function notifyFirstBlood(input: FirstBloodInput): Promise<void> {
     await enqueueLedgerAnnouncement(
       "first-blood",
       buildFirstBloodMessage({
-        // A quiz challenge deleted between solve and lookup still
-        // announces — under its id, with zero points — rather than vanishing.
-        challengeTitle: item?.title ?? input.challengeId,
-        points: input.points ?? item?.points ?? 0,
+        challengeTitle: item.title,
+        points: input.points ?? item.points,
         who,
         ...(url ? { url } : {}),
       }),

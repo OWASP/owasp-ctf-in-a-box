@@ -975,9 +975,12 @@ EOF
   run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env"
   [ "$status" -eq 0 ]
   echo "$output" | grep -qF 'GITHUB_CLIENT_SECRET=<redacted>'
-  if echo "$output" | grep -E '[A-Z]+_CLIENT_SECRET=' | grep -vqE '(^|[^A-Z_])GITHUB_CLIENT_SECRET='; then
-    echo "a non-GitHub OAuth secret is set by the deploy:"
-    echo "$output" | grep -E '[A-Z]+_CLIENT_SECRET='
+  # One name per match, not per line: `fly secrets set` prints every
+  # assignment on one line, so a line-level filter would hide a second secret
+  # sitting next to GitHub's.
+  others="$(echo "$output" | grep -oE '[A-Z_]+_CLIENT_SECRET=' | grep -vxF 'GITHUB_CLIENT_SECRET=' || true)"
+  if [ -n "$others" ]; then
+    echo "a non-GitHub OAuth secret is set by the deploy: $others"
     return 1
   fi
   render

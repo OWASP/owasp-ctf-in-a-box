@@ -5,3 +5,7 @@
 **/.next
 **/.env
 **/.env.*
+# TypeScript's incremental cache: a local `next dev` or `tsc` run leaves it
+# describing files that are no longer there, and `next build` in the image
+# reuses it and fails type-checking on those paths.
+**/*.tsbuildinfo

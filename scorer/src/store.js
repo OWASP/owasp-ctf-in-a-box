@@ -356,5 +356,27 @@ export function createRedisStore({
         };
       });
     },
+    async findKeysByPatterns(patterns) {
+      const found = new Set();
+
+      for (const [, pattern] of patterns) {
+        let cursor = "0";
+
+        do {
+          const [res] = await pipeline([
+            ["SCAN", cursor, "MATCH", pattern, "COUNT", 1000],
+          ]);
+
+          const [nextCursor, keys] = res;
+          cursor = String(nextCursor);
+
+          for (const key of keys ?? []) {
+            found.add(key);
+          }
+        } while (cursor !== "0");
+      }
+
+      return [...found];
+    },
   };
 }

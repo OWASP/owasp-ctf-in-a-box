@@ -4501,12 +4501,14 @@ work an event without the feature must never pay for.
   `ctf:admin:discord`. Neither is a build argument (ADR 55's lesson); both
   survive the master reset like the event images, because a webhook the
   organizer set up is something they set, not event data. The URL is
-  validated to a discord.com `/api/webhooks/<id>/<token>` on https before it
-  is stored — both the SSRF boundary (no organizer-supplied host ever gets a
-  POST from the box) and the "that is not a webhook" sanity check — is never
-  returned by any API (the public shape carries a `webhookConfigured`
-  boolean), never logged, and never audited by value (only "set"/"cleared").
-  Everything defaults OFF: a configured webhook turns nothing on by itself.
+  validated to a Discord `/api/webhooks/<id>/<token>` on https
+  (`discord.com`, `discordapp.com`, `ptb.discord.com`, `canary.discord.com`)
+  before it is stored — both the SSRF boundary (no organizer-supplied host
+  ever gets a POST from the box) and the "that is not a webhook" sanity
+  check — is never returned by any API (the public shape carries a
+  `webhookConfigured` boolean), never logged, and never audited by value
+  (only "set"/"cleared"). Everything defaults OFF: a configured webhook
+  turns nothing on by itself.
 
 - **Scheduling is an observation loop in the app** (started from
   `instrumentation.ts`, nodejs runtime, unref'd, fire-and-forget), not a

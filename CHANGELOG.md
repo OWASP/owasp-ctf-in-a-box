@@ -198,7 +198,6 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   reaches yet, so an exact override in `apps/web/pnpm-workspace.yaml` brings it
   in. Only lint loads it; the app never calls it at runtime. The
   `brace-expansion@5` pin is dropped: minimatch 11 already requires 5.0.12.
-
 - **Deprecated: the AI module (#726, #728).** It keeps working in v1.x, with
   security fixes only, and is removed in v2.0.0. Its switch in `/admin`
   (Event → Modules and the AI panel's header) now says so, and so does the

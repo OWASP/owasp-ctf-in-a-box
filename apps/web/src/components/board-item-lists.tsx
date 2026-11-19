@@ -25,11 +25,9 @@ type ItemsResponse = {
  *  400 away. */
 const CHUNK = 8;
 
-export function mergeItems(parts: (ModuleItem[] | null)[]): ModuleItem[] | null {
+function mergeItems(parts: (ModuleItem[] | null)[]): ModuleItem[] | null {
   const lists = parts.filter((p): p is ModuleItem[] => p !== null);
-  // A null part is a failed chunk or a module that is off. Partial lists
-  // would show an incomplete team as complete.
-  if (lists.length === 0 || lists.length !== parts.length) return null;
+  if (lists.length === 0) return null;
   const merged = new Map<string, ModuleItem>();
   for (const list of lists) {
     for (const item of list) {

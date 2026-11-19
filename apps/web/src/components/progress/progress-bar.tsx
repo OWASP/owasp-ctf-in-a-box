@@ -81,9 +81,6 @@ export default function ProgressBar({
   // lies to exactly the readers who cannot see it.
   const ariaCeiling = Math.max(0, ceiling);
   const ariaValue = Math.min(ariaCeiling, Math.max(0, value));
-  const effectiveValue = ceiling > 0 ? value : 0;
-  const accessibleLabel =
-    total > 0 ? `${label}: ${done} of ${total} ${unit}` : `${label}: ${done} ${unit}`;
   return (
     <div
       role="progressbar"
@@ -93,12 +90,12 @@ export default function ProgressBar({
       // The bar's own numbers are points; the count is the thing a contestant
       // actually says out loud, so it rides in the label rather than being
       // dropped for screen-reader users.
-      aria-label={accessibleLabel}
+      aria-label={`${label}: ${done} of ${total} ${unit}`}
       className={`h-1.5 overflow-hidden rounded-full bg-white/[0.06] ${className}`}
     >
       <div
         className="h-full rounded-full bg-gradient-to-r from-[#2563eb] to-[#14b8a6]"
-        style={fillStyle(pct, effectiveValue)}
+        style={fillStyle(pct, value)}
       />
     </div>
   );

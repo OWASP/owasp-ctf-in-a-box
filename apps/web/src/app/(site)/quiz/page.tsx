@@ -12,7 +12,6 @@
 // enforced by /api/quiz/answer itself.
 
 import type { Metadata } from "next";
-import Link from "next/link";
 import PreviewBanner from "@/components/preview-banner";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
@@ -28,7 +27,6 @@ import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
 import TeamlessNotice from "@/components/teamless-notice";
 import { getViewerQuiz, listQuestions, QUIZ_MAX_ATTEMPTS, QUIZ_RETRY_AFTER_MIN, type ViewerQuiz } from "@/lib/quiz-store";
-import { errorLabel } from "@/lib/error-label";
 
 // `metadata` is a static export and cannot await Redis for the organizer's
 // resolved title, so this is `generateMetadata` instead — see
@@ -100,27 +98,10 @@ export default async function QuizPage() {
   const viewerIsTeamless = await redirectIfTeamless(playerId, { isAdmin: viewerIsAdmin });
 
   const [questions, viewerQuiz, settings, modules] = await Promise.all([
-    listQuestions().catch((err) => {
-      console.error("[quiz] questions read failed:", errorLabel(err));
-      return null;
-    }),
-    playerId
-      ? getViewerQuiz(playerId).catch((err) => {
-          console.error("[quiz] viewer quiz read failed:", errorLabel(err));
-          // FAIL CLOSED: an unreadable viewer record must not be treated as
-          // empty progress (which would make answered/exhausted questions appear
-          // open and offer answer submission).
-          return null;
-        })
-      : Promise.resolve<ViewerQuiz>({ answered: {}, attempts: {} }),
-    getAdminSettings().catch((err) => {
-      console.error("[quiz] admin settings read failed:", errorLabel(err));
-      return null;
-    }),
-    getResolvedModules().catch((err) => {
-      console.error("[quiz] resolved modules read failed:", errorLabel(err));
-      return [];
-    }),
+    listQuestions(),
+    playerId ? getViewerQuiz(playerId) : Promise.resolve<ViewerQuiz>({ answered: {}, attempts: {} }),
+    getAdminSettings(),
+    getResolvedModules(),
   ]);
 
   const mod = modules.find((m) => m.id === "quiz");
@@ -131,39 +112,22 @@ export default async function QuizPage() {
   // they were looking at not change at all.
   const blurb = mod?.blurb ?? "Answer security questions for points.";
 
-  const questionsAvailable = questions !== null;
-  const viewerQuizAvailable = viewerQuiz !== null;
-  const settingsAvailable = settings !== null;
-
-  const unavailableMessage = !questionsAvailable
-    ? "Quiz questions are temporarily unavailable."
-    : !viewerQuizAvailable
-      ? "Quiz progress is temporarily unavailable."
-      : !settingsAvailable
-        ? "Quiz settings are temporarily unavailable."
-        : null;
-
-  const maxAttempts = settingsAvailable ? (settings.quizMaxAttempts ?? QUIZ_MAX_ATTEMPTS) : QUIZ_MAX_ATTEMPTS;
-  const cooldownMs = settingsAvailable ? (settings.quizRetryAfterMin ?? QUIZ_RETRY_AFTER_MIN) * 60_000 : 0;
+  const maxAttempts = settings.quizMaxAttempts ?? QUIZ_MAX_ATTEMPTS;
+  const cooldownMs = (settings.quizRetryAfterMin ?? QUIZ_RETRY_AFTER_MIN) * 60_000;
 
   // Built field by field from the public `Question` shape — never a spread
   // of a raw store record, which is how an answer key would leak.
-  // Questions are only classified via deriveStatus when questions, viewer
-  // progress, and settings all loaded successfully. When any read fails,
-  // deriveStatus is skipped and an unavailable card is shown instead.
-  const viewQuestions: QuizQuestionView[] = (!unavailableMessage && questions && viewerQuiz)
-    ? questions.map((q) => ({
-        id: q.id,
-        prompt: q.prompt,
-        type: q.type,
-        choices: q.choices,
-        points: q.points,
-        // Read from the SAME attempts row `deriveStatus` gates on, so the
-        // "2 of 3 attempts left" chip and the exhausted state can never disagree.
-        attemptsUsed: viewerQuiz.attempts[q.id]?.attempts ?? 0,
-        ...deriveStatus(viewerQuiz.answered[q.id], viewerQuiz.attempts[q.id], maxAttempts, cooldownMs),
-      }))
-    : [];
+  const viewQuestions: QuizQuestionView[] = questions.map((q) => ({
+    id: q.id,
+    prompt: q.prompt,
+    type: q.type,
+    choices: q.choices,
+    points: q.points,
+    // Read from the SAME attempts row `deriveStatus` gates on, so the
+    // "2 of 3 attempts left" chip and the exhausted state can never disagree.
+    attemptsUsed: viewerQuiz.attempts[q.id]?.attempts ?? 0,
+    ...deriveStatus(viewerQuiz.answered[q.id], viewerQuiz.attempts[q.id], maxAttempts, cooldownMs),
+  }));
 
   // Per-VIEWER state, so it sits above the board rather than in the header.
   // Signed in, the board's own progress strip (answered/total, points, bar)
@@ -193,14 +157,7 @@ export default async function QuizPage() {
           them answer the moment questions appear. */}
       <div className="flex flex-col gap-4">
         {progress && <p className="text-sm text-zinc-400">{progress}</p>}
-        {unavailableMessage ? (
-          <div className="ds-card rounded-lg border border-white/[0.06] bg-[#16162a] px-5 py-8 text-center">
-            <p className="text-sm text-zinc-400">{unavailableMessage}</p>
-            <Link href="/quiz" className="mt-3 inline-block text-sm ds-link">
-              Retry
-            </Link>
-          </div>
-        ) : !questions || questions.length === 0 ? (
+        {questions.length === 0 ? (
           <ModuleEmptyState
             message={
               viewerIsAdmin

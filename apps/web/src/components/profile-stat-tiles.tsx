@@ -24,7 +24,7 @@ export default function ProfileStatTiles({
   hints,
   tiles,
 }: {
-  netPoints: number | null;
+  netPoints: number;
   /** The viewer's own spend, itemised — theirs to read, unlike a rival's. */
   hints: { spent: number; count: number };
   tiles: StatTile[];
@@ -35,12 +35,8 @@ export default function ProfileStatTiles({
     // that takes a second line.
     <div className="flex flex-none flex-wrap gap-x-6 gap-y-4 text-right">
       <div>
-        <p className="font-mono text-xl font-bold tabular-nums text-white">
-          {netPoints !== null ? netPoints : "—"}
-        </p>
-        <p className="text-[11px] uppercase tracking-wide text-muted">
-          {netPoints !== null ? "points" : "points (unavailable)"}
-        </p>
+        <p className="font-mono text-xl font-bold tabular-nums text-white">{netPoints}</p>
+        <p className="text-[11px] uppercase tracking-wide text-muted">points</p>
       </div>
       {hints.count > 0 && (
         <div>

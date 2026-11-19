@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { hiddenSummary, mergeHiddenSolved, mergeItems } from "../board-item-lists";
+import { hiddenSummary, mergeHiddenSolved } from "../board-item-lists";
 
 const visible = (id: string, earned: number) => ({ id, label: id, points: earned, done: true, earnedPoints: earned });
 const hidden = (n: number) => ({ id: `locked:op:${n}`, label: `??? — step ${n} of 8`, points: 0, done: false, hidden: true as const });
@@ -49,27 +49,5 @@ describe("mergeHiddenSolved", () => {
   it("reads a missing count as 0", () => {
     expect(mergeHiddenSolved([undefined, 1])).toBe(1);
     expect(mergeHiddenSolved([])).toBe(0);
-  });
-});
-
-describe("mergeItems", () => {
-  const q1 = { id: "q1", label: "Q1", points: 10, done: false };
-  const q1Done = { id: "q1", label: "Q1", points: 10, done: true, earnedPoints: 10 };
-
-  it("returns null when all parts are null (module is off)", () => {
-    expect(mergeItems([null, null])).toBeNull();
-  });
-
-  it("returns null when any part is null (partial chunk failure)", () => {
-    expect(mergeItems([[q1], null])).toBeNull();
-    expect(mergeItems([null, [q1]])).toBeNull();
-  });
-
-  it("returns null for empty parts", () => {
-    expect(mergeItems([])).toBeNull();
-  });
-
-  it("merges complete chunk lists, preferring done items", () => {
-    expect(mergeItems([[q1], [q1Done]])).toEqual([q1Done]);
   });
 });

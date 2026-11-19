@@ -34,13 +34,7 @@ export type ProfileModuleInput = {
    *  `challengeCount` above. */
   enabledMaxPoints: number;
   secureDev: boolean;
-  quiz?: {
-    total?: QuizTotal;
-    questions: Question[];
-    maxPoints: number;
-    viewer: ViewerQuiz;
-    catalogueAvailable?: boolean;
-  };
+  quiz?: { total?: QuizTotal; questions: Question[]; maxPoints: number; viewer: ViewerQuiz };
   classic?: {
     total?: ClassicTotal;
     challenges: Challenge[];
@@ -116,9 +110,6 @@ export function buildModuleProgress(input: ProfileModuleInput): Partial<Record<M
   }
   const quiz = input.quiz?.total;
   if (quiz && quiz.answered > 0) {
-    const total = input.quiz?.catalogueAvailable === false
-      ? 0
-      : Math.max(input.quiz!.questions.length, quiz.answered);
     blocks.quiz = {
       points: quiz.points,
       completed: quiz.answered,
@@ -126,7 +117,7 @@ export function buildModuleProgress(input: ProfileModuleInput): Partial<Record<M
       detail: {
         kind: "quiz",
         answered: quiz.answered,
-        total,
+        total: Math.max(input.quiz!.questions.length, quiz.answered),
         points: quiz.points,
       },
     };
@@ -152,7 +143,7 @@ export function buildModuleProgress(input: ProfileModuleInput): Partial<Record<M
   return blocks;
 }
 
-type ModuleRow = { done: number; total: number; unit: string; earned: number; max: number; locked?: number; bar?: boolean };
+type ModuleRow = { done: number; total: number; unit: string; earned: number; max: number; locked?: number };
 
 /** One module's row numbers: its own unit word, its clamped done/total pair,
  *  and its earned/available points.
@@ -190,16 +181,6 @@ export function moduleRow(progress: ModuleProgress, input: ProfileModuleInput): 
   const detail = progress.detail;
   switch (detail.kind) {
     case "quiz": {
-      if (input.quiz?.catalogueAvailable === false) {
-        return {
-          done: detail.answered,
-          total: 0,
-          unit: moduleUnit("quiz"),
-          earned: progress.points,
-          max: 0,
-          bar: false,
-        };
-      }
       const d = unionDenominators(input.quiz?.questions ?? [], input.quiz?.viewer.answered ?? {});
       return { done: detail.answered, total: d.total, unit: moduleUnit("quiz"), earned: progress.points, max: d.max };
     }
@@ -245,7 +226,7 @@ export function moduleRow(progress: ModuleProgress, input: ProfileModuleInput): 
  *  render one flat bucket. secure-development has its own per-target rows via
  *  AppBreakdown and returns nothing here. */
 export function moduleItemsFor(id: ModuleId, input: ProfileModuleInput): { items: ProgressItem[]; doneWord: string } | null {
-  if (id === "quiz" && input.quiz && input.quiz.catalogueAvailable !== false && input.quiz.questions.length > 0) {
+  if (id === "quiz" && input.quiz && input.quiz.questions.length > 0) {
     const { questions, viewer } = input.quiz;
     return {
       doneWord: "answered",
@@ -310,9 +291,7 @@ export function remainingFor(modules: readonly ResolvedModule[], input: ProfileM
           max: secureDevCeiling(input, input.profile?.points ?? 0),
         }
       : undefined,
-    quiz: input.quiz && input.quiz.catalogueAvailable !== false
-      ? { earned: input.quiz.total?.points ?? 0, max: quiz.max }
-      : undefined,
+    quiz: input.quiz ? { earned: input.quiz.total?.points ?? 0, max: quiz.max } : undefined,
     classic: input.classic ? { earned: input.classic.total?.points ?? 0, max: classic.max } : undefined,
   };
   return modules
@@ -330,11 +309,9 @@ export function remainingFor(modules: readonly ResolvedModule[], input: ProfileM
  *  ingested a score for this login — cannot make this header disagree with
  *  what `moduleRow` and `remainingFor` show underneath it. */
 export function maxPointsAcrossModules(input: ProfileModuleInput, securePoints: number): number {
-  const quizMax = input.quiz?.catalogueAvailable === false
-    ? 0
-    : unionDenominators(input.quiz?.questions ?? [], input.quiz?.viewer.answered ?? {}).max;
+  const quiz = unionDenominators(input.quiz?.questions ?? [], input.quiz?.viewer.answered ?? {});
   const classic = input.classic?.reachableTotal != null
     ? { total: input.classic.reachableTotal, max: input.classic.maxPoints }
     : unionDenominators(input.classic?.challenges ?? [], input.classic?.viewer.solved ?? {});
-  return secureDevCeiling(input, securePoints) + quizMax + classic.max;
+  return secureDevCeiling(input, securePoints) + quiz.max + classic.max;
 }

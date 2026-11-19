@@ -306,6 +306,48 @@ test("redis store getTeams: falls back to slug when name is empty", async (t) =>
   ]);
 });
 
+test("redis store findKeysByPatterns: scans multiple patterns and pages, deduplicating keys", async () => {
+  const calls = [];
+
+  const pages = [
+    ["7", ["ctf:user:alice", "ctf:user:bob"]],
+    ["0", ["ctf:user:bob", "ctf:user:charlie"]],
+    ["0", ["ctf:team:red"]],
+  ];
+
+  const store = createRedisStore({
+    url: "http://srh:80",
+    token: "redis-token",
+    fetchImpl: async (_url, opts) => {
+      const commands = JSON.parse(opts.body);
+      calls.push(commands);
+
+      return new Response(
+        JSON.stringify([{ result: pages.shift() }]),
+        { status: 200 },
+      );
+    },
+  });
+
+  const keys = await store.findKeysByPatterns([
+    ["users", "ctf:user:*"],
+    ["teams", "ctf:team:*"],
+  ]);
+
+  assert.deepEqual(keys, [
+    "ctf:user:alice",
+    "ctf:user:bob",
+    "ctf:user:charlie",
+    "ctf:team:red",
+  ]);
+
+  assert.deepEqual(calls, [
+    [["SCAN", "0", "MATCH", "ctf:user:*", "COUNT", 1000]],
+    [["SCAN", "7", "MATCH", "ctf:user:*", "COUNT", 1000]],
+    [["SCAN", "0", "MATCH", "ctf:team:*", "COUNT", 1000]],
+  ]);
+});
+
 // --- isPaused honors the scheduled scoring window (manual toggle OR window) ---
 import { outsideScoringWindow, outsideWindow } from "../src/store.js";
 

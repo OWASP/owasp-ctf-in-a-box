@@ -30,6 +30,14 @@ describe("RESET_PREFIXES", () => {
     expect(RESET_PREFIXES.length).toBeGreaterThan(0);
   });
 
+  it("preserves the Redis schema marker through a master reset", () => {
+    const marker = "ctf:meta:schema-version";
+
+    expect(
+      RESET_PREFIXES.some(([, pattern]) => globToRegExp(pattern).test(marker)),
+    ).toBe(false);
+  });
+
   it("keeps every auth key through a master reset", () => {
     for (const [, pattern] of RESET_PREFIXES) {
       expect(globToRegExp(pattern).test("ctf:auth:user")).toBe(false);

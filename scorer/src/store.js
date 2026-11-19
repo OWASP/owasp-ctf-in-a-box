@@ -199,6 +199,34 @@ export function redisErrorText(error) {
   return String(error).replace(/,?\s*with args beginning with:.*$/s, "").slice(0, 200);
 }
 
+// Keep in sync with test/fixtures/v1-fingerprints.json. The scorer has
+// its own copy because its Docker build context is independent of the web app.
+export const V1_FINGERPRINT_PATTERNS = [
+  "ctf:solves:*",
+  "ctf:team:*",
+  "ctf:user:*",
+  "ctf:joincode:*",
+  "ctf:sd:held:*",
+  "ctf:relink:*",
+  "ctf:hints:*",
+  "ctf:quiz:answers:*",
+  "ctf:quiz:attempts:*",
+  "ctf:quiz:points",
+  "ctf:quiz:answered",
+  "ctf:quiz:lastAt",
+  "ctf:classic:solves:*",
+  "ctf:classic:attempts:*",
+  "ctf:classic:points",
+  "ctf:classic:solved",
+  "ctf:classic:solvecount",
+  "ctf:classic:lastAt",
+  "ctf:classic:opened:*",
+  "ctf:activity:log",
+  "ctf:sponsors",
+  "ctf:sponsors:logo",
+  "ctf:adjustments",
+];
+
 /** The Redis-backed solve store: POST /pipeline with a JSON array of command
  *  arrays, bearer token; results come back positionally as { result } or
  *  { error }. Solve persistence uses EVAL (RECORD_SOLVES_SCRIPT) + HGETALL;
@@ -359,7 +387,7 @@ export function createRedisStore({
     async findKeysByPatterns(patterns) {
       const found = new Set();
 
-      for (const [, pattern] of patterns) {
+      for (const pattern of patterns) {
         let cursor = "0";
 
         do {

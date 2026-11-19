@@ -440,4 +440,28 @@ describe("profile header stats", () => {
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
   });
+
+  it("preserves earned quiz points but hides denominators when question catalogue read fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    moduleLive.mockImplementation((id: string) => id === "quiz" || id === "secure-development");
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
+    getUser.mockResolvedValue({ ...baseProfile, points: 40 });
+    getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
+    getQuizTotals.mockResolvedValue(
+      new Map([[ADA_ID, { points: 10, answered: 1, lastAt: "2026-01-01T00:00:00Z" }]]),
+    );
+    listQuestions.mockRejectedValue(new Error("redis down"));
+    getResolvedModules.mockResolvedValue([{ id: "quiz", title: "Quiz", blurb: "blurb" }]);
+
+    const html = renderToStaticMarkup(await ProfilePage());
+    expect(html).toContain("patched");
+    expect(html).toContain("50");
+    expect(html).toMatch(/<span[^>]*>1<\/span><span[^>]*>\s*answered<\/span>/);
+    expect(html).not.toMatch(/1\s*\/\s*1\s*answered/);
+    expect(html).toMatch(/<span[^>]*>10<\/span><span[^>]*>\s*pts<\/span>/);
+    expect(html).not.toMatch(/10\s*\/\s*10\s*pts/);
+    expect(html).not.toMatch(/50\s*of\s*50\s*pts available/);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });

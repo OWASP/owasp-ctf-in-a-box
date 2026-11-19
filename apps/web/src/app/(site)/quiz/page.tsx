@@ -27,7 +27,7 @@ import { redirectIfNotLaunched } from "@/lib/launch";
 import { getResolvedModules } from "@/lib/resolved-modules";
 import { redirectIfTeamless } from "@/lib/require-team";
 import TeamlessNotice from "@/components/teamless-notice";
-import { getViewerQuiz, listQuestions, QUIZ_MAX_ATTEMPTS, QUIZ_RETRY_AFTER_MIN, type Question, type ViewerQuiz } from "@/lib/quiz-store";
+import { getViewerQuiz, listQuestions, QUIZ_MAX_ATTEMPTS, QUIZ_RETRY_AFTER_MIN, type ViewerQuiz } from "@/lib/quiz-store";
 import { errorLabel } from "@/lib/error-label";
 
 // `metadata` is a static export and cannot await Redis for the organizer's
@@ -102,12 +102,15 @@ export default async function QuizPage() {
   const [questions, viewerQuiz, settings, modules] = await Promise.all([
     listQuestions().catch((err) => {
       console.error("[quiz] questions read failed:", errorLabel(err));
-      return [] as Question[];
+      return null;
     }),
     playerId
       ? getViewerQuiz(playerId).catch((err) => {
           console.error("[quiz] viewer quiz read failed:", errorLabel(err));
-          return { answered: {}, attempts: {} } as ViewerQuiz;
+          // FAIL CLOSED: an unreadable viewer record must not be treated as
+          // empty progress (which would make answered/exhausted questions appear
+          // open and offer answer submission).
+          return null;
         })
       : Promise.resolve<ViewerQuiz>({ answered: {}, attempts: {} }),
     getAdminSettings().catch((err) => {
@@ -128,16 +131,27 @@ export default async function QuizPage() {
   // they were looking at not change at all.
   const blurb = mod?.blurb ?? "Answer security questions for points.";
 
+  const questionsAvailable = questions !== null;
+  const viewerQuizAvailable = viewerQuiz !== null;
   const settingsAvailable = settings !== null;
+
+  const unavailableMessage = !questionsAvailable
+    ? "Quiz questions are temporarily unavailable."
+    : !viewerQuizAvailable
+      ? "Quiz progress is temporarily unavailable."
+      : !settingsAvailable
+        ? "Quiz settings are temporarily unavailable."
+        : null;
+
   const maxAttempts = settingsAvailable ? (settings.quizMaxAttempts ?? QUIZ_MAX_ATTEMPTS) : QUIZ_MAX_ATTEMPTS;
   const cooldownMs = settingsAvailable ? (settings.quizRetryAfterMin ?? QUIZ_RETRY_AFTER_MIN) * 60_000 : 0;
 
   // Built field by field from the public `Question` shape — never a spread
   // of a raw store record, which is how an answer key would leak.
-  // Questions are only classified via deriveStatus when settings loaded
-  // successfully; if settings failed, an unavailable card is shown instead
-  // of deriving false exhaustion from a fallback attempts limit.
-  const viewQuestions: QuizQuestionView[] = settingsAvailable
+  // Questions are only classified via deriveStatus when questions, viewer
+  // progress, and settings all loaded successfully. When any read fails,
+  // deriveStatus is skipped and an unavailable card is shown instead.
+  const viewQuestions: QuizQuestionView[] = (!unavailableMessage && questions && viewerQuiz)
     ? questions.map((q) => ({
         id: q.id,
         prompt: q.prompt,
@@ -179,14 +193,14 @@ export default async function QuizPage() {
           them answer the moment questions appear. */}
       <div className="flex flex-col gap-4">
         {progress && <p className="text-sm text-zinc-400">{progress}</p>}
-        {!settingsAvailable ? (
+        {unavailableMessage ? (
           <div className="ds-card rounded-lg border border-white/[0.06] bg-[#16162a] px-5 py-8 text-center">
-            <p className="text-sm text-zinc-400">Quiz settings are temporarily unavailable.</p>
+            <p className="text-sm text-zinc-400">{unavailableMessage}</p>
             <Link href="/quiz" className="mt-3 inline-block text-sm ds-link">
               Retry
             </Link>
           </div>
-        ) : questions.length === 0 ? (
+        ) : !questions || questions.length === 0 ? (
           <ModuleEmptyState
             message={
               viewerIsAdmin

@@ -177,7 +177,7 @@ export default async function ProfilePage({
       quizEnabled
         ? listQuestions().catch((err) => {
             console.error(`profile: quiz questions read failed: ${errorLabel(err)}`);
-            return [] as Question[];
+            return null;
           })
         : Promise.resolve([] as Question[]),
       classicEnabled ? getClassicTotals() : Promise.resolve(new Map<string, ClassicTotal>()),
@@ -257,7 +257,10 @@ export default async function ProfilePage({
   // ceiling they weren't playing toward (issue #200, 2.4). Clamped because a
   // deleted question/challenge deliberately leaves banked points in place, so
   // the numerator can legitimately exceed a shrunken denominator.
-  const quizMaxPoints = quizQuestions.reduce((sum, q) => sum + (Number(q.points) || 0), 0);
+  const quizCatalogueAvailable = !quizEnabled || quizQuestions !== null;
+  const quizMaxPoints = quizQuestions
+    ? quizQuestions.reduce((sum, q) => sum + (Number(q.points) || 0), 0)
+    : 0;
   // Only the apps the event actually enabled — same filter the per-app grid
   // used before this task, kept so a target an organizer turned off never
   // shows up in the breakdown just because a stale scored row mentions it.
@@ -346,7 +349,15 @@ export default async function ProfilePage({
     challengeCount,
     enabledMaxPoints: enabledTotals.maxPoints,
     secureDev: secureDevEnabled,
-    quiz: quizEnabled ? { total: quizTotal, questions: quizQuestions, maxPoints: quizMaxPoints, viewer: viewerQuiz } : undefined,
+    quiz: quizEnabled
+      ? {
+          total: quizTotal,
+          questions: quizQuestions ?? [],
+          maxPoints: quizMaxPoints,
+          viewer: viewerQuiz,
+          catalogueAvailable: quizCatalogueAvailable,
+        }
+      : undefined,
     classic: classicEnabled
       ? { total: classicTotal, challenges: classicChallenges, maxPoints: classicReachableMaxPoints, viewer: viewerClassic, locked: classicLocked, reachableTotal: classicReachableTotal, lockedCount: classicLockedCount }
       : undefined,
@@ -357,10 +368,11 @@ export default async function ProfilePage({
   // deleted still count, and a live-catalogue ceiling alone renders
   // "870 of 850 pts available" (issue #330).
   const maxPointsAllModules = maxPointsAcrossModules(moduleInput, profile?.points ?? 0);
+  const maxPointsAvailable = quizCatalogueAvailable;
   // Sources without per-challenge point data (lambda/upstash) report
   // maxPoints 0 — fall back to patched/total so the bar still means something.
   const progressPct =
-    netPoints !== null && maxPointsAllModules > 0
+    netPoints !== null && maxPointsAvailable && maxPointsAllModules > 0
       ? Math.min(100, (netPoints / maxPointsAllModules) * 100)
       : challengeCount > 0
         ? (patchedCount / challengeCount) * 100
@@ -368,7 +380,7 @@ export default async function ProfilePage({
   // Whichever numerator actually drove progressPct above — points when the
   // bar has point data, the patched count when it fell back — so the fill
   // floor triggers exactly when there is genuine nonzero progress to show.
-  const progressValue = netPoints !== null && maxPointsAllModules > 0 ? netPoints : patchedCount;
+  const progressValue = netPoints !== null && maxPointsAvailable && maxPointsAllModules > 0 ? netPoints : patchedCount;
 
   const moduleProgress = buildModuleProgress(moduleInput);
   const classicOffBoard = offBoardClassicPoints(moduleInput);
@@ -402,7 +414,7 @@ export default async function ProfilePage({
       total: Math.max(challengeCount, patchedCount),
       accent: "#22c55e",
     },
-    quizEnabled && quizQuestions.length > 0 && quizTotalsAvailable && {
+    quizEnabled && quizQuestions && quizQuestions.length > 0 && quizTotalsAvailable && {
       unit: moduleUnit("quiz"),
       done: quizTotal?.answered ?? 0,
       total: Math.max(quizQuestions.length, quizTotal?.answered ?? 0),
@@ -487,7 +499,7 @@ export default async function ProfilePage({
               is not guessable. Falls back to the same done/total pair the
               percentage itself falls back to. */}
           <p className="mt-1.5 font-mono text-[11px] tabular-nums text-muted">
-            {netPoints !== null && maxPointsAllModules > 0
+            {netPoints !== null && maxPointsAvailable && maxPointsAllModules > 0
               ? `${netPoints.toLocaleString("en-US")} of ${maxPointsAllModules.toLocaleString("en-US")} pts available`
               : challengeCount > 0
                 ? `${patchedCount} of ${challengeCount} done`

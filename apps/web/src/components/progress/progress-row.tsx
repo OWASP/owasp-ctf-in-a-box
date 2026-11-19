@@ -99,10 +99,14 @@ function RowBody({ label, accent, done, total, unit, earned, max, hints, totalLa
 
       <span className="whitespace-nowrap font-mono text-sm tabular-nums">
         <span className="text-[#22c55e]">{done}</span>
-        <span className="text-muted">
-          {" "}
-          / {total} {unit}
-        </span>
+        {total > 0 ? (
+          <span className="text-muted">
+            {" "}
+            / {total} {unit}
+          </span>
+        ) : (
+          <span className="text-muted"> {unit}</span>
+        )}
       </span>
 
       {showPoints && (

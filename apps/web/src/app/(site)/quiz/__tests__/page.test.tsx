@@ -284,15 +284,50 @@ describe("quiz page blurb and progress line", () => {
 
     const html = renderToStaticMarkup(await QuizPage());
     expect(html).toContain("Quiz");
-    expect(html).toMatch(/quiz settings are temporarily unavailable/i);
+    expect(html).toMatch(/quiz questions are temporarily unavailable/i);
     expect(html).toContain("Retry");
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("shows an unavailable state when questions read fails while settings load", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    getSession.mockResolvedValue(null);
+    listQuestions.mockRejectedValue(new Error("redis down"));
+    getAdminSettings.mockResolvedValue({ quizMaxAttempts: 3, quizRetryAfterMin: 1 });
+    getResolvedModules.mockResolvedValue([]);
+
+    const html = renderToStaticMarkup(await QuizPage());
+    expect(html).toContain("Quiz");
+    expect(html).toMatch(/quiz questions are temporarily unavailable/i);
+    expect(html).toContain("Retry");
+    expect(html).not.toMatch(/no quiz questions are available/i);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("shows an unavailable state when viewer progress read fails for a signed-in viewer", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
+    listQuestions.mockResolvedValue([
+      { id: "q1", prompt: "Security question", points: 10, type: "single", choices: ["A", "B"] },
+    ]);
+    getViewerQuiz.mockRejectedValue(new Error("redis down"));
+    getAdminSettings.mockResolvedValue({ quizMaxAttempts: 3, quizRetryAfterMin: 1 });
+    getResolvedModules.mockResolvedValue([]);
+
+    const html = renderToStaticMarkup(await QuizPage());
+    expect(html).toContain("Quiz");
+    expect(html).toMatch(/quiz progress is temporarily unavailable/i);
+    expect(html).toContain("Retry");
+    expect(html).not.toMatch(/3 of 3 attempts left/i);
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
   });
 
   it("shows an unavailable state with retry action when settings read fails instead of classifying questions as exhausted", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    getSession.mockResolvedValue({ user: { id: "p1", name: "Player 1" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listQuestions.mockResolvedValue([
       { id: "q1", prompt: "Security question", points: 10, type: "single", choices: ["A", "B"] },
     ]);
@@ -313,7 +348,7 @@ describe("quiz page blurb and progress line", () => {
   });
 
   it("treats quizMaxAttempts=0 as unlimited attempts", async () => {
-    getSession.mockResolvedValue({ user: { id: "p1", name: "Player 1" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listQuestions.mockResolvedValue([
       { id: "q1", prompt: "Security question", points: 10, type: "single", choices: ["A", "B"] },
     ]);
@@ -325,6 +360,7 @@ describe("quiz page blurb and progress line", () => {
     getResolvedModules.mockResolvedValue([]);
 
     const html = renderToStaticMarkup(await QuizPage());
+    expect(getViewerQuiz).toHaveBeenCalledWith(ALICE_ID);
     expect(html).not.toMatch(/exhausted/i);
   });
 });

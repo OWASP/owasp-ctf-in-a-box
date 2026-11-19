@@ -54,6 +54,15 @@ describe("ProgressRow", () => {
     expect(html).not.toContain("pts");
   });
 
+  it("shows the completed count without a denominator when total is 0 — never '1 / 0 answered'", () => {
+    const html = renderToStaticMarkup(
+      <ProgressRow label="Quiz" done={1} total={0} unit="answered" earned={10} max={0} />,
+    );
+    expect(html).toContain("1");
+    expect(html).toContain("answered");
+    expect(html).not.toContain("/ 0 answered");
+  });
+
   it("separates the two fractions on the narrow layout, where they share a line", () => {
     // "1 / 38 patched2 / 141 pts" on the deployed profile. From md the fixed
     // points column parts them, so the dot is md:hidden rather than always on.

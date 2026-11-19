@@ -1,0 +1,28 @@
+{
+  "_comment": "Redis key patterns identifying v1 event data. Must stay in lockstep with RESET_PREFIXES in apps/web/src/lib/admin-store.ts and the local fingerprint lists in scorer/src/store.js and sync/src/redis.js. Each service suite asserts equality with this fixture.",
+  "patterns": [
+    "ctf:solves:*",
+    "ctf:team:*",
+    "ctf:user:*",
+    "ctf:joincode:*",
+    "ctf:sd:held:*",
+    "ctf:relink:*",
+    "ctf:hints:*",
+    "ctf:quiz:answers:*",
+    "ctf:quiz:attempts:*",
+    "ctf:quiz:points",
+    "ctf:quiz:answered",
+    "ctf:quiz:lastAt",
+    "ctf:classic:solves:*",
+    "ctf:classic:attempts:*",
+    "ctf:classic:points",
+    "ctf:classic:solved",
+    "ctf:classic:solvecount",
+    "ctf:classic:lastAt",
+    "ctf:classic:opened:*",
+    "ctf:activity:log",
+    "ctf:sponsors",
+    "ctf:sponsors:logo",
+    "ctf:adjustments"
+  ]
+}

@@ -461,6 +461,9 @@ describe("profile header stats", () => {
     expect(html).toMatch(/<span[^>]*>10<\/span><span[^>]*>\s*pts<\/span>/);
     expect(html).not.toMatch(/10\s*\/\s*10\s*pts/);
     expect(html).not.toMatch(/50\s*of\s*50\s*pts available/);
+    expect(html).not.toMatch(/role="progressbar"[^>]*aria-label="Quiz: 1 of 0/);
+    expect(html).not.toMatch(/aria-label="Quiz:[^"]*0\s*answered"/);
+    expect(html).not.toContain('aria-valuemax="0"');
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
   });

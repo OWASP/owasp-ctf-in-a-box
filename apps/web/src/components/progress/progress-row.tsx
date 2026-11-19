@@ -54,6 +54,10 @@ type ProgressRowProps = {
    *  the row then shows the earned figure alone rather than "8 / 0 pts", and
    *  shows nothing at all when there is no score either. */
   max: number;
+  /** Whether to render the progress bar. False omits the bar (e.g. when a
+   *  catalogue read fails), preventing zero-denominator accessible labels or
+   *  false fills. */
+  bar?: boolean;
   /** Points already spent on hints, shown after the points in the hint
    *  colour. Omitted on the leaderboard: another team's hint spend is theirs. */
   hints?: number;
@@ -83,11 +87,12 @@ function Chevron() {
   );
 }
 
-function RowBody({ label, accent, done, total, unit, earned, max, hints, totalLabel, level }: ProgressRowProps) {
+function RowBody({ label, accent, done, total, unit, earned, max, hints, totalLabel, level, bar }: ProgressRowProps) {
   // A team's quiz/classic contribution arrives with points but no ceiling
   // (the board carries per-module totals, not per-module maxima), so "no max"
   // has to mean "show what they scored", not "show nothing".
   const showPoints = max > 0 || earned > 0;
+  const showBar = bar !== false && (total > 0 || max > 0);
   return (
     <div className="flex flex-1 flex-wrap items-center gap-x-3 gap-y-1.5">
       <span
@@ -130,16 +135,19 @@ function RowBody({ label, accent, done, total, unit, earned, max, hints, totalLa
       )}
 
       {/* Below md the bar takes its own line under the text (basis-full);
-          from md it shares the line and absorbs the slack. */}
-      <ProgressBar
-        label={label}
-        done={done}
-        total={total}
-        unit={unit}
-        earned={earned}
-        max={max}
-        className="basis-full md:min-w-24 md:flex-1 md:basis-0"
-      />
+          from md it shares the line and absorbs the slack. Omitted when
+          there is no ceiling or when explicitly disabled. */}
+      {showBar && (
+        <ProgressBar
+          label={label}
+          done={done}
+          total={total}
+          unit={unit}
+          earned={earned}
+          max={max}
+          className="basis-full md:min-w-24 md:flex-1 md:basis-0"
+        />
+      )}
     </div>
   );
 }

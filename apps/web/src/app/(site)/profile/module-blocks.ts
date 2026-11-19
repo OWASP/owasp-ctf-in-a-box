@@ -152,7 +152,7 @@ export function buildModuleProgress(input: ProfileModuleInput): Partial<Record<M
   return blocks;
 }
 
-type ModuleRow = { done: number; total: number; unit: string; earned: number; max: number; locked?: number };
+type ModuleRow = { done: number; total: number; unit: string; earned: number; max: number; locked?: number; bar?: boolean };
 
 /** One module's row numbers: its own unit word, its clamped done/total pair,
  *  and its earned/available points.
@@ -197,6 +197,7 @@ export function moduleRow(progress: ModuleProgress, input: ProfileModuleInput): 
           unit: moduleUnit("quiz"),
           earned: progress.points,
           max: 0,
+          bar: false,
         };
       }
       const d = unionDenominators(input.quiz?.questions ?? [], input.quiz?.viewer.answered ?? {});

@@ -107,6 +107,26 @@ describe("a progress row counts the live-and-historical union", () => {
     expect(row.total).toBeGreaterThanOrEqual(row.done);
     expect(row.max).toBeGreaterThanOrEqual(row.earned);
   });
+
+  it("quiz: sets bar to false and denominators to 0 when catalogue is unavailable", () => {
+    const row = moduleRow(
+      { points: 10, completed: 1, detail: { kind: "quiz", answered: 1, total: 0, points: 10 } } as unknown as ModuleProgress,
+      {
+        ...input,
+        quiz: {
+          questions: [],
+          maxPoints: 0,
+          viewer: { answered: { q1: { points: 10, at: "t" } }, attempts: {} },
+          catalogueAvailable: false,
+        },
+      } as unknown as ProfileModuleInput,
+    );
+    expect(row.done).toBe(1);
+    expect(row.total).toBe(0);
+    expect(row.earned).toBe(10);
+    expect(row.max).toBe(0);
+    expect(row.bar).toBe(false);
+  });
 });
 
 /** The one-solve counterpart of a case's detail, for the untouched-catalogue

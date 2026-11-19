@@ -94,4 +94,16 @@ describe("ProgressBar", () => {
     expect(html).toContain('aria-valuenow="6"');
     expect(html).toContain('aria-valuemax="321"');
   });
+
+  it("does not expose a zero denominator in the accessible label when total is 0", () => {
+    const html = renderToStaticMarkup(<ProgressBar {...props} total={0} done={1} />);
+    expect(html).toContain('aria-label="Juice Shop: 1 patched"');
+    expect(html).not.toContain("1 of 0");
+  });
+
+  it("gives no minimum fill width when ceiling is 0, even if value is positive", () => {
+    const html = renderToStaticMarkup(<ProgressBar {...props} earned={0} max={0} done={1} total={0} />);
+    expect(html).toContain("width:0%");
+    expect(html).not.toContain(`min-width:${MIN_FILL_PX}px`);
+  });
 });

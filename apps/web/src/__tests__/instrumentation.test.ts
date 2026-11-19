@@ -12,6 +12,7 @@ beforeEach(() => {
   vi.stubEnv("BETTER_AUTH_URL", "https://ctf.example.org");
   vi.stubEnv("GITHUB_CLIENT_ID", "");
   vi.stubEnv("GITHUB_CLIENT_SECRET", "");
+  vi.stubEnv("NEXT_RUNTIME", "edge");
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -19,23 +20,23 @@ afterEach(() => {
 });
 
 describe("instrumentation GitHub keys guard", () => {
-  it("logs once when SCORE_IMAGE is set and GitHub has no keys, without throwing", () => {
+  it("logs once when SCORE_IMAGE is set and GitHub has no keys, without throwing", async () => {
     vi.stubEnv("SCORE_IMAGE", "x");
-    expect(() => register()).not.toThrow();
+    await expect(register()).resolves.toBeUndefined();
     expect(err.mock.calls.filter((c: unknown[]) => c[0] === LINE)).toHaveLength(1);
   });
 
-  it("is silent when the GitHub keys are present", () => {
+  it("is silent when the GitHub keys are present", async () => {
     vi.stubEnv("SCORE_IMAGE", "x");
     vi.stubEnv("GITHUB_CLIENT_ID", "id");
     vi.stubEnv("GITHUB_CLIENT_SECRET", "secret");
-    register();
+    await register();
     expect(err.mock.calls.flat()).not.toContain(LINE);
   });
 
-  it("is silent when there is no scorer image", () => {
+  it("is silent when there is no scorer image", async () => {
     vi.stubEnv("SCORE_IMAGE", "  ");
-    register();
+    await register();
     expect(err.mock.calls.flat()).not.toContain(LINE);
   });
 });

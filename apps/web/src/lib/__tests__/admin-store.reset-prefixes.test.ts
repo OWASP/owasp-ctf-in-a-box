@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFile } from "node:fs/promises";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashPipeline: vi.fn(), upstashEval: vi.fn() }));
@@ -19,6 +20,12 @@ function globToRegExp(glob: string): RegExp {
 }
 
 describe("RESET_PREFIXES", () => {
+  it("matches the shared v1 Redis fingerprint fixture", async () => {
+    const url = new URL("../../../../../test/fixtures/v1-fingerprints.json", import.meta.url);
+    const { patterns } = JSON.parse(await readFile(url, "utf8"));
+    expect(patterns).toEqual(RESET_PREFIXES.map(([, pattern]) => pattern));
+  });
+
   it("is non-empty, so the keep-auth assertion is not vacuous", () => {
     expect(RESET_PREFIXES.length).toBeGreaterThan(0);
   });

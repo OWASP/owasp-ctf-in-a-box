@@ -6,6 +6,7 @@ import {
   RECORD_SOLVES_SCRIPT,
   createMemoryStore,
   createRedisStore,
+  V1_FINGERPRINT_PATTERNS,
   scoreHoldKey,
   solvesKey,
 } from "../src/store.js";
@@ -306,6 +307,12 @@ test("redis store getTeams: falls back to slug when name is empty", async (t) =>
   ]);
 });
 
+test("scorer v1 fingerprint patterns match the shared fixture", async () => {
+  const url = new URL("../../test/fixtures/v1-fingerprints.json", import.meta.url);
+  const { patterns } = JSON.parse(await readFile(url, "utf8"));
+  assert.deepEqual(V1_FINGERPRINT_PATTERNS, patterns);
+});
+
 test("redis store findKeysByPatterns: scans multiple patterns and pages, deduplicating keys", async () => {
   const calls = [];
 
@@ -330,8 +337,8 @@ test("redis store findKeysByPatterns: scans multiple patterns and pages, dedupli
   });
 
   const keys = await store.findKeysByPatterns([
-    ["users", "ctf:user:*"],
-    ["teams", "ctf:team:*"],
+    "ctf:user:*",
+    "ctf:team:*",
   ]);
 
   assert.deepEqual(keys, [

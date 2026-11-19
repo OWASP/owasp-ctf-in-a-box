@@ -94,6 +94,34 @@ export function redisErrorText(error) {
   return String(error).replace(/,?\s*with args beginning with:.*$/s, "").slice(0, 200);
 }
 
+// Keep in sync with test/fixtures/v1-fingerprints.json. Sync has
+// its own copy because its Docker build context is independent of the web app.
+export const V1_FINGERPRINT_PATTERNS = [
+  "ctf:solves:*",
+  "ctf:team:*",
+  "ctf:user:*",
+  "ctf:joincode:*",
+  "ctf:sd:held:*",
+  "ctf:relink:*",
+  "ctf:hints:*",
+  "ctf:quiz:answers:*",
+  "ctf:quiz:attempts:*",
+  "ctf:quiz:points",
+  "ctf:quiz:answered",
+  "ctf:quiz:lastAt",
+  "ctf:classic:solves:*",
+  "ctf:classic:attempts:*",
+  "ctf:classic:points",
+  "ctf:classic:solved",
+  "ctf:classic:solvecount",
+  "ctf:classic:lastAt",
+  "ctf:classic:opened:*",
+  "ctf:activity:log",
+  "ctf:sponsors",
+  "ctf:sponsors:logo",
+  "ctf:adjustments",
+];
+
 /** The poller's Redis client, or null when UPSTASH_REDIS_REST_URL/TOKEN are
  *  unset (main() refuses to start without one: the freeze, the targets, the
  *  durable state and the PR author links all live there). `fetchImpl`, `log` and `timeoutMs` are seams. */
@@ -133,6 +161,29 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
   }
 
   return {
+    async findKeysByPatterns(patterns) {
+      const found = new Set();
+
+      for (const pattern of patterns) {
+        let cursor = "0";
+
+        do {
+          const [result] = await pipeline([
+            ["SCAN", cursor, "MATCH", pattern, "COUNT", 1000],
+          ]);
+
+          const [nextCursor, keys] = result;
+          cursor = String(nextCursor);
+
+          for (const key of keys ?? []) {
+            found.add(key);
+          }
+        } while (cursor !== "0");
+      }
+
+      return [...found];
+    },
+
     async isPaused() {
       try {
         // Effective freeze = manual toggle OR scheduled scoring window

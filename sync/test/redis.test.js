@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { makeRedis, outsideScoringWindow, outsideWindow, pausedAt } from "../src/redis.js";
+import { makeRedis, outsideScoringWindow, outsideWindow, pausedAt, V1_FINGERPRINT_PATTERNS } from "../src/redis.js";
 import { TARGETS } from "../src/config.js";
 
 const PAST = "2000-01-01T00:00:00.000Z";
@@ -11,6 +11,12 @@ const env = { UPSTASH_REDIS_REST_URL: "http://srh:80", UPSTASH_REDIS_REST_TOKEN:
 // Mock fetch that returns a single HMGET [paused, scoringStartsAt, scoringEndsAt] reply.
 const hmgetFetch = (row) => async () =>
   new Response(JSON.stringify([{ result: row }]), { status: 200 });
+
+test("sync v1 fingerprint patterns match the shared fixture", async () => {
+  const url = new URL("../../test/fixtures/v1-fingerprints.json", import.meta.url);
+  const { patterns } = JSON.parse(await readFile(url, "utf8"));
+  assert.deepEqual(V1_FINGERPRINT_PATTERNS, patterns);
+});
 
 test("outsideWindow: before start / after end / inside / unbounded", () => {
   const now = Date.parse("2026-06-01T12:00:00Z");
@@ -284,6 +290,41 @@ test("holdScore throws on a per-command error", async () => {
   const fetchImpl = async () => new Response(JSON.stringify([{ error: "NOAUTH nope" }, { result: 1 }]), { status: 200 });
   const r = makeRedis({ UPSTASH_REDIS_REST_URL: "http://x", UPSTASH_REDIS_REST_TOKEN: "t" }, fetchImpl, () => {});
   await assert.rejects(r.holdScore("octocat", "f", {}), /NOAUTH/);
+});
+
+test("findKeysByPatterns scans multiple patterns and pages, deduplicating keys", async () => {
+  const calls = [];
+  const pages = [
+    ["7", ["ctf:user:alice", "ctf:user:bob"]],
+    ["0", ["ctf:user:bob", "ctf:user:charlie"]],
+    ["0", ["ctf:team:red"]],
+  ];
+
+  const redis = makeRedis(env, async (_url, init) => {
+    const commands = JSON.parse(init.body);
+    calls.push(commands);
+    return new Response(
+      JSON.stringify([{ result: pages.shift() }]),
+      { status: 200 },
+    );
+  });
+
+  const keys = await redis.findKeysByPatterns([
+    "ctf:user:*",
+    "ctf:team:*",
+  ]);
+
+  assert.deepEqual(keys, [
+    "ctf:user:alice",
+    "ctf:user:bob",
+    "ctf:user:charlie",
+    "ctf:team:red",
+  ]);
+  assert.deepEqual(calls, [
+    [["SCAN", "0", "MATCH", "ctf:user:*", "COUNT", 1000]],
+    [["SCAN", "7", "MATCH", "ctf:user:*", "COUNT", 1000]],
+    [["SCAN", "0", "MATCH", "ctf:team:*", "COUNT", 1000]],
+  ]);
 });
 
 // ── releasing held scores (#741) ─────────────────────────────────────────────

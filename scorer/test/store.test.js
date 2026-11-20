@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import {
   AUTH_USER_ROWS_KEY,
   RECORD_SOLVES_SCRIPT,
+  SCHEMA_VERSION_KEY,
+  CURRENT_SCHEMA_VERSION,
   createMemoryStore,
   createRedisStore,
   V1_FINGERPRINT_PATTERNS,
@@ -353,6 +355,126 @@ test("redis store findKeysByPatterns: scans multiple patterns and pages, dedupli
     [["SCAN", "7", "MATCH", "ctf:user:*", "COUNT", 1000]],
     [["SCAN", "0", "MATCH", "ctf:team:*", "COUNT", 1000]],
   ]);
+});
+
+
+test("redis findKeysByPatterns: rejects malformed SCAN responses", async () => {
+  for (const malformed of [null, ["invalid", []], ["0", null], ["0", ["not-a-valid-response", 42]]]) {
+    const store = createRedisStore({
+      url: "http://srh:80",
+      token: "t",
+      fetchImpl: async () =>
+        new Response(JSON.stringify([{ result: malformed }]), { status: 200 }),
+    });
+
+    await assert.rejects(
+      store.findKeysByPatterns(["ctf:user:*"]),
+      /invalid Redis SCAN response/,
+    );
+  }
+});
+
+test("redis ensureCompatible: initializes a fresh Redis database", async () => {
+  const calls = [];
+  const store = createRedisStore({
+    url: "http://srh:80",
+    token: "t",
+    fetchImpl: async (_url, opts) => {
+      const commands = JSON.parse(opts.body);
+      calls.push(commands[0]);
+      const command = commands[0][0];
+      const result = command === "GET" ? null
+        : command === "SCAN" ? ["0", []]
+        : command === "SET" ? "OK" : null;
+      return new Response(JSON.stringify([{ result }]), { status: 200 });
+    },
+  });
+
+  await store.ensureCompatible();
+  assert.equal(calls[0][0], "GET");
+  assert.deepEqual(calls.at(-1), ["SET", SCHEMA_VERSION_KEY, CURRENT_SCHEMA_VERSION, "NX"]);
+});
+
+test("redis ensureCompatible: accepts an existing v2 marker without scanning", async () => {
+  let calls = 0;
+  const store = createRedisStore({
+    url: "http://srh:80",
+    token: "t",
+    fetchImpl: async () => {
+      calls++;
+      return new Response(JSON.stringify([{ result: "2" }]), { status: 200 });
+    },
+  });
+
+  await store.ensureCompatible();
+  assert.equal(calls, 1);
+});
+
+test("redis ensureCompatible: refuses recognizable v1 data", async () => {
+  const store = createRedisStore({
+    url: "http://srh:80",
+    token: "t",
+    fetchImpl: async (_url, opts) => {
+      const command = JSON.parse(opts.body)[0];
+      const result = command[0] === "GET" ? null
+        : ["0", command[3] === "ctf:solves:*" ? ["ctf:solves:dvwa"] : []];
+      return new Response(JSON.stringify([{ result }]), { status: 200 });
+    },
+  });
+
+  await assert.rejects(store.ensureCompatible(), /incompatible Redis data detected.*ctf:solves:dvwa/);
+});
+
+test("redis ensureCompatible: accepts a v2 marker created concurrently", async () => {
+  const calls = [];
+  let markerReads = 0;
+
+  const store = createRedisStore({
+    url: "http://srh:80",
+    token: "t",
+    fetchImpl: async (_url, opts) => {
+      const command = JSON.parse(opts.body)[0];
+      calls.push(command);
+
+      let result;
+      if (command[0] === "GET") {
+        markerReads++;
+        result = markerReads === 1 ? null : "2";
+      } else if (command[0] === "SCAN") {
+        result = ["0", []];
+      } else if (command[0] === "SET") {
+        result = null;
+      }
+
+      return new Response(JSON.stringify([{ result }]), { status: 200 });
+    },
+  });
+
+  await store.ensureCompatible();
+
+  assert.equal(markerReads, 2);
+  assert.equal(calls.at(-2)[0], "SET");
+  assert.deepEqual(calls.at(-1), ["GET", SCHEMA_VERSION_KEY]);
+});
+
+test("redis ensureCompatible: refuses unsupported schema versions", async () => {
+  const store = createRedisStore({
+    url: "http://srh:80",
+    token: "t",
+    fetchImpl: async () => new Response(JSON.stringify([{ result: "3" }]), { status: 200 }),
+  });
+
+  await assert.rejects(store.ensureCompatible(), /unsupported Redis schema version: 3/);
+});
+
+test("redis ensureCompatible: fails closed when Redis is unavailable", async () => {
+  const store = createRedisStore({
+    url: "http://srh:80",
+    token: "t",
+    fetchImpl: async () => { throw new Error("Redis unavailable"); },
+  });
+
+  await assert.rejects(store.ensureCompatible(), /Redis unavailable/);
 });
 
 // --- isPaused honors the scheduled scoring window (manual toggle OR window) ---

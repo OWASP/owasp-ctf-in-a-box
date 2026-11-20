@@ -116,9 +116,11 @@ describe("Redis schema compatibility", () => {
         { result: ["0", ["ctf:user:legacy-player"]] },
       ]);
 
-    await expect(checkRedisCompatibility()).rejects.toThrow(
-      /Legacy v1 Redis data detected/,
-    );
+    const error = await checkRedisCompatibility().catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain("matching fingerprint: ctf:solves:*");
+    expect(error.message).not.toContain("ctf:user:legacy-player");
   });
 
   it("fails closed when the schema marker has an unexpected type", async () => {

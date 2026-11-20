@@ -31,6 +31,7 @@ import {
   joinCodeKey,
   membersKey,
   teamKey,
+  userHintCostsKey,
   userHintTimesKey,
   userHintsKey,
   userKey,
@@ -485,6 +486,7 @@ async function resetProgressOf(player: string, actor: AuditActor): Promise<Reset
       ["HDEL", QUIZ_ANSWERED_KEY, player],
       ["DEL", userHintsKey(player)],
       ["DEL", userHintTimesKey(player)],
+      ["DEL", userHintCostsKey(player)],
       ["HDEL", HINTS_SPENT_KEY, player],
       // Last, so the counts below keep their positions.
       ["HDEL", QUIZ_LAST_AT_KEY, player],

@@ -16,6 +16,7 @@ vi.mock("@/lib/hint-store", () => ({
   getViewerHints: async () => (m.storeReads++, {
     purchased: {},
     classic: { open: "open-hint-text", gone: "Withdrawn-hint-p2" },
+    classicLevels: {},
     spent: 20,
     count: 2,
   }),

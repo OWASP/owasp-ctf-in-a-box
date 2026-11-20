@@ -10,14 +10,20 @@ import { requireLaunchedApi } from "@/lib/launch";
  *  hidden now: on the contestant side it does not exist, for its buyers too.
  *  The spend is untouched. Fails CLOSED: when the challenges cannot be read,
  *  no Jeopardy text is returned rather than one that might be hidden. */
-async function visibleClassicHints(texts: Record<string, string>): Promise<Record<string, string>> {
-  if (Object.keys(texts).length === 0) return texts;
+async function visibleClassicHints(
+  texts: Record<string, string>,
+  levels: Record<string, Record<number, string>>,
+): Promise<{ classic: Record<string, string>; classicLevels: Record<string, Record<number, string>> }> {
+  if (Object.keys(texts).length === 0 && Object.keys(levels).length === 0) return { classic: texts, classicLevels: levels };
   try {
     const visible = new Set(visibleNow(await listChallenges()).map((c) => c.id));
-    return Object.fromEntries(Object.entries(texts).filter(([id]) => visible.has(id)));
+    return {
+      classic: Object.fromEntries(Object.entries(texts).filter(([id]) => visible.has(id))),
+      classicLevels: Object.fromEntries(Object.entries(levels).filter(([id]) => visible.has(id))),
+    };
   } catch (err) {
     console.error("hints: challenge read failed, withholding Jeopardy hint text:", errorLabel(err));
-    return {};
+    return { classic: {}, classicLevels: {} };
   }
 }
 
@@ -35,11 +41,13 @@ export async function GET(request: Request) {
 
   const hints = await getViewerHints(playerId);
   const { enabled, cost } = await resolveHintConfig();
+  const visibleClassic = await visibleClassicHints(hints.classic, hints.classicLevels);
   return NextResponse.json({
     enabled,
     cost,
     purchased: hints.purchased,
-    classic: await visibleClassicHints(hints.classic),
+    classic: visibleClassic.classic,
+    classicLevels: visibleClassic.classicLevels,
     spent: hints.spent,
     count: hints.count,
   });

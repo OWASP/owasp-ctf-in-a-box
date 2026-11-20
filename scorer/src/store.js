@@ -1,3 +1,6 @@
+export const SCHEMA_VERSION_KEY = "ctf:meta:schema-version";
+export const CURRENT_SCHEMA_VERSION = "2";
+
 // Solve store: one Redis hash per target, one field per (player, challenge).
 // Writes are monotonic — HSETNX semantics keep the FIRST solve timestamp and
 // make replays no-ops. Reads are one HGETALL per known target. The memory
@@ -384,6 +387,40 @@ export function createRedisStore({
         };
       });
     },
+    async ensureCompatible() {
+      const readVersion = async () => {
+        const [version] = await pipeline([["GET", SCHEMA_VERSION_KEY]]);
+        if (version !== null && typeof version !== "string") {
+          throw new Error("invalid Redis schema marker response");
+        }
+        return version;
+      };
+
+      const version = await readVersion();
+
+      if (version === CURRENT_SCHEMA_VERSION) return;
+      if (version !== null) {
+        throw new Error(`unsupported Redis schema version: ${version}`);
+      }
+
+      const legacyKeys = await this.findKeysByPatterns(V1_FINGERPRINT_PATTERNS);
+      if (legacyKeys.length > 0) {
+        throw new Error(
+          `incompatible Redis data detected (${legacyKeys[0]}). Export required data and perform a master reset before starting the v2 scorer.`,
+        );
+      }
+
+      const [result] = await pipeline([
+        ["SET", SCHEMA_VERSION_KEY, CURRENT_SCHEMA_VERSION, "NX"],
+      ]);
+
+      if (result === "OK") return;
+
+      const concurrentVersion = await readVersion();
+      if (concurrentVersion === CURRENT_SCHEMA_VERSION) return;
+
+      throw new Error("Redis schema marker initialization failed; refusing to start");
+    },
     async findKeysByPatterns(patterns) {
       const found = new Set();
 
@@ -395,10 +432,21 @@ export function createRedisStore({
             ["SCAN", cursor, "MATCH", pattern, "COUNT", 1000],
           ]);
 
-          const [nextCursor, keys] = res;
-          cursor = String(nextCursor);
+          if (
+            !Array.isArray(res) ||
+            res.length !== 2 ||
+            typeof res[0] !== "string" ||
+            !/^\d+$/.test(res[0]) ||
+            !Array.isArray(res[1]) ||
+            !res[1].every((key) => typeof key === "string")
+          ) {
+            throw new Error("invalid Redis SCAN response");
+          }
 
-          for (const key of keys ?? []) {
+          const [nextCursor, keys] = res;
+          cursor = nextCursor;
+
+          for (const key of keys) {
             found.add(key);
           }
         } while (cursor !== "0");

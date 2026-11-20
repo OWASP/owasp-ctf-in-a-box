@@ -368,8 +368,12 @@ test("ensureCompatible: recognizable v1 data refuses startup", async () => {
     return new Response(JSON.stringify([{ result: ["0", ["ctf:user:alice"]] }]), { status: 200 });
   });
 
-  await assert.rejects(redis.ensureCompatible(), /incompatible Redis data detected.*ctf:user:alice/);
-  assert.equal(scanCount, V1_FINGERPRINT_PATTERNS.length);
+  await assert.rejects(redis.ensureCompatible(), (error) => {
+    assert.match(error.message, /matching fingerprint: ctf:solves:\*/);
+    assert.doesNotMatch(error.message, /ctf:user:alice/);
+    return true;
+  });
+  assert.equal(scanCount, 1);
 });
 
 test("ensureCompatible: unsupported schema version refuses startup", async () => {

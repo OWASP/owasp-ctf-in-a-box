@@ -48,7 +48,7 @@ async function readSchemaVersion(): Promise<string | null> {
   return reply.result;
 }
 
-async function findLegacyKey(): Promise<string | null> {
+async function findLegacyFingerprintPattern(): Promise<string | null> {
   for (const pattern of V1_FINGERPRINT_PATTERNS) {
     let cursor = "0";
 
@@ -57,7 +57,7 @@ async function findLegacyKey(): Promise<string | null> {
         ["SCAN", cursor, "MATCH", pattern, "COUNT", 1000],
       ]);
       const [nextCursor, keys] = parseScanPage(reply, `schema compatibility ${pattern}`);
-      if (keys.length > 0) return keys[0];
+      if (keys.length > 0) return pattern;
       cursor = nextCursor;
     } while (cursor !== "0");
   }
@@ -65,9 +65,9 @@ async function findLegacyKey(): Promise<string | null> {
   return null;
 }
 
-function refuseLegacyData(key: string): never {
+function refuseLegacyData(pattern: string): never {
   throw new Error(
-    `[startup] Legacy v1 Redis data detected (${key}). Export any data you need, then perform a master reset before starting this v2 application.`,
+    `[startup] Legacy v1 Redis data detected (matching fingerprint: ${pattern}). Export any data you need, then perform a master reset before starting this v2 application.`,
   );
 }
 
@@ -75,6 +75,10 @@ function refuseLegacyData(key: string): never {
  * Refuse to run against recognizable v1 event data. An absent marker alone
  * does not prove this is a fresh Redis database: v1 master reset preserves
  * organizer/account data, so recognizable event-data fingerprints are checked.
+ *
+ * Fails CLOSED: any Redis marker read, fingerprint SCAN, or marker SET error
+ * throws and refuses startup. Recognizable legacy data and unsupported schema
+ * versions also prevent startup.
  */
 export async function checkRedisCompatibility(): Promise<void> {
   const version = await readSchemaVersion();
@@ -86,8 +90,8 @@ export async function checkRedisCompatibility(): Promise<void> {
     );
   }
 
-  const legacyKey = await findLegacyKey();
-  if (legacyKey) refuseLegacyData(legacyKey);
+  const legacyPattern = await findLegacyFingerprintPattern();
+  if (legacyPattern) refuseLegacyData(legacyPattern);
 
   const [setReply] = assertPipelineOk(
     await upstashPipeline([["SET", SCHEMA_VERSION_KEY, CURRENT_SCHEMA_VERSION, "NX"]]),

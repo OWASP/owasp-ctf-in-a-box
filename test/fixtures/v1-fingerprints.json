@@ -1,5 +1,5 @@
 {
-  "_comment": "Redis key patterns identifying v1 event data. Must stay in lockstep with RESET_PREFIXES in apps/web/src/lib/admin-store.ts and the local fingerprint lists in scorer/src/store.js and sync/src/redis.js. Each service suite asserts equality with this fixture.",
+  "_comment": "Redis key patterns identifying v1 event data. Must stay in lockstep with the local fingerprint lists in scorer/src/store.js and sync/src/redis.js. The web compatibility and service suites assert equality with this fixture. RESET_PREFIXES may also contain newer reset-only namespaces that are not v1 fingerprints.",
   "patterns": [
     "ctf:solves:*",
     "ctf:team:*",

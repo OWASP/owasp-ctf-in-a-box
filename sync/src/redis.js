@@ -164,6 +164,10 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
   }
 
   return {
+    /**
+     * Fails CLOSED: Redis marker reads, fingerprint scans, and marker writes
+     * must all succeed; legacy data or unsupported schema versions refuse startup.
+     */
     async ensureCompatible() {
       const readVersion = async () => {
         const [version] = await pipeline([["GET", SCHEMA_VERSION_KEY]]);
@@ -177,11 +181,13 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
         throw new Error(`unsupported Redis schema version: ${version}`);
       }
 
-      const legacyKeys = await this.findKeysByPatterns(V1_FINGERPRINT_PATTERNS);
-      if (legacyKeys.length > 0) {
-        throw new Error(
-          `incompatible Redis data detected (${legacyKeys[0]}). Export required data and perform a master reset before starting the v2 sync service.`,
-        );
+      for (const pattern of V1_FINGERPRINT_PATTERNS) {
+        const legacyKeys = await this.findKeysByPatterns([pattern]);
+        if (legacyKeys.length > 0) {
+          throw new Error(
+            `incompatible Redis data detected (matching fingerprint: ${pattern}). Export required data and perform a master reset before starting the v2 sync service.`,
+          );
+        }
       }
 
       const [result] = await pipeline([

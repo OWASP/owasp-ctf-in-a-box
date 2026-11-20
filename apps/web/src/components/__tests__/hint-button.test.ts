@@ -67,3 +67,11 @@ describe("HintButton renders the price it charges", () => {
     expect(html).not.toContain("spend  points");
   });
 });
+
+describe("HintButton's signed-out prompt", () => {
+  it("asks for any sign-in, not a GitHub one", () => {
+    expect(src).toContain('aria-label="Sign in to unlock hints"');
+    expect(src).toContain("`Sign in to unlock hints");
+    expect(src).not.toMatch(/sign in with github/i);
+  });
+});

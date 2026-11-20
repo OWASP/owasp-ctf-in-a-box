@@ -5,6 +5,12 @@ environment, how to build and test each piece, what CI will hold you to, the
 testing conventions this repo deliberately keeps, and the process for getting
 a change merged.
 
+Questions and chat go to
+[the project's channel](https://owasp.slack.com/archives/C0C2RKGSKD5) on the
+OWASP Slack (no account yet? [join OWASP on Slack](https://owasp.org/slack/invite)).
+Claims, assignments and decisions stay on GitHub issues, where the record
+lasts.
+
 ## Dev environment
 
 - **Node 22** across the board (`sync`, `scorer`, `apps/web` all pin it in
@@ -89,7 +95,6 @@ scripts/check-changelog.sh origin/main HEAD
 # single-module compose bring-ups
 ./scripts/acceptance-quiz-only.sh
 ./scripts/acceptance-classic-only.sh
-./scripts/acceptance-ai-only.sh
 
 # the whole poll pipeline, end to end, offline
 ./scripts/smoke.sh
@@ -121,8 +126,8 @@ filtering) plus eleven gated jobs — a job for an area your PR doesn't touch is
 | `vacuous` | No rubric check passes against an up-but-useless stub (0/321) |
 | `shell` | shellcheck + bats over `setup/`, `scripts/`, `deploy/fly/`, `deploy/aws-terraform/` (its `deploy.sh` and bats suite) |
 | `smoke` | The full poll pipeline against fixture services, including the forged-comment drop and the freeze hold |
-| `app` | eslint (`pnpm lint`, zero problems); vitest; the three grading Lua scripts and the admin, hint and team scripts executed against a real Redis behind srh (every `*.upstash.test.ts` suite, run serially; required, not skippable, in CI); the production build; the `/`-never-prerendered assertion; `acceptance-app.sh`'s runtime-config acceptance (one image, three environments) |
-| `quiz-only` / `classic-only` / `ai-only` | A single app-side module runs a whole event alone, with no scorer to pull |
+| `app` | eslint (`pnpm lint`, zero problems); vitest; the two grading Lua scripts and the admin, hint and team scripts executed against a real Redis behind srh (every `*.upstash.test.ts` suite, run serially; required, not skippable, in CI); the production build; the `/`-never-prerendered assertion; `acceptance-app.sh`'s runtime-config acceptance (one image, three environments) |
+| `quiz-only` / `classic-only` | A single app-side module runs a whole event alone, with no scorer to pull |
 | `registries` | The three independently maintained target lists (`sync/src/config.js`, `apps/web/src/lib/apps.ts`, `scorer/src/targets.js`) still agree |
 | `docs` | The Jekyll site builds; link/meta checks |
 
@@ -153,9 +158,12 @@ Nothing here is only asked for; each item is checked on every PR.
   it has none (`No test: <reason>`). Pure refactors, copy, comments and docs
   are exempt. The check only warns during its trial and is meant to block
   later.
-- **A CHANGELOG entry.** The `changelog` workflow fails a PR that changes
-  `apps/`, `sync/`, `scorer/`, `setup/` or `deploy/` without a line under
-  `## Unreleased` in `CHANGELOG.md`. Test-only paths (`__tests__/`, `test/`,
+- **A changelog fragment.** The `changelog` workflow fails a PR that changes
+  `apps/`, `sync/`, `scorer/`, `setup/` or `deploy/` without a new file
+  `changelog.d/<issue>-<slug>.md` holding the entry (format in
+  [`changelog.d/README.md`](changelog.d/README.md)). Do not edit
+  `CHANGELOG.md` in a PR: it does not satisfy the check, and a shared
+  `## Unreleased` block conflicts across open PRs. Test-only paths (`__tests__/`, `test/`,
   `*.test.*`, `*.bats`, `*.tftest.hcl`) and `.md` files do not count as code,
   with one exception: everything under `scorer/rubric*/` except its `.md`
   files counts as code, because a rubric's tests are what the judge runs
@@ -246,9 +254,33 @@ git rebase --signoff origin/main   # then force-push the branch
 forbids: no `Generated with`, and no `Co-authored-by:` naming an AI tool or
 agent (see [AI-assisted contributions](#ai-assisted-contributions)).
 
+## Claiming an issue
+
+Claim before you build, so two people never write the same PR and the one
+who asked first is not the one who loses.
+
+- **Comment on the issue to claim it, then wait to be assigned** before you
+  open a pull request. A plan in the comment is welcome, not required.
+- **A maintainer answers a claim within 3 days**, by assigning you or by
+  saying why not (someone else has it, or the issue needs a design decision
+  first). A reply that does not assign you is not a go-ahead: wait for the
+  assignment. If nobody has answered at all, say so on the issue and go
+  ahead: the claim is yours.
+- **A claim lives on the issue.** Saying so in Slack does not claim it.
+- **One open claim at a time**, unless a maintainer says otherwise.
+- **An assignment lapses after 7 days** without a draft PR or an update on
+  the issue. Then the issue is open to the next claim.
+- **A pull request for an issue assigned to someone else, or for one nobody
+  claimed, may be closed without review.**
+
+Exempt: typo and small docs fixes, which need no issue at all; and an issue
+you filed yourself, where saying on it that you are working on it is the
+claim, with no wait for assignment.
+
 ## Pull request flow
 
-1. Branch off `main`.
+1. Unless the change is exempt, claim the issue and wait to be assigned
+   (see [Claiming an issue](#claiming-an-issue)). Then branch off `main`.
 2. Make your change. Keep commits scoped and use
    [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`,
    `fix:`, `docs:`, `test:`, `chore:`, `ci:`, ...). Sign off every commit
@@ -265,6 +297,9 @@ agent (see [AI-assisted contributions](#ai-assisted-contributions)).
 
 A PR is ready when all of these are true:
 
+- You are currently assigned the issue it closes, your claim went unanswered for 3
+  days and you said so on the issue, or it is exempt
+  (see [Claiming an issue](#claiming-an-issue)).
 - The commands for the touched area in AGENTS.md were run locally
   (or the PR says why they could not be — e.g. no Docker).
 - New tests can fail: the summary names the single-token mutation
@@ -302,7 +337,9 @@ Versions follow [Semantic Versioning](https://semver.org/), cut as
 `BREAKING CHANGE:` footer (or `!` after the type) implies major. The version
 is repo-level: `apps/web/package.json` tracks the current tag; `scorer` and
 `sync` deliberately carry no version field. [`CHANGELOG.md`](CHANGELOG.md)
-summarizes each release.
+summarizes each release. Before renaming `## Unreleased` to the version
+heading, the release runs `node scripts/changelog-assemble.mjs`, which appends
+every fragment in `changelog.d/` to that block and deletes the fragment files.
 
 ## AI-assisted contributions
 

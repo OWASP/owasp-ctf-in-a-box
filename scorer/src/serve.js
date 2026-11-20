@@ -1,13 +1,14 @@
 import { createServer } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { loadRubric } from "./rubric.js";
+import { PLAYER_ID_RE } from "./player-id.js";
 import { createMemoryStore, createRedisStore, outsideScoringWindow, pausedAt } from "./store.js";
 
-// Mirrors sync/src/parse.js — same grammar, because the author becomes a
-// Redis field segment (`<author>:<challengeId>`) in the solves hash.
-const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$/;
 // Targets and challenge ids share the rubric charset (Redis key/field segments).
 const SEGMENT = /^[a-z0-9][a-z0-9-]*$/;
+
+// A GitHub login: the grammar judge.js and sync/src/parse.js accept for a
+// score's author. It becomes a Redis key segment (the link key) here.
+const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$/;
 
 // A legitimate score payload is well under 1 KiB; 64 KiB is generous headroom.
 // Callers are bearer-authed only, so this is defense-in-depth — a leaked token
@@ -105,8 +106,19 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
    */
   async function solveTime(at) {
     if (at === undefined || at === null) {
-      if (await store.isPaused()) return { status: 503, body: { error: "scoring is paused" } };
-      return { iso: now() };
+      // One settings snapshot answers both the arrival-time freeze and the
+      // epoch the write checks against, so a reset cannot land between them:
+      // a snapshot taken after the reset's first write sees its freeze, and
+      // one taken before carries the old epoch, which the solve script then
+      // refuses. A failed read falls back to isPaused (open on error) with no
+      // epoch, which the solve script answers 503 once any reset has happened.
+      const policy = await store.readScoringPolicy();
+      const iso = now();
+      const paused = policy
+        ? policy.paused || outsideScoringWindow(Date.parse(iso), policy.startsAt, policy.endsAt)
+        : await store.isPaused();
+      if (paused) return { status: 503, body: { error: "scoring is paused" } };
+      return { iso, resetAt: typeof policy?.resetAt === "string" ? policy.resetAt : "" };
     }
     let atMs = typeof at === "string" ? Date.parse(at) : NaN;
     if (!Number.isFinite(atMs)) return { status: 400, body: { error: "invalid at" } };
@@ -116,7 +128,8 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     const verdict = policy ? judgeScoreTime(atMs, policy) : null;
     if (verdict?.retry) return { status: 503, body: { error: "scoring is paused" } };
     if (verdict) return { status: 422, body: { error: verdict.error, refused: verdict.refused } };
-    return { iso: new Date(atMs).toISOString() };
+    const resetAt = typeof policy?.resetAt === "string" ? policy.resetAt : "";
+    return { iso: new Date(atMs).toISOString(), resetAt };
   }
 
   async function score(req, res) {
@@ -140,8 +153,16 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     } catch {
       return json(res, 400, { error: "body must be JSON" });
     }
-    const { author, target, solved, at } = data ?? {};
-    if (typeof author !== "string" || !GITHUB_LOGIN.test(author)) return json(res, 400, { error: "invalid author" });
+    // The player id becomes a Redis field segment (`<player>:<challengeId>`).
+    const { player, target, solved, at, login } = data ?? {};
+    if (typeof player !== "string" || !PLAYER_ID_RE.test(player)) return json(res, 400, { error: "invalid player" });
+    // The login sync resolved `player` from. Optional on the wire for a caller
+    // that resolves no link (the acceptance and dev-stack seeds); sync always
+    // sends it, and with it the write lands only while that link still names
+    // the player.
+    if (login !== undefined && (typeof login !== "string" || !GITHUB_LOGIN.test(login))) {
+      return json(res, 400, { error: "invalid login" });
+    }
     if (typeof target !== "string" || !SEGMENT.test(target)) return json(res, 400, { error: "invalid target" });
     if (rubric && !rubric.targets.has(target)) return json(res, 400, { error: `unknown target: ${target}` });
     if (!Array.isArray(solved) || solved.some((s) => typeof s !== "string")) {
@@ -154,7 +175,23 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
     );
     const solvedAt = await solveTime(at);
     if (solvedAt.status) return json(res, solvedAt.status, solvedAt.body);
-    await store.recordSolves(target, author, ids, solvedAt.iso);
+    // The reset check, the hold check, the link check and the write are one
+    // script: a score timed before the CURRENT reset epoch answers 422
+    // pre-reset (a reset that landed after the judge above read the
+    // settings), a delete or unlink in progress, a link that changed since
+    // sync resolved it, or an epoch that changed since the judge read it (or
+    // that the judge could not read) answers 503 (sync retries and judges
+    // again), a deleted player
+    // 422 (final, ADR 67). A store error throws to the 500 below, so sync
+    // retries and nothing is lost.
+    const written = await store.recordSolves(target, player, ids, solvedAt.iso, login ?? "", solvedAt.resetAt);
+    if (written === "pre-reset") {
+      return json(res, 422, { error: "the score predates the last master reset", refused: "pre-reset" });
+    }
+    if (written === "stale") return json(res, 503, { error: "the master reset changed while the score was judged" });
+    if (written === "pending") return json(res, 503, { error: "player scores on hold" });
+    if (written === "unlinked") return json(res, 503, { error: "the login no longer links to this player" });
+    if (written === "deleted") return json(res, 422, { error: "player deleted", refused: "player-deleted" });
     if (!rubric) seenTargets.add(target);
     res.writeHead(202).end();
   }
@@ -215,7 +252,7 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
   };
 }
 
-// Earlier solve wins ties; an author with no counted solves sorts last.
+// Earlier solve wins ties; a player with no counted solves sorts last.
 function compareLastSolve(a, b) {
   if (a === b) return 0;
   if (a === null) return 1;
@@ -239,7 +276,7 @@ const SERIES_TOP_N = 10;
 
 // Aggregates the solves hashes into the exact GET /leaderboard shape the app's
 // lambda source parses (apps/web/src/lib/leaderboard/lambda.ts):
-// { leaderboard: [{ rank, author, points, lastSolveAt, apps: { <target>:
+// { leaderboard: [{ rank, player, points, lastSolveAt, apps: { <target>:
 //   { solved, total, solvedIds } } }], catalog: { <target>: [{ id, name,
 //   points, owasp }] } }. `solvedIds` (per entry and per team) and the
 //   top-level `catalog` let the app show WHICH flags are solved, not just
@@ -248,14 +285,14 @@ const SERIES_TOP_N = 10;
 //   With a rubric, points and totals come from it and
 // foreign ids (not in the rubric) are skipped so solved never exceeds total;
 // without one, every solve is 1 point and a target's total is the count of
-// distinct solved ids seen for it across all authors.
+// distinct solved ids seen for it across all players.
 //
 // Also returns `series`: the cumulative-score-over-time history for the top
 // SERIES_TOP_N players by final score (same ranking as `entries`), for the
 // app's leaderboard line chart. Points require a rubric — without one there is
 // no per-challenge score to accumulate, so `series` is empty.
 export async function buildLeaderboard({ store, rubric, targets }) {
-  const authors = new Map(); // author -> { points, lastSolveAt, perTarget: Map, solves: [] }
+  const players = new Map(); // player -> { points, lastSolveAt, perTarget: Map, solves: [] }
   const totals = new Map(); // target -> total challenge count
   for (const target of targets) {
     const solves = await store.getSolves(target);
@@ -264,13 +301,13 @@ export async function buildLeaderboard({ store, rubric, targets }) {
     for (const [field, at] of Object.entries(solves)) {
       const i = field.indexOf(":");
       if (i < 1) continue;
-      const author = field.slice(0, i);
+      const player = field.slice(0, i);
       const id = field.slice(i + 1);
       const points = known ? known.points.get(id) : 1;
       if (points === undefined) continue;
       distinct.add(id);
-      let a = authors.get(author);
-      if (!a) authors.set(author, (a = { points: 0, lastSolveAt: null, perTarget: new Map(), solves: [] }));
+      let a = players.get(player);
+      if (!a) players.set(player, (a = { points: 0, lastSolveAt: null, perTarget: new Map(), solves: [] }));
       a.points += points;
       if (a.lastSolveAt === null || at > a.lastSolveAt) a.lastSolveAt = at;
       a.perTarget.set(target, (a.perTarget.get(target) ?? 0) + 1);
@@ -279,8 +316,8 @@ export async function buildLeaderboard({ store, rubric, targets }) {
     totals.set(target, known ? known.challenges.length : distinct.size);
   }
 
-  const entries = [...authors.entries()].map(([author, a]) => ({
-    author,
+  const entries = [...players.entries()].map(([player, a]) => ({
+    player,
     points: a.points,
     lastSolveAt: a.lastSolveAt,
     apps: Object.fromEntries(
@@ -298,16 +335,16 @@ export async function buildLeaderboard({ store, rubric, targets }) {
     (x, y) =>
       y.points - x.points ||
       compareLastSolve(x.lastSolveAt, y.lastSolveAt) ||
-      (x.author < y.author ? -1 : x.author > y.author ? 1 : 0),
+      (x.player < y.player ? -1 : x.player > y.player ? 1 : 0),
   );
   const ranked = entries.map((e, i) => ({ rank: i + 1, ...e }));
 
   const series = rubric
-    ? ranked.slice(0, SERIES_TOP_N).map(({ author }) => {
-        const sorted = [...authors.get(author).solves].sort(compareSolve);
+    ? ranked.slice(0, SERIES_TOP_N).map(({ player }) => {
+        const sorted = [...players.get(player).solves].sort(compareSolve);
         let cumulative = 0;
         return {
-          login: author,
+          player,
           points: sorted.map((s) => ({ t: s.at, score: (cumulative += s.points) })),
         };
       })
@@ -316,14 +353,14 @@ export async function buildLeaderboard({ store, rubric, targets }) {
   // Team rollup (additive — the individual `entries`/`series` above are
   // untouched). A team scores the UNION of its members' solves: a flag solved
   // by two members counts once, at the earliest `at` seen for it. Membership is
-  // read fresh from the store, so a solve recorded before a login joined a team
+  // read fresh from the store, so a solve recorded before a player joined a team
   // still rolls in retroactively. Foreign ids were already dropped upstream (an
-  // author only carries solves the rubric — or degenerate charset — accepted).
+  // player only carries solves the rubric — or degenerate charset — accepted).
   const teamsData = await store.getTeams();
   const teamEntries = teamsData.map((team) => {
     const union = new Map(); // `${target}:${id}` -> { at (min), id, target, points }
-    for (const login of team.members) {
-      const a = authors.get(login);
+    for (const member of team.members) {
+      const a = players.get(member);
       if (!a) continue;
       for (const s of a.solves) {
         const key = `${s.target}:${s.id}`;
@@ -433,6 +470,10 @@ export async function serve(env = process.env, { log = console.error } = {}) {
   const token = env.CTF_SCORE_BEARER_TOKEN ?? env.SCORER_TOKEN;
   if (!token) throw new Error("refusing to start: set CTF_SCORE_BEARER_TOKEN or SCORER_TOKEN");
   const port = parsePort(env.PORT);
+  // Loaded here, not at module load: the rubric parser's YAML dependency is
+  // needed only by the process entry, so createHandler and judgeScoreTime
+  // import without the scorer's node_modules (the app's live suite does).
+  const { loadRubric } = await import("./rubric.js");
   const rubric = loadRubric(env.RUBRIC_DIR);
   const useRedis = Boolean(env.UPSTASH_REDIS_REST_URL);
   const store = useRedis ? createRedisStore({ log }) : createMemoryStore();

@@ -9,7 +9,7 @@
  *   This module cannot be imported from a Client Component module.
  *
  * so the constants live here and the stores re-export them. Same reason
- * `admin-admins.ts` exists: what a module imports is part of its contract.
+ * `admin-grants.ts` exists: what a module imports is part of its contract.
  */
 
 /** Default players per team, used when the organizer has set no override.

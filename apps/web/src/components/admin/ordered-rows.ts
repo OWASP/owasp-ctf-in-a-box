@@ -1,6 +1,6 @@
-// The ordered-list arithmetic the module admin panels (quiz, classic, ai)
+// The ordered-list arithmetic the module admin panels (quiz, classic)
 // share. Every panel holds a list of admin rows whose public half carries an
-// `id` and an `order`; the quiz's live at `row.question`, classic's and ai's
+// `id` and an `order`; the quiz's live at `row.question`, classic's
 // at `row.challenge`. That accessor difference is the ONLY thing that
 // separated three copies of sort/upsert/next-position and two copies of the
 // drag/keyboard reorder, so it is expressed once here as a small accessors

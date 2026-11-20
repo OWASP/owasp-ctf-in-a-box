@@ -34,7 +34,7 @@ export type ProgressItem = {
   /** Which of the three status colours the dot and word take. */
   tone: "done" | "open" | "unknown";
   /** OWASP code ("A01") or a classic category ("Web"); null when the module
-   *  has no grouping of its own — quiz and ai. */
+   *  has no grouping of its own — quiz. */
   group?: string | null;
 };
 

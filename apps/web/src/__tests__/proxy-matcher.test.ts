@@ -57,7 +57,7 @@ describe("the proxy matcher, compiled by Next", () => {
     "/api/team/join",
     "/api/classic/submit",
     "/api/stats/visit",
-    "/api/ai/submit",
+    "/api/reset-password",
     "/api/auth/callback/github",
     "/profile",
   ])("still runs on %s", (p) => {

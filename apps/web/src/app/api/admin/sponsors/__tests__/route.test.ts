@@ -6,6 +6,7 @@
 // other admin-* route test pins.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const { requireAdmin, listSponsorsForAdmin, upsertSponsor, deleteSponsor, reorderSponsors, writeAdminAudit, SponsorValidationError } =
   vi.hoisted(() => {
@@ -74,7 +75,7 @@ function oversizedReq(bytes: number): Request {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  requireAdmin.mockResolvedValue({ ok: true, login: "organizer" });
+  requireAdmin.mockResolvedValue({ ok: true, login: "organizer", player: { ...actor("organizer"), image: null, githubLogin: "organizer" } });
 });
 
 describe("GET /api/admin/sponsors", () => {
@@ -107,7 +108,7 @@ describe("POST /api/admin/sponsors — upsert", () => {
       { id: VALID.id, name: VALID.name, url: VALID.url, blurb: VALID.blurb, tier: VALID.tier, order: VALID.order },
       undefined,
     );
-    expect(writeAdminAudit).toHaveBeenCalledWith("organizer", "sponsors-upsert", { sponsorId: VALID.id });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("organizer"), "sponsors-upsert", { sponsorId: VALID.id });
   });
 
   it("passes a logo upload through as the three-valued logo argument", async () => {
@@ -153,7 +154,7 @@ describe("POST /api/admin/sponsors — reorder", () => {
     const res = await POST(adminReq("POST", { reorder: ["a", "b"] }));
     expect(reorderSponsors).toHaveBeenCalledWith(["a", "b"]);
     expect(await res.json()).toEqual({ sponsors: [VALID] });
-    expect(writeAdminAudit).toHaveBeenCalledWith("organizer", "sponsors-reorder", { count: 1 });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("organizer"), "sponsors-reorder", { count: 1 });
   });
 });
 
@@ -176,7 +177,7 @@ describe("DELETE /api/admin/sponsors", () => {
     const res = await DELETE(adminReq("DELETE", { id: "acme" }));
     expect(res.status).toBe(200);
     expect(deleteSponsor).toHaveBeenCalledWith("acme");
-    expect(writeAdminAudit).toHaveBeenCalledWith("organizer", "sponsors-delete", { sponsorId: "acme" });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("organizer"), "sponsors-delete", { sponsorId: "acme" });
   });
 
   it("rejects a missing id", async () => {

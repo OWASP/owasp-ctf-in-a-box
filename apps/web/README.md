@@ -1,6 +1,6 @@
 # apps/web — the contestant app
 
-The web app contestants and organizers use during an OWASP CTF in a Box event: GitHub sign-in, the challenge boards, leaderboard, profile, teams, paid hints and the `/admin` panel. Event name, dates, location, contact and Discord invite are runtime `/admin` → Event settings, not build-time config; `ADMIN_LOGINS` and `GITHUB_ORG` are `.env` keys read at container start (see [docs/hosting.md](../../docs/hosting.md#environment-variables)) — nothing event-specific is baked into the image.
+The web app contestants and organizers use during an OWASP CTF in a Box event: GitHub sign-in, the challenge boards, leaderboard, profile, teams, paid hints and the `/admin` panel. Event name, dates, location, contact and Discord invite are runtime `/admin` → Event settings, not build-time config; `ADMIN_CLAIM_CODE_HASH` and `GITHUB_ORG` are `.env` keys read at container start (see [docs/hosting.md](../../docs/hosting.md#environment-variables)) — nothing event-specific is baked into the image.
 
 It was vendored from `OWASP-CTF/ctf-owasp-org` on 2026-08-14; `VENDORED.md` records the delta (Vercel bits stripped, DynamoDB retired, the AWS Lambda replaced by the kit's local scorer). `AGENTS.md` next to this file points at the kit's operating manual, and `DESIGN_SYSTEM.md` is the palette and token authority.
 
@@ -28,7 +28,7 @@ Module enablement lives entirely in `/admin`'s Event tab; organizers switch modu
 - **Profile** (`/profile`) — requires sign-in; per-module progress plus the team card.
 - **Teams** — join by code, create, or leave. Default cap **4 players per team** (`TEAM_MAX_MEMBERS` in `src/lib/team-limits.ts`), changeable from `/admin` (1–100, ADR 45); joins are enforced in one atomic Lua `EVAL`, so the cap cannot be raced. One team per player.
 - **Paid hints** — reveal costs **10 points** by default (`HINT_COST` in `src/lib/hint-defaults.ts`), set from `/admin`. Charging is idempotent inside one `EVAL`, keyed by the session login; the scorer's totals are never decremented — the penalty is an overlay (`withHintPenalties`, floored at 0). Hints are on by default and toggled from `/admin`; there is no env var for either.
-- **Admin panel** (`/admin`) — module switches, freeze and scheduled scoring window, team cap, hint policy, activity log, insights, event export/import. Admins come from `ADMIN_LOGINS` in `.env`, read at container start (restart, not rebuild, to change).
+- **Admin panel** (`/admin`) — module switches, freeze and scheduled scoring window, team cap, hint policy, activity log, insights, event export/import. An admin is a kit account that claimed an admin claim code at `/admin/claim`; the first code's hash is `ADMIN_CLAIM_CODE_HASH` in `.env`, and admins issue more from the Admins tab.
 
 ## Tech stack
 
@@ -50,7 +50,7 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm dev            # http://localhost:3000
 ```
 
-There is no `predev`/`prebuild`/`pretest` generator step — the app reads no build-time config at all. Copy `.env.example` to `.env.local` for what `pnpm dev` reads: `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL=http://localhost:3000`, and a `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` pair if you need sign-in (callback `<BETTER_AUTH_URL>/api/auth/callback/github`). Everything else is optional and falls back to mocks; `.env.example` documents each variable, and `docker-compose.yml`'s `app` service is the authority for what a real event sets. Every variable, including `ADMIN_LOGINS` and `GITHUB_ORG`, is read at start, so a change means only a container restart, never a rebuild.
+There is no `predev`/`prebuild`/`pretest` generator step — the app reads no build-time config at all. Copy `.env.example` to `.env.local` for what `pnpm dev` reads: `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL=http://localhost:3000`, and a `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` pair if you need sign-in (callback `<BETTER_AUTH_URL>/api/auth/callback/github`). Everything else is optional and falls back to mocks; `.env.example` documents each variable, and `docker-compose.yml`'s `app` service is the authority for what a real event sets. Every variable, including `ADMIN_CLAIM_CODE_HASH` and `GITHUB_ORG`, is read at start, so a change means only recreating the container (`docker compose up -d --no-deps --force-recreate app`), never a rebuild.
 
 ## Testing
 
@@ -85,9 +85,9 @@ src/
   proxy.ts                  # Middleware: same-origin check on mutating /api, /profile sign-in redirect
   instrumentation.ts        # Startup checks (http:// EVENT_URL refusal)
   app/
-    (site)/                 # Pages: challenges, quiz, flags, ai, leaderboard, profile,
+    (site)/                 # Pages: challenges, quiz, flags, leaderboard, profile,
                             #   admin, join, how-to-play, rules, faq, privacy, terms
-    api/                    # auth, team, hints, quiz, classic, ai, admin, board,
+    api/                    # auth, team, hints, quiz, classic, admin, board,
                             #   me, post-signin, public, stats
   components/               # Header/footer, boards, leaderboard, team card, countdown
   lib/
@@ -95,7 +95,7 @@ src/
     resolved-modules.ts     # Runtime enablement + title/blurb overrides from Redis
     auth.ts                 # better-auth config; disabledPaths closes unused endpoints
     admin-store.ts          # ctf:admin:settings — pause, schedule, cap, hint policy
-    team-store.ts, hint-store.ts, quiz-store.ts, classic-store.ts, ai-store.ts
+    team-store.ts, hint-store.ts, quiz-store.ts, classic-store.ts
     launch.ts               # Pre-launch lock: page redirect + API 403 not-launched
     leaderboard/            # Source adapters (mock/lambda/empty) + overlays
     upstash.ts              # Redis REST client (pipeline + EVAL)
@@ -106,7 +106,7 @@ src/
 
 **Authentication surface.** better-auth mounts its whole default endpoint set under `src/app/api/auth/[...all]`; the app uses four routes and closes the rest with `disabledPaths` in `src/lib/auth.ts`. `POST /update-user` was the one that mattered — with no database it would re-sign the session cookie with a client-chosen `login`. Do not "harden" `login` to `input: false` (it breaks OAuth profile mapping), remember `disabledPaths` matches literal paths only, and keep `src/lib/__tests__/auth.test.ts` green — it fails when an upgrade adds an endpoint that is neither used nor closed.
 
-**Launch lock.** Until the event is launched — a **Scoring opens** (`scoringStartsAt`) that has passed — every module page (`/challenges`, `/flags`, `/quiz`, `/ai`, their detail pages, `/leaderboard`) calls `redirectIfNotLaunched(login)` before loading any content and sends a non-admin to `/`, and the module APIs (`POST /api/classic/submit`, `/api/quiz/answer`, `/api/hints/reveal`, `GET /api/board/items`, and the ai module's `/ai/[id]` server action) call `requireLaunchedApi(login)` and answer **403 `{ error: "not-launched" }`**. Both live in `src/lib/launch.ts`; admins pass as a preview; it fails closed. The check is per page and route, not in `src/proxy.ts` (the proxy makes no Redis reads), so `src/__tests__/launch-guard-coverage.test.ts` walks the module pages and routes on disk and fails if a new one forgets the guard. The contract is item 8 of [modules.md Section 5](../../docs/modules.md); the operator view is [Before launch](../../docs/operations.md#before-launch).
+**Launch lock.** Until the event is launched — a **Scoring opens** (`scoringStartsAt`) that has passed — every module page (`/challenges`, `/flags`, `/quiz`, their detail pages, `/leaderboard`) calls `redirectIfNotLaunched(login)` before loading any content and sends a non-admin to `/`, and the module APIs (`POST /api/classic/submit`, `/api/quiz/answer`, `/api/hints/reveal`, and `GET /api/board/items`) call `requireLaunchedApi(login)` and answer **403 `{ error: "not-launched" }`**. Both live in `src/lib/launch.ts`; admins pass as a preview; it fails closed. The check is per page and route, not in `src/proxy.ts` (the proxy makes no Redis reads), so `src/__tests__/launch-guard-coverage.test.ts` walks the module pages and routes on disk and fails if a new one forgets the guard. The contract is item 8 of [modules.md Section 5](../../docs/modules.md); the operator view is [Before launch](../../docs/operations.md#before-launch).
 
 **Reach counter.** `POST /api/stats/visit` does `HINCRBY stats:countries <iso2> 1` once per browser session, taking the country from `cf-ipcountry` or `x-geo-country` and validating it as ISO-3166 alpha-2; the body is ignored and no login, IP or timestamp is stored, which is the promise `/privacy` makes. The kit's Caddy does not set or strip that header, so on a bare deployment the tally is spoofable — accepted for an approximate, no-PII counter.
 

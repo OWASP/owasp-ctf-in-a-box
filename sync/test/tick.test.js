@@ -14,7 +14,12 @@ const CFG = {
 // selection itself is covered separately (tick-redis.test.js, redis.test.js).
 // A fixed single-target stub keeps these tests scoped to DVWA exactly as
 // before, instead of every call now looping the full six-target catalogue.
-const redisStub = { getSecureDevTargets: async () => ["dvwa"], isPaused: async () => false, writeStatus: async () => {} };
+const LINKS = { octocat: "11111111-1111-4111-8111-111111111111", mona: "33333333-3333-4333-8333-333333333333" };
+// Linked with no recorded time on an event with no end: the close rule never
+// bites, so these tests are about poll/parse/submit alone.
+const resolveGithubLink = async (login) => (LINKS[login.toLowerCase()] ? { player: LINKS[login.toLowerCase()], linkedAt: null } : null);
+const readScoringWindow = async () => ({ startsAt: "", endsAt: "" });
+const redisStub = { resolveGithubLink, readScoringWindow, getSecureDevTargets: async () => ["dvwa"], heldAuthors: async () => [], heldFor: async () => [], isPaused: async () => false, writeStatus: async () => {} };
 const tick = (cfg, state, deps = {}) => rawTick(cfg, state, { redis: redisStub, ...deps });
 
 const scoreBody = `<!-- ctf-score: {"author":"octocat","target":"dvwa","solved":["sqli-low"],"pr":7,"sha":"abc"} -->`;
@@ -38,7 +43,7 @@ test("polls, parses and submits new score comments once", async () => {
   const state = { repos: {} };
   await tick(CFG, state, { fetchImpl: f, log: () => {} });
   assert.equal(posts.length, 1);
-  assert.equal(posts[0].author, "octocat");
+  assert.equal(posts[0].player, LINKS.octocat);
   // second tick with same comment id: seen-set suppresses the repost
   await tick(CFG, state, { fetchImpl: f, log: () => {} });
   assert.equal(posts.length, 1);
@@ -96,7 +101,7 @@ test("2-comment batch: first fails 5xx, second succeeds 202; cursor stops at fir
       const payload = JSON.parse(opts.body);
       posts.push(payload);
       // 5xx for octocat, 202 for mona
-      return new Response(null, { status: payload.author === "octocat" ? 503 : 202 });
+      return new Response(null, { status: payload.player === LINKS.octocat ? 503 : 202 });
     }
     throw new Error(`unexpected url ${u}`);
   };
@@ -107,8 +112,8 @@ test("2-comment batch: first fails 5xx, second succeeds 202; cursor stops at fir
 
   // both were attempted to be submitted
   assert.equal(posts.length, 2);
-  assert.equal(posts[0].author, "octocat");
-  assert.equal(posts[1].author, "mona");
+  assert.equal(posts[0].player, LINKS.octocat);
+  assert.equal(posts[1].player, LINKS.mona);
 
   // seen: 1 was un-marked (failed), 2 was kept (succeeded)
   assert.equal(state.repos.DVWA.seen.includes(seenKey(1, "2026-08-13T11:00:00Z")), false);
@@ -138,7 +143,7 @@ test("2-comment batch: first fails 5xx, second succeeds 202; cursor stops at fir
 
   // comment 1 was re-submitted (un-marked on first tick), comment 2 was skipped (still in seen)
   assert.equal(posts2.length, 1);
-  assert.equal(posts2[0].author, "octocat");
+  assert.equal(posts2[0].player, LINKS.octocat);
 
   // both in seen now, cursor advanced fully
   assert.equal(state.repos.DVWA.seen.includes(seenKey(1, "2026-08-13T11:00:00Z")), true);
@@ -158,6 +163,34 @@ test("2-comment batch: first fails 5xx, second succeeds 202; cursor stops at fir
 // can reach tick from somewhere other than a freshly-loaded file (a master
 // reset reassigns `state.repos` mid-tick), and this is the boundary that has
 // to hold regardless of how the object got here.
+
+test("after an author's comment fails, their later comments wait for it, unseen, and go in order next tick", async () => {
+  const older = ghComment(1, `<!-- ctf-score: {"author":"Stranger","target":"dvwa","solved":["sqli-low"],"pr":7,"sha":"old"} -->`);
+  const newer = { ...ghComment(2, `<!-- ctf-score: {"author":"stranger","target":"dvwa","solved":["sqli-low"],"pr":8,"sha":"new"} -->`), updated_at: "2026-08-13T11:05:00Z" };
+  const other = { ...ghComment(3), updated_at: "2026-08-13T11:06:00Z" }; // octocat, linked
+  let failOnce = true;
+  const held = [];
+  const redis = {
+    ...redisStub,
+    // The older comment's lookup fails once; the author is unlinked, so the
+    // newer one would otherwise be held now and released before the retry.
+    resolveGithubLink: async (login) => {
+      if (login === "Stranger" && failOnce) { failOnce = false; throw new Error("upstash: NOAUTH"); }
+      return resolveGithubLink(login);
+    },
+    holdScore: async (_l, field) => { held.push(field); },
+  };
+  const posts = [];
+  const f = routes(() => new Response(JSON.stringify([older, newer, other]), { status: 200, headers: {} }), 202, posts);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  assert.deepEqual(held, [], "nothing held while the older comment is unresolved");
+  assert.equal(state.repos.DVWA.seen.includes(seenKey(2, "2026-08-13T11:05:00Z")), false, "the newer one stays unseen");
+  assert.deepEqual(posts.map((p) => p.sha), ["abc"], "another author is not held back");
+  assert.equal(state.repos.DVWA.since, "2026-08-13T11:00:00Z");
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  assert.deepEqual(held, [seenKey(1, "2026-08-13T11:00:00Z"), seenKey(2, "2026-08-13T11:05:00Z")], "both held, oldest first");
+});
 
 test("a bare {} state polls normally instead of throwing", async () => {
   const posts = [];
@@ -217,7 +250,7 @@ test("ingests the real score when a placeholder comment is later edited into one
   current = scored;
   await tick(CFG, state, { fetchImpl: f, log: () => {} });
   assert.equal(posts.length, 1, "the edit carrying the real score MUST be ingested");
-  assert.equal(posts[0].author, "octocat");
+  assert.equal(posts[0].player, LINKS.octocat);
   assert.deepEqual(posts[0].solved, ["sqli-low"]);
 
   // …and still exactly once: a third tick with no further edit re-submits nothing.
@@ -265,7 +298,7 @@ test("after a reset, a bot comment last edited before the epoch is skipped and o
   const state = { repos: {} };
   await tick(CFG, state, { fetchImpl: f, log: () => {}, redis: withReset(resetAt) });
   assert.equal(posts.length, 1, "only the post-reset revision reaches the scorer");
-  assert.equal(posts[0].author, "mona");
+  assert.equal(posts[0].player, LINKS.mona);
   // The skipped comment is still marked seen: the next tick must not re-walk it.
   assert.equal(state.repos.DVWA.seen.includes(seenKey(1, "2026-08-13T11:00:00Z")), true);
 });
@@ -365,4 +398,214 @@ test("a final refusal (422) is marked seen, logged with its reason, and not coun
   assert.equal(state.repos.DVWA.etag, 'W/"r"'); // the cursor moved on: nothing to retry
   await tick(CFG, state, { fetchImpl: f, log: () => {} });
   assert.equal(posts.length, 1, "a refused revision is never re-presented");
+});
+
+test("a deleted player's score (422 player-deleted) is logged with its reason, seen, not dropped, not retried", async () => {
+  const posts = [];
+  const f = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/issues/comments")) return new Response(JSON.stringify([ghComment(23)]), { status: 200, headers: { etag: 'W/"r"' } });
+    if (u.endsWith("/score")) {
+      posts.push(JSON.parse(opts.body));
+      return new Response(JSON.stringify({ error: "player deleted", refused: "player-deleted" }), { status: 422 });
+    }
+    throw new Error(`unexpected url ${u}`);
+  };
+  const state = { repos: {} };
+  const logs = [];
+  await tick(CFG, state, { fetchImpl: f, log: (m) => logs.push(m) });
+  assert.equal(state.dropped, 0);
+  assert.equal(state.lastDrop, undefined);
+  assert.ok(logs.some((l) => /DVWA#7: refused \(player-deleted\), not scored/.test(l)), logs.join("\n"));
+  assert.equal(state.repos.DVWA.seen.includes(seenKey(23, "2026-08-13T11:00:00Z")), true);
+  await tick(CFG, state, { fetchImpl: f, log: () => {} });
+  assert.equal(posts.length, 1, "a refused revision is never re-presented");
+});
+
+test("a 503 (player scores on hold) is retried next tick and not marked seen", async () => {
+  const posts = [];
+  let n = 0;
+  const f = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/issues/comments")) return new Response(JSON.stringify([ghComment(23)]), { status: 200, headers: { etag: 'W/"r"' } });
+    if (u.endsWith("/score")) {
+      posts.push(JSON.parse(opts.body));
+      return ++n === 1
+        ? new Response(JSON.stringify({ error: "player scores on hold" }), { status: 503 })
+        : new Response(null, { status: 202 });
+    }
+    throw new Error(`unexpected url ${u}`);
+  };
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {} });
+  assert.equal(state.dropped, 0);
+  assert.deepEqual(state.repos.DVWA.seen, []);
+  await tick(CFG, state, { fetchImpl: f, log: () => {} });
+  assert.equal(posts.length, 2, "re-presented on the next tick");
+  assert.equal(state.repos.DVWA.seen.includes(seenKey(23, "2026-08-13T11:00:00Z")), true);
+});
+
+// #742: a score is attributed to the player who claimed the PR author's GitHub
+// login (`ctf:link:github:<lowercased login>`), never to the login itself.
+test("a mixed-case author resolves through the lowercased link key", async () => {
+  const keys = [];
+  const redis = { ...redisStub, resolveGithubLink: async (l) => { keys.push(l); return resolveGithubLink(l); } };
+  const posts = [];
+  const body = `<!-- ctf-score: {"author":"OctoCat","target":"dvwa","solved":["sqli-low"],"pr":7,"sha":"abc"} -->`;
+  const f = routes(() => new Response(JSON.stringify([ghComment(1, body)]), { status: 200, headers: {} }), 202, posts);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].player, LINKS.octocat);
+  assert.equal("author" in posts[0], false, "the score is keyed by the player, never the author");
+  // The login the player was resolved through, lowercased as the link key
+  // is: the scorer writes only while that link still names the player.
+  assert.equal(posts[0].login, "octocat");
+});
+
+test("an unlinked author's score is held, not dropped, without naming the login or comment id", async () => {
+  const posts = [];
+  const logs = [];
+  const held = [];
+  const redis = { ...redisStub, holdScore: async (...a) => { held.push(a); } };
+  const body = `<!-- ctf-score: {"author":"Stranger","target":"dvwa","solved":["sqli-low"],"pr":9,"sha":"abc"} -->`;
+  const f = routes(() => new Response(JSON.stringify([ghComment(4242, body)]), { status: 200, headers: {} }), 202, posts);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: (m) => logs.push(m), redis });
+  assert.equal(posts.length, 0);
+  assert.deepEqual(held, [["Stranger", "4242@2026-08-13T11:00:00Z", { target: "dvwa", solved: ["sqli-low"], pr: 9, sha: "abc", at: "2026-08-13T11:00:00Z", repo: "DVWA" }]]);
+  assert.equal(state.dropped ?? 0, 0);
+  assert.equal(state.lastDrop ?? null, null);
+  const text = logs.join("\n");
+  assert.match(text, /1 held/);
+  assert.equal(/stranger/i.test(text), false);
+  assert.equal(text.includes("4242"), false);
+});
+
+test("a held score stays seen: the next tick does not hold it again", async () => {
+  const held = [];
+  const redis = { ...redisStub, holdScore: async (...a) => { held.push(a); } };
+  const body = `<!-- ctf-score: {"author":"stranger","target":"dvwa","solved":["sqli-low"],"pr":9,"sha":"abc"} -->`;
+  const f = routes(() => new Response(JSON.stringify([ghComment(1, body)]), { status: 200, headers: {} }), 202, []);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(held.length, 1);
+});
+
+test("holdScore throwing un-marks the revision, stops the cursor and logs retried", async () => {
+  let fail = true;
+  const held = [];
+  const redis = { ...redisStub, holdScore: async (...a) => { if (fail) throw new Error("upstash: NOAUTH"); held.push(a); } };
+  const logs = [];
+  const body = `<!-- ctf-score: {"author":"stranger","target":"dvwa","solved":["sqli-low"],"pr":9,"sha":"abc"} -->`;
+  const f = routes(() => new Response(JSON.stringify([ghComment(1, body)]), { status: 200, headers: {} }), 202, []);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: (m) => logs.push(m), redis });
+  assert.equal(state.repos.DVWA.seen.includes(seenKey(1, "2026-08-13T11:00:00Z")), false);
+  assert.equal(state.repos.DVWA.since, "2026-08-13T11:00:00Z");
+  assert.equal(state.repos.DVWA.etag, null);
+  assert.match(logs.join("\n"), /1 retried/);
+  fail = false;
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(held.length, 1);
+});
+
+test("a resolver error leaves the comment unseen so the next poll retries it", async () => {
+  let fail = true;
+  const redis = { ...redisStub, resolveGithubLink: async (l) => { if (fail) throw new Error("upstash: NOAUTH"); return resolveGithubLink(l); } };
+  const posts = [];
+  const f = routes(() => new Response(JSON.stringify([ghComment(1)]), { status: 200, headers: {} }), 202, posts);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(posts.length, 0);
+  assert.equal(state.dropped ?? 0, 0);
+  fail = false;
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].player, LINKS.octocat);
+});
+
+test("a tick with no Redis client refuses rather than treating authors as unlinked", async () => {
+  await assert.rejects(rawTick(CFG, { repos: {} }, { fetchImpl: async () => { throw new Error("no"); }, log: () => {} }), /Redis client/);
+});
+
+// #741: a link made at or after the scoring close never counts, whichever
+// path first sees the score. A comment from before the close that sync reads
+// only after a late link is held (unclaimed), exactly as the release step
+// would keep it.
+const CLOSE = "2026-08-13T12:00:00Z"; // ghComment's updated_at is 11:00, inside
+const closeCase = (linkedAt, endsAt) => {
+  const posts = [];
+  const held = [];
+  const redis = {
+    ...redisStub,
+    resolveGithubLink: async () => ({ player: LINKS.octocat, linkedAt }),
+    readScoringWindow: async () => ({ startsAt: "", endsAt }),
+    holdScore: async (...a) => { held.push(a); },
+  };
+  const f = routes(() => new Response(JSON.stringify([ghComment(1)]), { status: 200, headers: {} }), 202, posts);
+  return { posts, held, run: () => tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis }) };
+};
+
+test("comment pass: a link made before the close posts the score", async () => {
+  const c = closeCase(Date.parse(CLOSE) - 60_000, CLOSE);
+  await c.run();
+  assert.equal(c.posts.length, 1);
+  assert.equal(c.posts[0].player, LINKS.octocat);
+  assert.deepEqual(c.held, []);
+});
+
+test("comment pass: a link made after the close holds a score from before it", async () => {
+  const c = closeCase(Date.parse(CLOSE) + 5 * 60_000, CLOSE);
+  await c.run();
+  assert.deepEqual(c.posts, []);
+  assert.deepEqual(c.held, [["octocat", "1@2026-08-13T11:00:00Z", { target: "dvwa", solved: ["sqli-low"], pr: 7, sha: "abc", at: "2026-08-13T11:00:00Z", repo: "DVWA" }]]);
+});
+
+test("comment pass: a link at the very instant of the close is after it: held", async () => {
+  const c = closeCase(Date.parse(CLOSE), CLOSE);
+  await c.run();
+  assert.deepEqual(c.posts, []);
+  assert.equal(c.held.length, 1);
+});
+
+test("comment pass: a link with no recorded time, with an end set, holds", async () => {
+  const c = closeCase(null, CLOSE);
+  await c.run();
+  assert.deepEqual(c.posts, []);
+  assert.equal(c.held.length, 1);
+});
+
+test("comment pass: with no end set, a late or untimed link posts", async () => {
+  for (const linkedAt of [null, Date.parse(CLOSE) + 5 * 60_000]) {
+    const c = closeCase(linkedAt, "");
+    await c.run();
+    assert.equal(c.posts.length, 1, `linkedAt ${linkedAt}`);
+    assert.deepEqual(c.held, []);
+  }
+});
+
+test("comment pass: an unreadable window leaves the comment unseen for a retry, never posted", async () => {
+  const posts = [];
+  const redis = { ...redisStub, readScoringWindow: async () => { throw new Error("upstash: NOAUTH"); } };
+  const f = routes(() => new Response(JSON.stringify([ghComment(1)]), { status: 200, headers: {} }), 202, posts);
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
+  assert.deepEqual(posts, []);
+  assert.equal(state.repos.DVWA.seen.includes(seenKey(1, "2026-08-13T11:00:00Z")), false);
+});
+
+test("the window is read at most once per tick, shared by the release step and the comment pass", async () => {
+  let reads = 0;
+  const redis = {
+    ...redisStub,
+    readScoringWindow: async () => { reads++; return { startsAt: "", endsAt: "" }; },
+    heldAuthors: async () => ["someone"],
+    heldFor: async () => [],
+    resolveGithubLink: async (l) => (l === "someone" ? null : resolveGithubLink(l)),
+  };
+  const two = [ghComment(1), { ...ghComment(2), updated_at: "2026-08-13T11:01:00Z" }];
+  const f = routes(() => new Response(JSON.stringify(two), { status: 200, headers: {} }), 202, []);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(reads, 1);
 });

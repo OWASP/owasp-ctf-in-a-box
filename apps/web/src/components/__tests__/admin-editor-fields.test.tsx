@@ -1,4 +1,4 @@
-// The form fields the classic and ai challenge forms share (and the quiz's
+// The form fields the classic challenge form uses (and the quiz's
 // points/position pair): each one rendered statically to pin the label, the
 // control type and the attributes an organizer's browser relies on — the
 // masked flag, the description's length cap, the preview through the board's
@@ -33,7 +33,7 @@ describe("TextField", () => {
 
   it("states type=text, which is how EditorFrame finds it to focus (#282)", () => {
     // An attribute-less input behaves identically but does not match
-    // `input[type='text']`, so the classic and ai forms opened with the cursor
+    // `input[type='text']`, so the classic form opened with the cursor
     // nowhere. Asserted on the attribute rather than on focus because these
     // tests render to static markup and never mount.
     expect(renderToStaticMarkup(<TextField label="Title" value="" disabled={false} onChange={noop} />)).toMatch(

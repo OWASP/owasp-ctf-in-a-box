@@ -10,7 +10,7 @@
 // an empty event is legal, and the landing page says so instead of showing
 // a broken board.
 
-import { ALL_MODULE_IDS, moduleDefById } from "@/lib/modules";
+import { ALL_MODULE_IDS, moduleDefById, type ModuleDeprecation } from "@/lib/modules";
 
 export type ModuleToggleChoice = {
   id: string;
@@ -19,6 +19,9 @@ export type ModuleToggleChoice = {
    *  image. `reason` says so on the row instead of leaving a dead control. */
   toggleable: boolean;
   reason?: string;
+  /** The registry's `ModuleDef.deprecated`, for the switch's help line and
+   *  the enable confirmation. */
+  deprecated?: ModuleDeprecation;
 };
 
 /** One row per registered module. Secure Development is locked only when
@@ -31,6 +34,7 @@ export function moduleChoices(secureDevAvailable: boolean): readonly ModuleToggl
     id: id as string,
     label: moduleDefById(id)?.displayName ?? (id as string),
     toggleable: id !== "secure-development" || secureDevAvailable,
+    deprecated: moduleDefById(id)?.deprecated,
     reason:
       id === "secure-development" && !secureDevAvailable
         ? "This deployment has no scorer image (SCORE_IMAGE is unset), so Secure Development cannot run here. Configure SCORE_IMAGE for this deployment and redeploy."
@@ -52,11 +56,12 @@ export function moduleChoices(secureDevAvailable: boolean): readonly ModuleToggl
 export function moduleToggleState(
   mod: ModuleToggleChoice,
   live: ReadonlySet<string>,
-): { on: boolean; disabled: boolean; help: string | undefined } {
+): { on: boolean; disabled: boolean; help: string | undefined; deprecated?: ModuleDeprecation } {
   const on = live.has(mod.id);
-  if (mod.toggleable) return { on, disabled: false, help: undefined };
-  if (on) return { on, disabled: false, help: `${mod.reason} It is switched off on your next change to any module.` };
-  return { on, disabled: true, help: mod.reason };
+  const deprecated = mod.deprecated;
+  if (mod.toggleable) return { on, disabled: false, help: undefined, deprecated };
+  if (on) return { on, disabled: false, help: `${mod.reason} It is switched off on your next change to any module.`, deprecated };
+  return { on, disabled: true, help: mod.reason, deprecated };
 }
 
 /** The confirmation for flipping one module, and the enabled set it writes.
@@ -65,7 +70,7 @@ export function moduleToggleConfirm(
   mod: ModuleToggleChoice,
   next: boolean,
   live: ReadonlySet<string>,
-): { title: string; body: string; confirmLabel: string; ids: string[] } {
+): { title: string; body: string; confirmLabel: string; ids: string[]; deprecated?: ModuleDeprecation } {
   const ids = next ? [...live, mod.id] : [...live].filter((id) => id !== mod.id);
   return {
     title: next ? `Enable ${mod.label}?` : `Disable ${mod.label}?`,
@@ -74,5 +79,7 @@ export function moduleToggleConfirm(
       : `${mod.label} disappears from the nav and its board stops resolving, for everyone, on their next page load. Nothing is deleted — enabling it again brings the same board back.`,
     confirmLabel: next ? "Enable" : "Disable",
     ids,
+    // Said when switching a deprecated module ON, the moment it matters.
+    deprecated: next ? mod.deprecated : undefined,
   };
 }

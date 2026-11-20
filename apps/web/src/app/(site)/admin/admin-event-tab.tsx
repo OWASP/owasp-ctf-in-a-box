@@ -20,14 +20,18 @@ import { useEffect, useState } from "react";
 import type { AdminSettings } from "@/lib/admin-store";
 import { launchState, outsideScoringWindow, outsideWindow, serverFloorNow } from "@/lib/schedule-window";
 import { TEAM_MAX_MEMBERS, TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
+import { PROVIDER_LABEL, PROVIDER_SWITCH_FIELD, type SignInProviderId } from "@/lib/sign-in-providers";
 import { DEFAULT_EVENT_IDENTITY, EVENT_IDENTITY_MAX, type EventIdentityKey } from "@/lib/event-identity";
 import { DEFAULT_EVENT_TIME_ZONE, instantToWall, resolveTimeZone, wallToInstant, zoneLabel } from "@/lib/event-time";
 import AdminEventControls from "@/components/admin-event-controls";
 import AdminNumberField, { FieldStatusLine, type FieldStatus } from "@/components/admin-number-field";
 import AdminSwitch from "@/components/admin-switch";
+import { deleteAllAccountsConfirm } from "./admin-danger-actions";
 import { FREEZE_HELP, freezeConfirm } from "./freeze-copy";
 import { IdentityField } from "./admin-module-identity";
 import AdminEventImages from "./admin-event-images";
+import AdminEventAnnouncements from "./admin-event-announcements";
+import { withDeprecation } from "./module-deprecation";
 import { moduleToggleConfirm, moduleToggleState, type ModuleToggleChoice } from "./module-toggle";
 import type { CommitNumber, ConfirmState } from "./types";
 
@@ -200,6 +204,8 @@ export type AdminEventTabProps = {
    *  type. Resolved server-side by getSite(); a client bundle cannot read
    *  settings. */
   eventName: string;
+  /** The providers whose keys are in .env, resolved server-side. */
+  configuredSignInProviders: readonly SignInProviderId[];
   /** A write that belongs to one field or switch: reported into that row's
    *  status rather than the panel-wide error line (UX audit F2). */
   applyField: (key: string, patch: Record<string, unknown>, label: string) => Promise<boolean>;
@@ -208,6 +214,7 @@ export type AdminEventTabProps = {
   doReset: (confirmValue: string) => Promise<void>;
   doSeed: () => Promise<void>;
   doClearDemo: () => Promise<void>;
+  doDeleteAllAccounts: (confirmValue: string) => Promise<void>;
   teamMaxMembersInput: string;
   setTeamMaxMembersInput: (v: string) => void;
   commitNumber: CommitNumber;
@@ -234,12 +241,14 @@ export default function AdminEventTab({
   pending,
   resetInfo,
   eventName,
+  configuredSignInProviders,
   applyField,
   statusOf,
   setConfirm,
   doReset,
   doSeed,
   doClearDemo,
+  doDeleteAllAccounts,
   teamMaxMembersInput,
   setTeamMaxMembersInput,
   commitNumber,
@@ -343,6 +352,48 @@ export default function AdminEventTab({
         />
       </section>
 
+      <section className="flex flex-col gap-3 border-b border-white/[0.06] pb-4">
+        <div>
+          <h3 className="text-white">Sign-in</h3>
+          <p className="text-sm text-muted">
+            Username and password is always on. GitHub sign-in appears here once its client id and secret are in .env and the app has restarted. Switching it off also stops players whose only way in is GitHub; they can add a password from their profile first, or an organizer can help.
+          </p>
+        </div>
+        {configuredSignInProviders.length === 0 ? (
+          <p className="text-sm text-muted">
+            GitHub sign-in is not configured. Add GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET to .env and restart.
+          </p>
+        ) : (
+          configuredSignInProviders.map((id) => {
+            const field = PROVIDER_SWITCH_FIELD[id];
+            const label = `${PROVIDER_LABEL[id]} sign-in`;
+            return (
+              <AdminSwitch
+                key={id}
+                id={`event-sign-in-${id}`}
+                label={label}
+                help={
+                  id === "github" && live.has("secure-development")
+                    ? "Players can still link GitHub from their profile for Secure Development while this is off."
+                    : undefined
+                }
+                checked={settings.signInProviders[id]}
+                disabled={pending}
+                status={statusOf(field)}
+                onChange={(next) => void applyField(field, { [field]: next }, label)}
+              />
+            );
+          })
+        )}
+      </section>
+
+      {/* Discord announcements (#590) — also stored apart from the settings
+          hash (its own keys, its own endpoints), so it self-contains like
+          the images section above. */}
+      <section className="flex flex-col gap-3 border-b border-white/[0.06] pb-4">
+        <AdminEventAnnouncements setConfirm={setConfirm} timeZone={zone} />
+      </section>
+
       <section className="flex flex-col gap-2 border-b border-white/[0.06] pb-4">
         <div>
           <h3 className="text-white">Modules</h3>
@@ -362,7 +413,7 @@ export default function AdminEventTab({
               key={mod.id}
               id={`module-${mod.id}`}
               label={mod.label}
-              help={toggle.help}
+              help={withDeprecation(toggle.help, toggle.deprecated)}
               checked={toggle.on}
               disabled={pending || toggle.disabled}
               status={statusOf(`module:${mod.id}`)}
@@ -370,7 +421,7 @@ export default function AdminEventTab({
                 const c = moduleToggleConfirm(mod, next, live);
                 setConfirm({
                   title: c.title,
-                  body: c.body,
+                  body: withDeprecation(c.body, c.deprecated),
                   confirmLabel: c.confirmLabel,
                   onConfirm: () => applyField(`module:${mod.id}`, { enabledModules: c.ids }, mod.label),
                 });
@@ -596,7 +647,7 @@ export default function AdminEventTab({
           Event archive — export / import
         </summary>
         <p className="mt-2 text-sm text-muted">
-          Export the whole event — Jeopardy, Quiz and AI content plus event policy settings — as one JSON file. Export
+          Export the whole event — Jeopardy and Quiz content plus event policy settings — as one JSON file. Export
           changes nothing; it is worth running before any of the actions below. Import replaces the event wholesale
           from a previously exported file, which runs the same wipe as the master reset, and asks twice before it does.
         </p>
@@ -687,10 +738,9 @@ export default function AdminEventTab({
               Wipes every contestant&apos;s <strong>progress</strong> — teams,
               points, solves, attempts and hint spend — freezes scoring, and
               cannot be undone. It <strong>keeps</strong> everything you
-              authored: quiz questions and their answer key, Jeopardy and AI
+              authored: quiz questions and their answer key, Jeopardy
               challenges with their flags, hints and categories, and every
-              setting on this screen. It does rotate the AI launch key, so an
-              external challenge site has to re-fetch it. Export the archive
+              setting on this screen. Export the archive
               above first if you want a way back.
             </span>
             <span className="block text-sm text-muted">
@@ -716,8 +766,7 @@ export default function AdminEventTab({
                     questions, challenges, flags, hints, categories — and every
                     setting except the launch are kept: the event returns to not
                     launched, so contestants see the landing page until you launch
-                    again. The AI launch key is rotated, so an external
-                    challenge site must re-fetch it. This cannot be undone.
+                    again. This cannot be undone.
                   </>
                 ),
                 onConfirm: () => doReset(eventName),
@@ -728,6 +777,29 @@ export default function AdminEventTab({
             Reset event data…
           </button>
           {resetInfo && <p className="text-sm text-[#22c55e]">{resetInfo}</p>}
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <div>
+            <span className="text-white">Delete all accounts</span>
+            <span className="block text-sm text-muted">
+              Removes every account, <strong>including yours</strong>, every admin
+              grant and all progress. Authored content and settings stay. This
+              panel is closed afterwards until someone claims it with a new claim
+              code.
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              const c = deleteAllAccountsConfirm();
+              setConfirm({ ...c, onConfirm: () => doDeleteAllAccounts(c.requireType) });
+            }}
+            className="self-start rounded-md border border-[#e53e3e]/40 px-3 py-1.5 text-sm font-medium text-[#e53e3e] hover:bg-[#e53e3e]/10 disabled:opacity-50"
+          >
+            Delete all accounts…
+          </button>
         </div>
       </div>
     </section>

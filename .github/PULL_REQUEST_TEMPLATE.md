@@ -33,6 +33,11 @@
 
 ## Checklist
 
+- [ ] I am assigned the issue this PR closes, or no maintainer answered my
+      claim within 3 days and I said so on the issue, or it is exempt (a
+      typo or small docs fix, or an issue I filed and said on it that I am
+      working on). See
+      [Claiming an issue](../CONTRIBUTING.md#claiming-an-issue).
 - [ ] CI is green.
 - [ ] My tests can FAIL: I can name the single-token mutation of this change
       that each new/changed test would catch. (A test satisfiable whether or
@@ -47,9 +52,10 @@
 - [ ] No AI attribution in commits or this PR (no "Generated with", no
       `Co-authored-by:` trailers for an AI tool/agent).
 - [ ] Docs updated if this changes user-facing behavior or commands.
-- [ ] `CHANGELOG.md` gains a new line under `## Unreleased` if this changes
-      code in `apps/`, `sync/`, `scorer/`, `setup/` or `deploy/` (the
-      `changelog` check fails without one; a maintainer applies
+- [ ] A new `changelog.d/<issue>-<slug>.md` fragment holds the entry if this
+      changes code in `apps/`, `sync/`, `scorer/`, `setup/` or `deploy/` (the
+      `changelog` check fails without one, and editing `CHANGELOG.md` does
+      not count; a maintainer applies
       `no-changelog` for an internal-only change). Tests and `.md` files are
       exempt, except that under `scorer/rubric*/` only the `.md` files are:
       a rubric's tests are what the judge runs, so changing one moves scores.

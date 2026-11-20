@@ -205,6 +205,22 @@ function useCooldown(retryAt: string | undefined): { mounted: boolean; remaining
   return state;
 }
 
+/** Submits selected quiz choices to `/api/quiz/answer` and returns the parsed
+ *  status + body. Exported for direct testing so 429 cooldown refusals and
+ *  non-JSON error bodies stay covered without testing-library. */
+export async function dispatchAnswer(
+  questionId: string,
+  choices: string[],
+): Promise<{ ok: boolean; data: AnswerResponse }> {
+  const res = await fetch("/api/quiz/answer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ questionId, choices }),
+  });
+  const data = (await res.json().catch(() => ({}))) as AnswerResponse;
+  return { ok: res.ok, data };
+}
+
 export default function QuizBoard({
   questions,
   authenticated,
@@ -244,13 +260,8 @@ export default function QuizBoard({
     setPending((prev) => ({ ...prev, [question.id]: true }));
     setFeedback((prev) => ({ ...prev, [question.id]: undefined }));
     try {
-      const res = await fetch("/api/quiz/answer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionId: question.id, choices }),
-      });
-      const data = (await res.json().catch(() => ({}))) as AnswerResponse;
-      if (res.ok && "correct" in data) {
+      const { ok, data } = await dispatchAnswer(question.id, choices);
+      if (ok && "correct" in data) {
         setFeedback((prev) => ({
           ...prev,
           [question.id]: data.correct

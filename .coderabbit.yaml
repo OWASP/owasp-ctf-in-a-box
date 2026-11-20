@@ -58,14 +58,14 @@ reviews:
   labeling_instructions:
     - label: "security"
       instructions: >
-        Apply when the PR touches the admins allowlist, the scorer's token
+        Apply when the PR touches the admin roster or claim codes, the scorer's token
         compare, the sync trust filter or login grammar, the flag/answer-key
         secrecy boundary, the Markdown renderer, the origin assertion, rate
         limits, or a workflow running on pull_request_target.
     - label: "breaking-change"
       instructions: >
         Apply when the PR removes or renames a `.env` key (`GITHUB_ORG`,
-        `ADMIN_LOGINS`, `SCORE_IMAGE`, `EVENT_URL`, or another key
+        `ADMIN_CLAIM_CODE_HASH`, `SCORE_IMAGE`, `EVENT_URL`, or another key
         `.env.example` lists) or a `ctf:admin:settings` field, a registered
         module id, a ctf:* Redis key name or value shape, the scorer's POST
         /score or GET /leaderboard payloads, GET /api/public/scoring, or a
@@ -226,7 +226,7 @@ reviews:
         regexes and by sync's MARKER. A shape change needs both pinned tests
         updated in the same PR.
 
-    - path: "apps/web/src/lib/{quiz,classic,ai}-{store,keys}.ts"
+    - path: "apps/web/src/lib/{quiz,classic}-{store,keys}.ts"
       instructions: |
         These hold the answer keys and flags. Flag
         ⚠️ WARNING: <description> — <fix> for:
@@ -299,17 +299,24 @@ reviews:
         rather than emptySource. Placeholder rows would be indistinguishable
         from real standings on a board carrying real quiz or classic points.
 
-    - path: "apps/web/src/lib/{admin-store,admin-auth,resolved-modules,hint-store,rate-limit-store,launch}.ts"
+    - path: "apps/web/src/lib/{admin-store,admin-auth,admin-grants,admin-claim,resolved-modules,hint-store,rate-limit-store,launch}.ts"
       instructions: |
         Runtime-override and access-control layer. Flag
         ⚠️ WARNING: <description> — <fix> for:
 
         requireAdmin direction — must fail CLOSED; an unreachable store denies
-        rather than resolving to an empty list. `ADMIN_LOGINS` env admins are
-        checked first without touching Redis and stay non-revocable at
-        runtime — they are the lockout recovery path. An EMPTY `ADMIN_LOGINS`
-        must refuse every login, never fall open to "no allowlist configured,
-        let runtime grants decide".
+        rather than resolving to "no grant". Admin-ness is the player id in
+        `ctf:admin:grants` (ADR 72), never a GitHub login and never an env
+        list. The claim route's rate limit is charged FAIL CLOSED
+        (`failClosed: true`) and a claim error answers 503, never a grant. An
+        empty or malformed `ADMIN_CLAIM_CODE_HASH` disables the bootstrap
+        claim; it must never fall open. The revoke script must keep refusing
+        the last grant whose account still exists.
+
+        Claim-code secrecy — a claim code or its full SHA-256 must never be
+        logged, audited, rendered or returned, except the one response that
+        hands a freshly issued code to the admin who issued it. Audit rows
+        carry `codeId` (eight hex), nothing longer.
 
         Override precedence — every reader is override-else-default
         (`settings.x ?? DEFAULT_X`), never the reverse.
@@ -363,7 +370,7 @@ reviews:
         Two independent reads in one request can disagree on an unlucky Redis
         blip; the memoized snapshot is what makes it once per request.
 
-        Baked bootstrap value — a `GITHUB_ORG`/`ADMIN_LOGINS`/`SCORE_IMAGE`
+        Baked bootstrap value — a `GITHUB_ORG`/`ADMIN_CLAIM_CODE_HASH`/`SCORE_IMAGE`
         default reintroduced as a build-time constant or a generated module.
         These are runtime environment reads; no image takes a config build-arg.
 
@@ -371,11 +378,11 @@ reviews:
       instructions: |
         Flag ⚠️ WARNING: <description> — <fix> for:
 
-        Client-side bootstrap read — `process.env.ADMIN_LOGINS`,
+        Client-side bootstrap read — `process.env.ADMIN_CLAIM_CODE_HASH`,
         `process.env.GITHUB_ORG`, `process.env.SCORE_IMAGE`, or any
         `bootstrap-env.ts` export, reached from a module carrying
-        `"use client"` or from anything such a module imports. The admins list
-        must never reach a client bundle (config v2, #386; docs/reviewing.md
+        `"use client"` or from anything such a module imports. The claim-code
+        hash must never reach a client bundle (config v2, #386; docs/reviewing.md
         section 10).
 
         Statically prerendered `/` — a `force-static`, a `generateStaticParams`,
@@ -397,9 +404,8 @@ reviews:
         attempts, hint spend, team membership, answer keys, flags, metrics)
         without requireAdmin. Carve-out: a route reading ONLY the
         authenticated caller's OWN row, where that identity is
-        cryptographically bound — a verified launch token's `sub`, or a
-        session login — is self-service, not an admin surface; GET
-        /api/ai/state is the example. Reading ANY OTHER contestant's data
+        bound to the session login — is self-service, not an admin surface;
+        GET /api/hints is the example. Reading ANY OTHER contestant's data
         still requires requireAdmin.
 
         Oracle ordering — running the team check or launch lock AFTER
@@ -415,19 +421,20 @@ reviews:
         trees, so a new module's API root must be added there too.
 
         Public surface growth — GET /api/public/scoring, GET
-        /api/ai/launch-key, GET /api/board/items, GET
+        /api/board/items, GET
         /api/sponsors/logo/[id], GET /api/attachments/[id], GET
         /api/event/logo and GET /api/event/icon are the ONLY
         sanctioned unauthenticated GET routes, and POST /api/stats/visit (the
-        no-PII per-country reach counter, always 204) the ONLY sanctioned
-        unauthenticated POST — the same eight docs/reviewing.md invariant 11
-        names (the pre-event password
+        no-PII per-country reach counter, always 204) and POST
+        /api/reset-password (a signed-out player redeems an organizer's
+        reset code: single-use 128-bit code consumed in Lua before any write,
+        one uniform invalid answer, fail-closed per-address rate limit,
+        origin check, no-store) the ONLY sanctioned unauthenticated POSTs —
+        the same eight docs/reviewing.md invariant 11 names (the pre-event password
         check, POST /api/gate, was removed in #464; do not restore it). The
         GETs must stay read-only, policy or public-by-design content out and
         never facts in, with
-        nothing secret in the payload: launch-key publishes the launch
-        PUBLIC key, its `kid` and the algorithm, with the private half
-        import-forbidden by the ai contract test; board/items serves the
+        nothing secret in the payload: board/items serves the
         public leaderboard's expansion (who solved what — already on the
         board as counts) built only from the contestant-safe listers, ids and
         banked points, capped at a team roster's worth of logins per request;
@@ -445,7 +452,7 @@ reviews:
         hero logo and favicon, public before launch on purpose, one fixed
         slot per route and only bytes sniffed at upload (never SVG).
         Flag any OTHER new unauthenticated route, any secret appearing in any
-        of the seven payloads, and anything letting a fork report facts to
+        of the eight payloads, and anything letting a fork report facts to
         the box rather than only read policy from it.
 
         Origin assertion bypass — a mutating route opting out of the
@@ -531,13 +538,19 @@ reviews:
       instructions: |
         Supply chain. Flag ⚠️ WARNING: <description> — <fix> for:
 
-        Unpinned versions — npm/pnpm ranges (^, ~, *, >, >=, "latest"); a
-        Docker image on :latest, no tag, or a tag without a digest; a Terraform
-        provider or module with no version constraint. Digest pinning is a
-        documented decision here, so an unpinned image is a regression, not a
-        style choice. Warn if the matching lockfile (pnpm-lock.yaml,
-        package-lock.json, .terraform.lock.hcl) wasn't committed alongside.
-        This repo has several package.json files — check the one that changed.
+        Unpinned versions — npm/pnpm ranges (^, ~, *, >, >=, "latest") in
+        dependency fields: dependencies, devDependencies,
+        optionalDependencies, peerDependencies, pnpm.overrides, overrides and
+        resolutions; a Docker image on :latest, no tag, or a tag without a
+        digest; a Terraform provider or module with no version constraint.
+        Digest pinning is a documented decision here, so an unpinned image is a
+        regression, not a style choice. Warn if the matching lockfile
+        (pnpm-lock.yaml, package-lock.json, .terraform.lock.hcl) wasn't
+        committed alongside. This repo has several package.json files — check
+        the one that changed. Do NOT apply the loose-version rule to engines or
+        packageManager: a caret range in engines is a valid compatibility
+        declaration, not an installed dependency, and packageManager should
+        remain exact.
 
         Overrides — a new or changed "overrides"/"resolutions"/"pnpm.overrides"
         entry with no explanation of why a transitive version is forced.
@@ -690,8 +703,7 @@ reviews:
           contestant-reachable path.
 
           Trigger condition — the PR touches apps/web/src/lib/quiz-store.ts,
-          classic-store.ts, ai-store.ts, quiz-keys.ts, classic-keys.ts,
-          ai-keys.ts, ai-io.ts, hint-store.ts, any
+          classic-store.ts, quiz-keys.ts, classic-keys.ts, hint-store.ts, any
           route under apps/web/src/app/api/, any page or component rendering
           questions, challenges, or the leaderboard, or the leaderboard overlay
           pipeline. If it touches none of these, report Passed with the reason
@@ -700,10 +712,8 @@ reviews:
           Flag ⚠️ WARNING: <description> — <fix> for:
 
           A contestant-reachable function issuing a Redis command against
-          ctf:quiz:key, ctf:classic:flag, ctf:classic:flagnorm, ctf:ai:flag,
-          ctf:ai:flagnorm, ctf:ai:signkey, the private half of
-          ctf:ai:launchkey, or ctf:classic:hints / ctf:ai:hints for an
-          unpurchased hint.
+          ctf:quiz:key, ctf:classic:flag, ctf:classic:flagnorm, or
+          ctf:classic:hints for an unpurchased hint.
 
           A type reachable from a contestant-facing component gaining a field
           that could carry a correct answer, a flag, or hint text.
@@ -744,8 +754,8 @@ reviews:
           attempt/answer lookup; the classic cooldown lookup; the launch lock
           in launch.ts (a settings or admin-check error is "not launched" /
           "not admin"); ctf-setup.sh's `.env` parsing
-          (`env_val`); an empty `ADMIN_LOGINS` in `parseAdminLogins`/
-          `admin-auth.ts`; sync's `loadConfig(env)` refusing on a missing
+          (`env_val`); the admin claim's rate limit and its script errors
+          (`/api/me/admin/claim`); sync's `loadConfig(env)` refusing on a missing
           `GITHUB_ORG`.
 
           Flag ⚠️ WARNING: <description> — <fix> when a change inverts one of
@@ -764,9 +774,15 @@ reviews:
 
           Flag ⚠️ WARNING: <description> — <fix> for:
 
-          npm/pnpm — a version using ^, ~, *, >, >=, or "latest"; a missing or
-          uncommitted lockfile alongside a manifest change. Several package.json
-          files exist (apps/web, sync, scorer); check the one that changed.
+          npm/pnpm — a version using ^, ~, *, >, >=, or "latest" in a
+          dependency field (dependencies, devDependencies,
+          optionalDependencies, peerDependencies, pnpm.overrides, overrides,
+          resolutions); a missing or uncommitted lockfile alongside a manifest
+          change. Several package.json files exist (apps/web, sync, scorer);
+          check the one that changed. Do NOT apply the loose-version rule to
+          engines or packageManager: a caret range in engines is a valid
+          compatibility declaration, not an installed dependency, and
+          packageManager should remain exact.
 
           Docker — an image on :latest, no tag, or a tag without a digest. Also
           an OS package install (apt-get install, apk add) with no per-package
@@ -813,11 +829,12 @@ reviews:
           contract without documentation:
 
           Runtime config schema — removing or renaming a `.env` key
-          (`GITHUB_ORG`, `ADMIN_LOGINS`, `SCORE_IMAGE`, `EVENT_URL`, or
-          another key `.env.example` lists) or a `ctf:admin:settings` field,
+          (`GITHUB_ORG`, `ADMIN_CLAIM_CODE_HASH`, `SCORE_IMAGE`, `EVENT_URL`,
+          or another key `.env.example` lists) or a `ctf:admin:settings` field,
           changing enum membership (module ids, target ids), making an
           optional key required, or re-introducing a key a release removed
-          (`SCORE_INGEST` — push ingest, removed in v0.6 by #377).
+          (`SCORE_INGEST` — push ingest, removed in v0.6 by #377;
+          `ADMIN_LOGINS` — replaced by claim codes, ADR 72).
           `.env.example`, `ctf-setup.sh`'s wizard, and the docs must change
           too.
 
@@ -838,7 +855,7 @@ reviews:
           ctf-setup.sh — removing or renaming a subcommand, flag, or prompt.
 
           Environment variables — removing or renaming GITHUB_ORG,
-          ADMIN_LOGINS, EVENT_URL, SCORE_IMAGE, LEADERBOARD_API_URL,
+          ADMIN_CLAIM_CODE_HASH, EVENT_URL, SCORE_IMAGE, LEADERBOARD_API_URL,
           LEADERBOARD_SOURCE, UPSTASH_REDIS_REST_URL, or similar.
           Re-introducing SCORE_INGEST, or the judge's SCORE_API/SCORE_TOKEN,
           counts too: push ingest was removed in v0.6 (#377) and a diff that

@@ -12,6 +12,8 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { freshId, liveConfigured, liveKey } from "./live-redis";
+import { actor } from "./audit-actor";
+import { scorerSolveWrite } from "./scorer-solve-write";
 
 vi.mock("server-only", () => ({}));
 
@@ -44,31 +46,31 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     ((await upstashPipeline([["LRANGE", "ctf:admin:pauses", 0, -1]]))[0].result as string[]).map((e) => JSON.parse(e));
 
   it("pausing records when the freeze began, and pausing again keeps that start", async () => {
-    const first = await updateAdminSettings({ paused: true }, "alice");
+    const first = await updateAdminSettings({ paused: true }, actor("alice"));
     expect(await settingsField("pausedSince")).toBe(first.updatedAt);
     await new Promise((r) => setTimeout(r, 5));
-    const again = await updateAdminSettings({ paused: true }, "bob");
+    const again = await updateAdminSettings({ paused: true }, actor("bob"));
     expect(again.updatedAt).not.toBe(first.updatedAt);
     expect(await settingsField("pausedSince")).toBe(first.updatedAt);
     expect(await pauseLog()).toEqual([]);
   });
 
   it("unpausing closes the interval into the log and clears the open start", async () => {
-    const paused = await updateAdminSettings({ paused: true }, "alice");
-    await updateAdminSettings({ hintCost: 5 }, "alice"); // an unrelated save leaves the pause open
+    const paused = await updateAdminSettings({ paused: true }, actor("alice"));
+    await updateAdminSettings({ hintCost: 5 }, actor("alice")); // an unrelated save leaves the pause open
     expect(await settingsField("pausedSince")).toBe(paused.updatedAt);
-    const resumed = await updateAdminSettings({ paused: false }, "alice");
+    const resumed = await updateAdminSettings({ paused: false }, actor("alice"));
     expect(await settingsField("pausedSince")).toBeNull();
     expect(await pauseLog()).toEqual([{ from: paused.updatedAt, to: resumed.updatedAt }]);
   });
 
   it("logs each freeze once, newest first; unpausing an unpaused event logs nothing", async () => {
-    await updateAdminSettings({ paused: false }, "alice");
-    const p1 = await updateAdminSettings({ paused: true }, "alice");
-    const r1 = await updateAdminSettings({ paused: false }, "alice");
-    await updateAdminSettings({ paused: false }, "alice");
-    const p2 = await updateAdminSettings({ paused: true }, "alice");
-    const r2 = await updateAdminSettings({ paused: false }, "alice");
+    await updateAdminSettings({ paused: false }, actor("alice"));
+    const p1 = await updateAdminSettings({ paused: true }, actor("alice"));
+    const r1 = await updateAdminSettings({ paused: false }, actor("alice"));
+    await updateAdminSettings({ paused: false }, actor("alice"));
+    const p2 = await updateAdminSettings({ paused: true }, actor("alice"));
+    const r2 = await updateAdminSettings({ paused: false }, actor("alice"));
     expect(await pauseLog()).toEqual([
       { from: p2.updatedAt, to: r2.updatedAt },
       { from: p1.updatedAt, to: r1.updatedAt },
@@ -77,9 +79,9 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
 
   it("a freeze with no recorded start lifts without logging an interval it cannot bound", async () => {
     await upstashPipeline([["HSET", "ctf:admin:settings", "paused", "1"]]);
-    await updateAdminSettings({ paused: true }, "alice"); // already frozen: the unknown start stays unknown
+    await updateAdminSettings({ paused: true }, actor("alice")); // already frozen: the unknown start stays unknown
     expect(await settingsField("pausedSince")).toBeNull();
-    await updateAdminSettings({ paused: false }, "alice");
+    await updateAdminSettings({ paused: false }, actor("alice"));
     expect(await settingsField("paused")).toBeNull();
     expect(await pauseLog()).toEqual([]);
   });
@@ -87,8 +89,8 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   it("caps the pause log at PAUSE_LOG_CAP, dropping the oldest", async () => {
     let last: { updatedAt: string | null } | null = null;
     for (let i = 0; i < PAUSE_LOG_CAP + 2; i++) {
-      await updateAdminSettings({ paused: true }, "bot");
-      last = await updateAdminSettings({ paused: false }, "bot");
+      await updateAdminSettings({ paused: true }, actor("bot"));
+      last = await updateAdminSettings({ paused: false }, actor("bot"));
     }
     const [len] = await upstashPipeline([["LLEN", "ctf:admin:pauses"]]);
     expect(Number(len.result)).toBe(PAUSE_LOG_CAP);
@@ -96,7 +98,7 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   });
 
   it("writes settings and an audit line atomically", async () => {
-    await updateAdminSettings({ paused: true, hintCost: 25 }, "alice");
+    await updateAdminSettings({ paused: true, hintCost: 25 }, actor("alice"));
     const s = await getAdminSettings();
     expect(s.paused).toBe(true);
     expect(s.hintCost).toBe(25);
@@ -106,17 +108,17 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   });
 
   it("caps the audit list at AUDIT_CAP", async () => {
-    for (let i = 0; i < AUDIT_CAP + 5; i++) await updateAdminSettings({ paused: i % 2 === 0 }, "bot");
+    for (let i = 0; i < AUDIT_CAP + 5; i++) await updateAdminSettings({ paused: i % 2 === 0 }, actor("bot"));
     const [len] = await upstashPipeline([["LLEN", "ctf:admin:audit"]]);
     expect(Number(len.result)).toBe(AUDIT_CAP);
   });
 
   it("clears the paused field to absent (not \"0\") when unpausing", async () => {
-    await updateAdminSettings({ paused: true }, "alice");
+    await updateAdminSettings({ paused: true }, actor("alice"));
     const [setGet] = await upstashPipeline([["HGET", "ctf:admin:settings", "paused"]]);
     expect(setGet.result).toBe("1");
 
-    await updateAdminSettings({ paused: false }, "alice");
+    await updateAdminSettings({ paused: false }, actor("alice"));
     const [clearedExists, clearedUpdatedAt] = await upstashPipeline([
       ["HEXISTS", "ctf:admin:settings", "paused"],
       ["HGET", "ctf:admin:settings", "updatedAt"],
@@ -132,8 +134,8 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   // #600: a numeric knob clears back to "follow the default" — the field is
   // gone from the hash, not stored as a value equal to the default.
   it("clears a numeric knob to absent when sent null", async () => {
-    await updateAdminSettings({ hintsMinSolves: 1, teamMaxMembers: 6 }, "alice");
-    await updateAdminSettings({ hintsMinSolves: null }, "alice");
+    await updateAdminSettings({ hintsMinSolves: 1, teamMaxMembers: 6 }, actor("alice"));
+    await updateAdminSettings({ hintsMinSolves: null }, actor("alice"));
     const [res] = await upstashPipeline([["HMGET", "ctf:admin:settings", "hintsMinSolves", "teamMaxMembers"]]);
     expect(res.result).toEqual([null, "6"]);
     const s = await getAdminSettings();
@@ -142,7 +144,7 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   });
 
   it("round-trips an explicitly empty module set", async () => {
-    const s = await updateAdminSettings({ enabledModules: [] }, "alice");
+    const s = await updateAdminSettings({ enabledModules: [] }, actor("alice"));
     expect(s.enabledModuleIds).toEqual([]);
     expect((await getAdminSettings()).enabledModuleIds).toEqual([]);
   });
@@ -150,13 +152,13 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   it("round-trips the event identity fields and clears them on empty (issue #386)", async () => {
     await updateAdminSettings(
       { eventName: "Live CTF", eventLocation: "Montevideo", eventContact: "org@example.org", eventDiscord: "https://discord.gg/live" },
-      "alice",
+      actor("alice"),
     );
     let s = await getAdminSettings();
     expect(s.eventIdentity).toEqual({
       eventName: "Live CTF", eventLocation: "Montevideo", eventContact: "org@example.org", eventDiscord: "https://discord.gg/live",
     });
-    await updateAdminSettings({ eventLocation: "", eventDiscord: "" }, "alice");
+    await updateAdminSettings({ eventLocation: "", eventDiscord: "" }, actor("alice"));
     s = await getAdminSettings();
     expect(s.eventIdentity).toEqual({ eventName: "Live CTF", eventContact: "org@example.org" });
     const [fields] = await upstashPipeline([["HKEYS", "ctf:admin:settings"]]);
@@ -169,11 +171,11 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   // normalizeSecureDevTargets) must decode it back exactly, whole-set
   // replace each time (not merged with what was there before).
   it("round-trips the secureDevTargets set through a real write and read", async () => {
-    await updateAdminSettings({ secureDevTargets: ["vampi", "dvwa"] }, "alice");
+    await updateAdminSettings({ secureDevTargets: ["vampi", "dvwa"] }, actor("alice"));
     let s = await getAdminSettings();
     expect(s.secureDevTargets).toEqual(["dvwa", "vampi"]);
 
-    await updateAdminSettings({ secureDevTargets: ["webgoat"] }, "alice");
+    await updateAdminSettings({ secureDevTargets: ["webgoat"] }, actor("alice"));
     s = await getAdminSettings();
     expect(s.secureDevTargets).toEqual(["webgoat"]);
   });
@@ -182,8 +184,8 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
   // so it sees the other bound as it is at commit time — no read-then-write
   // race between two organizers saving opposite bounds.
   it("refuses a start at or after the stored Scoring closes, writing nothing", async () => {
-    await updateAdminSettings({ scoringEndsAt: "2030-01-01T00:00:00.000Z" }, "alice");
-    await expect(updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z" }, "bob")).rejects.toThrow(/Scoring closes/);
+    await updateAdminSettings({ scoringEndsAt: "2030-01-01T00:00:00.000Z" }, actor("alice"));
+    await expect(updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z" }, actor("bob"))).rejects.toThrow(/Scoring closes/);
     const s = await getAdminSettings();
     expect(s.scoringStartsAt ?? null).toBeNull();
     expect(s.updatedBy).toBe("alice");
@@ -191,8 +193,8 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
 
   it("two opposite saves racing: at most one lands, and the stored window can open", async () => {
     const results = await Promise.allSettled([
-      updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z" }, "alice"),
-      updateAdminSettings({ scoringEndsAt: "2030-01-01T00:00:00.000Z" }, "bob"),
+      updateAdminSettings({ scoringStartsAt: "2030-06-01T00:00:00.000Z" }, actor("alice")),
+      updateAdminSettings({ scoringEndsAt: "2030-01-01T00:00:00.000Z" }, actor("bob")),
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     const s = await getAdminSettings();
@@ -204,7 +206,7 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     await upstashPipeline([
       ["HSET", "ctf:admin:settings", "scoringStartsAt", "2030-06-01T00:00:00.000Z", "scoringEndsAt", "2030-01-01T00:00:00.000Z"],
     ]);
-    await updateAdminSettings({ hintCost: 5 }, "alice");
+    await updateAdminSettings({ hintCost: 5 }, actor("alice"));
     expect((await getAdminSettings()).hintCost).toBe(5);
   });
 
@@ -248,5 +250,215 @@ describe.skipIf(!liveConfigured)("admin-store against a live SRH proxy", () => {
     expect(since.result).toBe("2026-10-01T00:00:00.000Z");
     expect(Number(log.result)).toBe(0);
     await upstashPipeline([["DEL", settingsKey, auditKey, pausesKey]]);
+  });
+
+  it("RESET_SCRIPT fences announcements and clears milestone claims atomically", async () => {
+    const { RESET_SCRIPT } = await import("@/lib/admin-store");
+    const { upstashEval } = await import("@/lib/upstash");
+    const settingsKey = liveKey("admin", freshId("settings"));
+    const auditKey = liveKey("admin", freshId("audit"));
+    const pausesKey = liveKey("admin", freshId("pauses"));
+    const generationKey = liveKey("announce", freshId("generation"));
+    const milestoneKey = liveKey("announce", freshId("milestone"));
+    await upstashPipeline([
+      ["SET", generationKey, "4"],
+      ["HSET", milestoneKey, "close:mark", "claimed"],
+    ]);
+    await upstashEval(
+      RESET_SCRIPT,
+      [settingsKey, auditKey, pausesKey, generationKey, milestoneKey],
+      ["alice", "2026-10-01T00:00:00.000Z", "e1", "{}", 9],
+    );
+    const [generation, claims] = await upstashPipeline([
+      ["GET", generationKey],
+      ["EXISTS", milestoneKey],
+    ]);
+    expect(generation.result).toBe("5");
+    expect(Number(claims.result)).toBe(0);
+    await upstashPipeline([["DEL", settingsKey, auditKey, generationKey, milestoneKey]]);
+  });
+
+  it("resetEvent wipes held SD scores and keeps the GitHub link records", async () => {
+    const { resetEvent } = await import("@/lib/admin-store");
+    const login = `held${crypto.randomUUID().replace(/-/g, "")}`.slice(0, 30);
+    const player = crypto.randomUUID();
+    const seeded = await upstashPipeline([
+      ["HSET", `ctf:sd:held:by:${login}`, "owasp/x#1", "{}"],
+      ["SADD", "ctf:sd:held:authors", login],
+      ["SET", `ctf:link:github:${login}`, player],
+      ["SET", `ctf:link:user:${player}`, login],
+      ["HSET", "ctf:link:at", player, "1"],
+    ]);
+    expect(seeded.filter((r) => r.error)).toEqual([]);
+    try {
+      const { cleared } = await resetEvent(actor("alice"));
+      expect(cleared.sdHeld).toBeGreaterThanOrEqual(1);
+      const after = await upstashPipeline([
+        ["EXISTS", `ctf:sd:held:by:${login}`],
+        ["SISMEMBER", "ctf:sd:held:authors", login],
+        ["GET", `ctf:link:github:${login}`],
+        ["GET", `ctf:link:user:${player}`],
+        ["HGET", "ctf:link:at", player],
+      ]);
+      expect(after.map((r) => r.result)).toEqual([0, 0, player, login, "1"]);
+    } finally {
+      await upstashPipeline([
+        ["DEL", `ctf:link:github:${login}`, `ctf:link:user:${player}`],
+        ["HDEL", "ctf:link:at", player],
+      ]);
+    }
+  });
+
+  // A score the scorer judged before a master reset and writes after the
+  // reset swept the solves: the solve script reads the CURRENT `resetAt` in
+  // the same EVAL as the write and refuses it, with or without a login, and
+  // nothing comes back.
+  it("a score judged before resetEvent and written after its sweep is refused pre-reset and writes nothing", async () => {
+    const { resetEvent } = await import("@/lib/admin-store");
+    const login = `pre${crypto.randomUUID().replace(/-/g, "")}`.slice(0, 30);
+    const player = crypto.randomUUID();
+    const target = `vtreset-${crypto.randomUUID().slice(0, 8)}`;
+    const seeded = await upstashPipeline([["SET", `ctf:link:github:${login}`, player]]);
+    expect(seeded.filter((r) => r.error)).toEqual([]);
+    try {
+      const judgedAt = new Date().toISOString();
+      expect(await scorerSolveWrite(target, player, judgedAt, "before", login)).toBe("ok");
+      await new Promise((r) => setTimeout(r, 5));
+      const { cleared, resetAt } = await resetEvent(actor("alice"));
+      expect(cleared.solves).toBeGreaterThanOrEqual(1);
+      expect(await settingsField("resetAt")).toBe(resetAt);
+      const [audit] = await upstashPipeline([["LRANGE", "ctf:admin:audit", 0, 1]]);
+      expect((audit.result as string[]).map((l) => JSON.parse(l).action)).toEqual(["reset", "reset:start"]);
+      // Judged against the settings before the reset, which had no epoch.
+      expect(await scorerSolveWrite(target, player, judgedAt, "late", login, "")).toBe("pre-reset");
+      expect(await scorerSolveWrite(target, player, judgedAt, "loginless", "", "")).toBe("pre-reset");
+      // A score timed past the new epoch but judged before the reset (a
+      // clock-skewed `at`) is judged again rather than written.
+      const skewed = new Date(Number(resetAt) + 60_000).toISOString();
+      expect(await scorerSolveWrite(target, player, skewed, "skewed", login, "")).toBe("stale");
+      const [solves] = await upstashPipeline([["EXISTS", `ctf:solves:${target}`]]);
+      expect(solves.result).toBe(0);
+      // A score timed after the epoch and judged against it still writes.
+      expect(await scorerSolveWrite(target, player, new Date(Number(resetAt) + 1).toISOString(), "after", login, resetAt)).toBe("ok");
+    } finally {
+      await upstashPipeline([["DEL", `ctf:link:github:${login}`, `ctf:solves:${target}`]]);
+    }
+  });
+
+  // The scorer's own POST /score (scorer/src/serve.js) over this Redis, for a
+  // score sent with neither `at` nor `login`: the master reset lands between
+  // the scorer's settings snapshot and its solve write, after the snapshot
+  // or after the solve time is taken. Either way nothing is written.
+  it("a score without at or login, with resetEvent between the scorer's snapshot and its write, writes nothing", async () => {
+    const { resetEvent } = await import("@/lib/admin-store");
+    const scorerSrc = (f: string) => new URL(`../../../../../scorer/src/${f}`, import.meta.url).href;
+    const { createHandler } = (await import(/* @vite-ignore */ scorerSrc("serve.js"))) as {
+      createHandler: (o: object) => (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void;
+    };
+    const { createRedisStore } = (await import(/* @vite-ignore */ scorerSrc("store.js"))) as {
+      createRedisStore: () => Record<string, (...a: unknown[]) => Promise<unknown>>;
+    };
+    const { createServer } = await import("node:http");
+    const target = `vtreset-${crypto.randomUUID().slice(0, 8)}`;
+    const player = crypto.randomUUID();
+    const post = async (store: Record<string, (...a: unknown[]) => Promise<unknown>>) => {
+      const server = createServer(createHandler({ store, token: "t" }));
+      await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+      try {
+        const { port } = server.address() as { port: number };
+        const res = await fetch(`http://127.0.0.1:${port}/score`, {
+          method: "POST",
+          headers: { authorization: "Bearer t", "content-type": "application/json" },
+          body: JSON.stringify({ player, target, solved: ["c1"] }),
+        });
+        return { status: res.status, body: (await res.json()) as unknown };
+      } finally {
+        server.close();
+      }
+    };
+    const launch = () => upstashPipeline([["HSET", "ctf:admin:settings", "scoringStartsAt", "2000-01-01T00:00:00.000Z", "paused", "0"]]);
+    try {
+      // The reset right after the scorer's first settings read, whichever
+      // read that is: the solve time is taken after it, so it is not before
+      // the new epoch, and a second read would see the new epoch without the
+      // freeze. One snapshot carries the old epoch, which the write refuses.
+      await launch();
+      const afterSnapshot = createRedisStore();
+      let resetDone = false;
+      for (const name of ["isPaused", "readScoringPolicy"]) {
+        const read = afterSnapshot[name];
+        afterSnapshot[name] = async (...args: unknown[]) => {
+          const value = await read(...args);
+          if (!resetDone) {
+            resetDone = true;
+            await resetEvent(actor("alice"));
+          }
+          return value;
+        };
+      }
+      expect(await post(afterSnapshot)).toEqual({ status: 503, body: { error: "the master reset changed while the score was judged" } });
+      expect(resetDone).toBe(true);
+
+      // The reset right before the write: the solve time predates the epoch.
+      await launch();
+      const beforeWrite = createRedisStore();
+      const write = beforeWrite.recordSolves;
+      beforeWrite.recordSolves = async (...args: unknown[]) => {
+        await new Promise((r) => setTimeout(r, 5));
+        await resetEvent(actor("alice"));
+        return write(...args);
+      };
+      expect(await post(beforeWrite)).toEqual({
+        status: 422,
+        body: { error: "the score predates the last master reset", refused: "pre-reset" },
+      });
+      const [solves] = await upstashPipeline([["EXISTS", `ctf:solves:${target}`]]);
+      expect(solves.result).toBe(0);
+
+      // Unlaunched by the reset: a plain request is the legacy 503.
+      expect(await post(createRedisStore())).toEqual({ status: 503, body: { error: "scoring is paused" } });
+    } finally {
+      await upstashPipeline([["DEL", `ctf:solves:${target}`]]);
+    }
+  });
+
+  it("the solve script compares a non-numeric resetAt with the value the score was judged against", async () => {
+    const target = `vtreset-${crypto.randomUUID().slice(0, 8)}`;
+    const player = crypto.randomUUID();
+    await upstashPipeline([["HSET", "ctf:admin:settings", "resetAt", "2026-01-01T00:00:00Z"]]);
+    try {
+      const at = new Date().toISOString();
+      expect(await scorerSolveWrite(target, player, at, "a", "", "2025-01-01T00:00:00Z")).toBe("stale");
+      expect(await scorerSolveWrite(target, player, at, "a", "", "")).toBe("stale");
+      expect(await scorerSolveWrite(target, player, at, "a", "", "2026-01-01T00:00:00Z")).toBe("ok");
+    } finally {
+      await upstashPipeline([["DEL", `ctf:solves:${target}`]]);
+    }
+  });
+
+  it("resetEvent wipes the re-link blocklist, so a blocked login links again", async () => {
+    const { resetEvent } = await import("@/lib/admin-store");
+    const { recordGithubSignIn, releaseGithubLink, RELINK_BLOCK_KEY } = await import("@/lib/github-link");
+    const login = `blk${crypto.randomUUID().replace(/-/g, "")}`.slice(0, 30);
+    const first = crypto.randomUUID();
+    const second = crypto.randomUUID();
+    try {
+      expect(await recordGithubSignIn(first, login)).toBe("linked");
+      expect(await releaseGithubLink(first, { block: true })).toBe(login);
+      expect(await recordGithubSignIn(second, login)).toBe("blocked");
+      const [held] = await upstashPipeline([["GET", `ctf:link:github:${login}`]]);
+      expect(held.result).toBeNull();
+      const { cleared } = await resetEvent(actor("alice"));
+      expect(cleared.relinkBlock).toBe(1);
+      const [member] = await upstashPipeline([["SISMEMBER", RELINK_BLOCK_KEY, login]]);
+      expect(member.result).toBe(0);
+      expect(await recordGithubSignIn(second, login)).toBe("linked");
+    } finally {
+      await upstashPipeline([
+        ["DEL", `ctf:link:github:${login}`, `ctf:link:user:${first}`, `ctf:link:user:${second}`],
+        ["HDEL", "ctf:link:at", first, second],
+        ["SREM", "ctf:relink:blocked", login],
+      ]);
+    }
   });
 });

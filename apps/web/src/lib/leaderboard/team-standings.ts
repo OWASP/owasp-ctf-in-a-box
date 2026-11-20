@@ -1,12 +1,8 @@
 import "server-only";
+import { unnamed } from "@/lib/display-name";
 import { errorLabel } from "@/lib/error-label";
 import { listTeams } from "@/lib/team-store";
-import {
-  mergeTeamRosters,
-  withTeamAiPoints,
-  withTeamClassicPoints,
-  withTeamQuizPoints,
-} from "./module-contributions";
+import { mergeTeamRosters, withTeamClassicPoints, withTeamQuizPoints } from "./module-contributions";
 import { rankByStanding } from "./rank";
 import type { LeaderboardData, LeaderboardEntry, TeamStanding } from "./types";
 
@@ -14,7 +10,7 @@ import type { LeaderboardData, LeaderboardEntry, TeamStanding } from "./types";
  * Overlays live team MEMBERSHIP (from the team store's ctf:team:* records)
  * onto leaderboard data from a source that has no team concept (upstash, and
  * the empty source a quiz-only event uses). Such a source only has each
- * player's per-login TOTAL, not which flag earned which point — so it has no
+ * player's per-player TOTAL, not which flag earned which point — so it has no
  * way to tell whether two teammates' totals overlap on a flag they both
  * solved. Summing member totals into a team score would double-count any such
  * shared flag, so a synthesised row deliberately fabricates no SCORER points:
@@ -24,18 +20,18 @@ import type { LeaderboardData, LeaderboardEntry, TeamStanding } from "./types";
  *
  * Module points ARE added — to the rows synthesised here AND to the source's
  * own teams, in this one place and nowhere else (issue #520) — via
- * `withTeamQuizPoints`, `withTeamClassicPoints` and `withTeamAiPoints` — the
- * quiz stores which QUESTION each member answered, classic which CHALLENGE
- * each member solved, and ai which CHALLENGE each member solved, so a team's
+ * `withTeamQuizPoints` and `withTeamClassicPoints` — the
+ * quiz stores which QUESTION each member answered and classic which CHALLENGE
+ * each member solved, so a team's
  * total can be deduped by item (an item three teammates hold counts once)
  * with no per-flag scorer data involved. Leaving them at zero meant a
- * quiz-only (or classic-only, or ai-only) event opened on its DEFAULT view —
+ * quiz-only (or classic-only) event opened on its DEFAULT view —
  * the teams board, whenever teams exist — with every team tied at nothing
  * while the individual view showed real points. The attribution deliberately
  * lives in `module-contributions.ts` and is merely CALLED from here, so the
  * union rule has exactly one implementation; the pipeline order is unchanged.
  *
- * The three are applied in sequence, each adding only its own module's
+ * The two are applied in sequence, each adding only its own module's
  * points and re-ranking on the running total, and each no-ops when its
  * module is disabled — so a single-module event pays for exactly one of
  * them.
@@ -86,7 +82,7 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   // team's items — and a player's story-lock reachability folding over a
   // different membership than the team row's would unlock a different set of
   // steps for the same contest.
-  const { sourceTeams, teamByLogin } = mergeTeamRosters(data, teams);
+  const { sourceTeams, teamByPlayer } = mergeTeamRosters(data, teams);
   const sourceSlugs = new Set(sourceTeams.map((team) => team.slug));
 
   const membershipOnly: TeamStanding[] = teams
@@ -110,7 +106,7 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
     .map((team, i) => ({ ...team, rank: i + 1 }));
 
   // The overlays run over the UNION, not just the rows synthesised here. They
-  // attribute quiz, classic and ai points by ITEM — deduped across members with
+  // attribute quiz and classic points by ITEM — deduped across members with
   // no per-flag scorer data involved — so they are as correct for a source's
   // team as for an app-only one, and running them only on part of the board
   // would rank teams on different point sets. On a scorer-sourced board this
@@ -119,35 +115,37 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   //
   // This is the ONLY place the app-side modules reach a team's points.
   // `withModuleContributions` stamps a source team's secure-development chip
-  // and nothing else; it used to add quiz, classic and ai too, and with this
-  // call on top every scorer team counted them twice (issue #520).
+  // and nothing else: adding quiz and classic there as well, with this call
+  // on top, would count them twice on every scorer team.
   const standings = await withAppModulePoints([...sourceTeams, ...membershipOnly]);
 
   const entries = data.entries.map((entry) => {
-    const slug = teamByLogin.get(entry.login.toLowerCase());
+    const slug = teamByPlayer.get(entry.playerId.toLowerCase());
     return slug ? { ...entry, team: slug } : entry;
   });
   // Every team member gets an Individual row, a 0 one if they have not
   // scored: the Teams view lists every team, so a player who could find their
   // team there could not find themselves here. Every roster counts, the team
   // store's first (its spelling and placement win) and then the source's;
-  // logins match case-insensitively against the rows that exist. Signing in
-  // without a team creates no row. Named in order so the ties at 0 read
-  // alphabetically after everyone who scored.
-  const listed = new Set(entries.map((entry) => entry.login.toLowerCase()));
-  const unlisted: { login: string; slug: string }[] = [];
+  // player keys match case-insensitively against the rows that exist. Signing in
+  // without a team creates no row. Sorted by player id so the ties at 0 keep
+  // one stable order after everyone who scored.
+  const listed = new Set(entries.map((entry) => entry.playerId.toLowerCase()));
+  const unlisted: { playerId: string; slug: string }[] = [];
   for (const team of [...teams, ...sourceTeams]) {
-    for (const login of team.members) {
-      if (listed.has(login.toLowerCase())) continue;
-      listed.add(login.toLowerCase());
-      unlisted.push({ login, slug: team.slug });
+    for (const playerId of team.members) {
+      if (listed.has(playerId.toLowerCase())) continue;
+      listed.add(playerId.toLowerCase());
+      unlisted.push({ playerId, slug: team.slug });
     }
   }
   const zeroRows: LeaderboardEntry[] = unlisted
-    .sort((a, b) => a.login.toLowerCase().localeCompare(b.login.toLowerCase()))
-    .map(({ login, slug }) => ({
+    .sort((a, b) => a.playerId.toLowerCase().localeCompare(b.playerId.toLowerCase()))
+    .map(({ playerId, slug }) => ({
       rank: 0,
-      login,
+      playerId,
+      // Named by the fold's last stage (names.ts).
+      ...unnamed(playerId),
       team: slug,
       points: 0,
       patched: 0,
@@ -167,11 +165,11 @@ export async function withTeamStandings(data: LeaderboardData): Promise<Leaderbo
   };
 }
 
-/** The three app-side module overlays, applied in sequence (each adds only its
+/** The two app-side module overlays, applied in sequence (each adds only its
  *  own module and re-ranks on the running total; each no-ops when its module
  *  is off). The one call site for all of them — see the #520 note above. */
 async function withAppModulePoints(teams: TeamStanding[]): Promise<TeamStanding[]> {
-  return withTeamAiPoints(await withTeamClassicPoints(await withTeamQuizPoints(teams)));
+  return withTeamClassicPoints(await withTeamQuizPoints(teams));
 }
 
 /** The no-team-store path: the source's own teams, if it has any, still get

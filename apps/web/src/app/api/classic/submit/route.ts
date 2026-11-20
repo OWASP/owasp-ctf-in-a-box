@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { adminSeesHidden } from "@/lib/classic-visibility";
-import { isAdminLogin } from "@/lib/admin-auth";
-import { auth } from "@/lib/auth";
+import { isAdminPlayer } from "@/lib/admin-auth";
+import { getPlayer } from "@/lib/player";
 import { logActivity } from "@/lib/activity-log";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { launchApiAccess } from "@/lib/launch";
 import { CLASSIC_ID_RE, submitFlag } from "@/lib/classic-store";
+import { cooldownResponse } from "@/lib/cooldown-response";
+import { notifyFirstBlood } from "@/lib/announce/notify";
 import { hasTeam } from "@/lib/team-store";
 
 /** Hard cap on a submitted flag's length, checked BEFORE the store ever sees
@@ -19,16 +21,16 @@ const FLAG_MAX_LEN = 512;
  * `submitFlag` is authoritative on the pause/schedule gate, the already-
  * solved guard, the cooldown, and the grading itself (its Lua script
  * re-checks everything atomically) — this route never re-implements or
- * second-guesses that enforcement. It only derives `login` from the session
- * (never the request body — a body-supplied login would be an account-
+ * second-guesses that enforcement. It only derives the player id from the session
+ * (never the request body — a body-supplied id would be an account-
  * impersonation hole) and maps the store's result to a status code:
  *   - classic module switched off in /admin -> 403 { error: "unavailable" }
- *   - unauthenticated -> 401
- *   - session with no GitHub login -> 400
+ *   - unauthenticated, or a session user that is not a player -> 401
  *   - event not launched (and not an admin) -> 403 { error: "not-launched" }
  *   - malformed challengeId/flag -> 400
  *   - unknown/deleted challenge -> 404
- *   - gate refusal (paused/solved/cooldown/unavailable) -> 403
+ *   - cooldown refusal -> 429 { error: "cooldown", retryAt } + Retry-After
+ *   - gate refusal (paused/ended/solved/locked/unavailable) -> 403
  *   - grading script failure -> 503
  *   - success -> 200
  *
@@ -50,9 +52,8 @@ export async function POST(request: Request) {
   // Module switch (#495). Switching classic off in /admin 404s its board, and
   // this route refuses too, or an answer from a tab opened before the toggle
   // (or a plain curl) would still bank points that reappear on re-enable. It
-  // runs FIRST, before the session is read — the same order as the ai
-  // module's `submitAiFlagAction` (a switched-off module is not a way to
-  // probe a cookie) — and so before `submitFlag`: a refusal can never follow a
+  // runs FIRST, before the session is read (a switched-off module is not a
+  // way to probe a cookie) — and so before `submitFlag`: a refusal can never follow a
   // write. An admin preview is refused too: there is no board to preview.
   // `isModuleLive` never throws; on a settings-read failure it answers from
   // this deployment's default module set (fail-open to the default, like
@@ -63,16 +64,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unavailable" }, { status: 403 });
   }
 
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  const login = (session.user as { login?: string }).login;
-  if (!login) return NextResponse.json({ error: "session has no GitHub login" }, { status: 400 });
+  const player = await getPlayer(request.headers);
+  if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const playerId = player.id;
 
   // #464 pre-launch lock. Its own refusal — 403 `not-launched` — never a
   // wrong-answer shape. An admin before launch passes as a PREVIEW, and their
   // flag is graded as a dry run: the same script, writing nothing.
-  const { refused, preview } = await launchApiAccess(login);
+  const { refused, preview } = await launchApiAccess(playerId);
   if (refused) return refused;
 
   // Scoring is per team, and a teamless login's banked points fold into no
@@ -92,17 +91,17 @@ export async function POST(request: Request) {
   // test it, and nothing may be recorded for them. That needs the id, so for
   // an admin alone the body is read before their team check; everyone else
   // is refused first, with the body unread.
-  const admin = !preview && (await isAdminLogin(login).catch(() => false));
-  if (!preview && !admin && !(await hasTeam(login))) {
+  const admin = !preview && (await isAdminPlayer(playerId).catch(() => false));
+  if (!preview && !admin && !(await hasTeam(playerId))) {
     return NextResponse.json({ error: "no-team" }, { status: 403 });
   }
 
   const body = await request.json().catch(() => ({}));
   const challengeId = typeof body.challengeId === "string" ? body.challengeId : "";
   const flag = typeof body.flag === "string" ? body.flag : "";
-  const dryRun = preview || (admin && CLASSIC_ID_RE.test(challengeId) && (await adminSeesHidden(login, challengeId)));
+  const dryRun = preview || (admin && CLASSIC_ID_RE.test(challengeId) && (await adminSeesHidden(playerId, challengeId)));
 
-  if (!dryRun && admin && !(await hasTeam(login))) {
+  if (!dryRun && admin && !(await hasTeam(playerId))) {
     return NextResponse.json({ error: "no-team" }, { status: 403 });
   }
 
@@ -110,7 +109,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
-  const result = await submitFlag(login, challengeId, flag, { dryRun });
+  const result = await submitFlag(playerId, challengeId, flag, { dryRun });
   if (result.ok) {
     // An admin preview (#464): graded by the same script, nothing recorded —
     // and nothing logged either, so the activity feed never shows a solve
@@ -125,7 +124,13 @@ export async function POST(request: Request) {
     // re-submission banked nothing and would double-count the event. The id,
     // never the flag; logActivity is fail-open, so it cannot fail a solve
     // that already landed.
-    if (!result.already) await logActivity("classic-solve", login, challengeId);
+    if (!result.already) await logActivity("classic-solve", player, challengeId);
+    // First blood (#590): non-blocking by contract — notifyFirstBlood never
+    // throws, and this solve has already banked, so a Discord hiccup can
+    // never surface here. Fresh solves only, same guard as logActivity.
+    if (!result.already) {
+      void notifyFirstBlood({ module: "classic", challengeId, playerId, points: result.points });
+    }
     // `already` (this login had banked this flag before — see SubmitResult)
     // rides along so the client can say so, instead of reading the
     // accompanying `points: 0` as an award of nothing.
@@ -140,7 +145,9 @@ export async function POST(request: Request) {
   if (result.reason === "error") {
     return NextResponse.json({ error: "classic grading failed" }, { status: 503 });
   }
-  // paused | solved | cooldown | unavailable
-  const retryAt = "retryAt" in result ? result.retryAt : undefined;
-  return NextResponse.json(retryAt ? { error: result.reason, retryAt } : { error: result.reason }, { status: 403 });
+  if (result.reason === "cooldown") {
+    return cooldownResponse(result.retryAt);
+  }
+  // paused | ended | solved | locked | unavailable
+  return NextResponse.json({ error: result.reason }, { status: 403 });
 }

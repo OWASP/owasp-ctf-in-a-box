@@ -32,7 +32,7 @@ const metadata = await generateMetadata();
 describe("/how-to-play on a secure-development event", () => {
   it("keeps the module's own lede as the page description", () => {
     expect(html).toContain(
-      "New to the competition? Here&#x27;s everything you need to go from a GitHub sign-in to your first patched challenge.",
+      "New to the competition? Here&#x27;s everything you need to go from signing in to your first patched challenge.",
     );
   });
 
@@ -53,7 +53,7 @@ describe("/how-to-play on a secure-development event", () => {
 
   it("renders all five numbered steps", () => {
     for (const title of [
-      "Sign in with GitHub",
+      "Sign in and link GitHub",
       "Pick a target and a challenge",
       "Find the vulnerability",
       "Patch it and open a pull request",
@@ -61,6 +61,8 @@ describe("/how-to-play on a secure-development event", () => {
     ]) {
       expect(html).toContain(title);
     }
+    expect(html).toContain("then link your GitHub account from your profile.");
+    expect(html).not.toContain("Sign in with GitHub");
   });
 
   it("interpolates the event's real targets and org into the steps", () => {

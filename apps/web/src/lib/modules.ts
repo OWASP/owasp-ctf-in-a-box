@@ -2,7 +2,7 @@
 // an entry here, and nothing else. There is no config-file namespace to
 // declare one in; enablement is a runtime /admin setting on
 // top of this list. See the kit's docs/modules.md for the full contract.
-export type ModuleId = "secure-development" | "quiz" | "classic" | "ai";
+export type ModuleId = "secure-development" | "quiz" | "classic";
 
 /** Context handed to a module's home-page copy so it can interpolate live
  *  facts (target counts, app names) without importing them itself. */
@@ -33,7 +33,7 @@ export type ModuleHome = {
 // importing them from HERE would close a cycle — and unlike `ModuleDef`, these
 // are values, so that loop throws at init rather than merely looking untidy.
 // Re-exported so the callers that already read them from this module —
-// `site.ts`, the home page, the AI setup component — keep one import.
+// `site.ts` and the home page — keep one import.
 export { DOCS_URL, SCORING_BRANCH, SECURE_AGENT_PLAYBOOK_URL } from "@/lib/module-urls";
 
 /** A run of contestant-facing copy that needs a little inline markup.
@@ -303,13 +303,21 @@ export type ModuleDef = {
    *  (a Client Component renders it), which only holds because there is no
    *  function here to break the RSC boundary. Keep it that way. */
   emptyBoard?: { line: string; cta: { href: string; label: string } };
+  /** Set on a module that is on its way out (ADR 69): one sentence for the
+   *  organizer saying when it goes, and a link to what replaces it. The
+   *  module's admin switches show it as their help line and in the enable
+   *  confirmation (`module-deprecation.tsx`); the module keeps working until
+   *  it is removed. Plain data, like `emptyBoard`, so it can ride on
+   *  ResolvedModule. */
+  deprecated?: ModuleDeprecation;
 };
+
+export type ModuleDeprecation = { note: string; guide: { href: string; label: string } };
 
 // Display metadata per registered module, one file per entry (#504 M10) —
 // this literal was ~1230 lines, 71% of this file. Each def takes `ModuleDef`
 // back as a TYPE import, so the edge into it is not a runtime one, and the
 // URLs its copy links into come from `module-urls.ts` for the same reason.
-import { AI_DEF } from "@/lib/module-defs/ai";
 import { CLASSIC_DEF } from "@/lib/module-defs/classic";
 import { QUIZ_DEF } from "@/lib/module-defs/quiz";
 import { SECURE_DEVELOPMENT_DEF } from "@/lib/module-defs/secure-development";
@@ -322,7 +330,6 @@ const REGISTRY: Record<ModuleId, ModuleDef> = {
   "secure-development": SECURE_DEVELOPMENT_DEF,
   quiz: QUIZ_DEF,
   classic: CLASSIC_DEF,
-  ai: AI_DEF,
 };
 
 /** A full `ModuleDef` for EVERY registered module — `REGISTRY` itself.

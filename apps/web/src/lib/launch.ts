@@ -17,7 +17,7 @@ import "server-only";
 import { errorLabel } from "@/lib/error-label";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
-import { isAdminLogin } from "@/lib/admin-auth";
+import { isAdminPlayer } from "@/lib/admin-auth";
 import { getAdminSettings } from "@/lib/admin-store";
 import { isLaunched } from "@/lib/schedule-window";
 
@@ -30,9 +30,9 @@ function logFailure(what: string, err: unknown): void {
   console.error(`launch lock: ${what} failed (failing closed):`, errorLabel(err));
 }
 
-async function viewerIsAdmin(login: string | undefined): Promise<boolean> {
+async function viewerIsAdmin(playerId: string | undefined): Promise<boolean> {
   try {
-    return await isAdminLogin(login);
+    return await isAdminPlayer(playerId);
   } catch (err) {
     logFailure("admin check", err);
     return false;
@@ -40,8 +40,10 @@ async function viewerIsAdmin(login: string | undefined): Promise<boolean> {
 }
 
 /** Who may see module content right now. `preview` marks an admin who is
- *  only through because they are an admin (the event is not launched). */
-export async function getLaunchAccess(login: string | undefined, nowMs: number = Date.now()): Promise<LaunchAccess> {
+ *  only through because they are an admin (the event is not launched).
+ *  `playerId` is the viewer's kit player id, or undefined when signed out;
+ *  it only feeds the admin check. */
+export async function getLaunchAccess(playerId: string | undefined, nowMs: number = Date.now()): Promise<LaunchAccess> {
   let launched = false;
   try {
     const s = await getAdminSettings();
@@ -50,22 +52,22 @@ export async function getLaunchAccess(login: string | undefined, nowMs: number =
     logFailure("settings read", err);
   }
   if (launched) return { allowed: true, preview: false };
-  if (await viewerIsAdmin(login)) return { allowed: true, preview: true };
+  if (await viewerIsAdmin(playerId)) return { allowed: true, preview: true };
   return { allowed: false, preview: false };
 }
 
 /** Page guard: call BEFORE loading any module content. Redirects a refused
  *  viewer to the landing page; returns the access otherwise. */
-export async function redirectIfNotLaunched(login: string | undefined): Promise<LaunchAccess> {
-  const access = await getLaunchAccess(login);
+export async function redirectIfNotLaunched(playerId: string | undefined): Promise<LaunchAccess> {
+  const access = await getLaunchAccess(playerId);
   if (!access.allowed) redirect("/");
   return access;
 }
 
 /** API guard: `null` when allowed, else the 403 `not-launched` response —
  *  its own error, never a wrong-answer shape. */
-export async function requireLaunchedApi(login: string | undefined): Promise<NextResponse | null> {
-  const access = await getLaunchAccess(login);
+export async function requireLaunchedApi(playerId: string | undefined): Promise<NextResponse | null> {
+  const access = await getLaunchAccess(playerId);
   if (access.allowed) return null;
   return NextResponse.json({ error: "not-launched" }, { status: 403 });
 }
@@ -76,9 +78,9 @@ export async function requireLaunchedApi(login: string | undefined): Promise<Nex
  *  nothing). `preview` is the only way a dry run is ever requested for the
  *  in-box routes; no request field can turn it on. */
 export async function launchApiAccess(
-  login: string | undefined,
+  playerId: string | undefined,
 ): Promise<{ refused: NextResponse | null; preview: boolean }> {
-  const access = await getLaunchAccess(login);
+  const access = await getLaunchAccess(playerId);
   if (!access.allowed) return { refused: NextResponse.json({ error: "not-launched" }, { status: 403 }), preview: false };
   return { refused: null, preview: access.preview };
 }

@@ -59,7 +59,7 @@ const ExternalLink = ({ href, children }: { href: string; children: React.ReactN
 // to be, which is exactly what makes them a floor rather than a default.
 const FALLBACK: Record<"eligibility" | "scope" | "submissions", Copy[]> = {
   eligibility: [
-    "You need a GitHub account. Your GitHub login is your identity for scoring, so take part from the account you sign in with. Points are credited to that account and cannot be moved between accounts afterwards.",
+    "You need an account on this site. Your account is your identity for scoring, so take part from the account you sign in with. Points are credited to that account and cannot be moved between accounts afterwards.",
     "Organizers and anyone who worked on the competition's content or its scoring may compete for fun but are not eligible for prizes.",
   ],
   scope: [

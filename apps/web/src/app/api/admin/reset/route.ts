@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, getAdminSettings, resetEvent } from "@/lib/admin-store";
 import { resolveSite } from "@/lib/site";
+import { auditActor } from "@/lib/admin-audit-keys";
 
 // Master reset: wipe all event data. Admin-gated + type-to-confirm, both
 // enforced server-side (never trust the client). The confirm value must match
@@ -39,7 +40,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await resetEvent(gate.login);
+    const result = await resetEvent(auditActor(gate.player));
     return NextResponse.json(result);
   } catch (err) {
     console.error("[admin/reset] reset failed", adminErrorLabel(err));

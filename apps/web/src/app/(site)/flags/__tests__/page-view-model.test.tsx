@@ -29,7 +29,7 @@ const launchLock = vi.hoisted(() => ({
 const firstBloods = vi.hoisted(() => ({ map: new Map<string, { login: string; at: string | null }>() }));
 vi.mock("@/lib/team-solve-counts", () => ({
   teamSolveCounts,
-  teamSolveBoard: async (module: "classic" | "ai") => {
+  teamSolveBoard: async (module: "classic") => {
     const counts = (await teamSolveCounts(module)) as Map<string, number> | null;
     return counts ? { counts, firstBlood: firstBloods.map } : null;
   },
@@ -59,7 +59,7 @@ vi.mock("@/lib/enabled-modules", async () =>
 // admin-link check for any signed-in viewer. Mocked to empty here: this suite
 // is about the view model's fields, and an unmocked SMEMBERS turns it into a
 // test of the datastore.
-vi.mock("@/lib/admin-admins", () => ({ listStoredAdmins: async () => [] }));
+vi.mock("@/lib/admin-grants", () => ({ isAdminGrantee: async () => false }));
 
 vi.mock("next/headers", () => ({ headers: () => new Headers() }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));

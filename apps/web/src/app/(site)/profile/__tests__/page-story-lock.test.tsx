@@ -56,6 +56,7 @@ vi.mock("next/navigation", async (importOriginal) => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
+vi.mock("@/lib/username-store", () => ({ hasPassword: async () => true }));
 vi.mock("@/lib/leaderboard/source", () => ({
   getLeaderboardSource: async () => ({ getUser, getLeaderboard: vi.fn() }),
 }));
@@ -76,11 +77,6 @@ vi.mock("@/lib/quiz-store", () => ({
   listQuestions: async () => [],
   getViewerQuiz: async () => ({ answered: {}, attempts: {} }),
 }));
-vi.mock("@/lib/ai-store", () => ({
-  getAiTotals: async () => new Map(),
-  listAiChallenges: async () => [],
-  getViewerAi: async () => ({ solved: {}, attempts: {} }),
-}));
 vi.mock("@/lib/upstash", () => ({ upstashPipeline }));
 // Only the classic slice matters here; every other module is switched off
 // through `moduleLive` above and its reads are never reached.
@@ -94,6 +90,8 @@ vi.mock("@/lib/classic-store", () => ({
 
 import ProfilePage from "@/app/(site)/profile/page";
 import { unlockPipeline } from "@/test/unlock-pipeline-mock";
+
+const ADA_ID = "2d1a6b5e-3f4c-4e7d-a081-9cadbe1f2041";
 
 const DISCLAIMER = "Totals count unlocked challenges only";
 
@@ -120,7 +118,7 @@ const STORY2 = { id: "s2", title: "Second Operation", intro: "", steps: ["beta-1
 /** The page's own reads, for a viewer whose team has solved `solvedIds`. */
 function givenTeam(solvedIds: readonly string[], classicPoints: number, classicSolved: number) {
   moduleLive.mockImplementation((id: string) => id === "classic");
-  getSession.mockResolvedValue({ user: { login: "ada", image: null } });
+  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
   getUser.mockResolvedValue({ points: 0, maxPoints: 0, patched: 0, failed: 0, total: 0 });
   getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
   getResolvedModules.mockResolvedValue([
@@ -129,10 +127,10 @@ function givenTeam(solvedIds: readonly string[], classicPoints: number, classicS
   // The fold reads the STORE team's roster, so a fixture standing in for a
   // teamed viewer has to carry one — a viewer with no store team reaches the
   // teamless path instead (pinned in its own test below).
-  getViewerTeam.mockResolvedValue({ slug: "red", name: "Red", members: ["ada"] });
+  getViewerTeam.mockResolvedValue({ slug: "red", name: "Red", members: [ADA_ID] });
   listChallenges.mockResolvedValue(CHALLENGES);
   listStories.mockResolvedValue([STORY]);
-  getClassicTotals.mockResolvedValue(new Map([["ada", { points: classicPoints, solved: classicSolved, lastAt: null }]]));
+  getClassicTotals.mockResolvedValue(new Map([[ADA_ID, { points: classicPoints, solved: classicSolved, lastAt: null }]]));
   getViewerClassic.mockResolvedValue({
     solved: Object.fromEntries(solvedIds.map((id) => [id, { points: 10, at: SOLVED_AT }])),
     attempts: {},
@@ -150,7 +148,7 @@ function givenTeam(solvedIds: readonly string[], classicPoints: number, classicS
   // joined before these solves, so they open the next step for the team.
   upstashPipeline.mockImplementation(
     unlockPipeline({
-      ada: { solves: Object.fromEntries(solvedIds.map((id) => [id, SOLVED_AT])), team: "red", joinedAt: JOINED_AT },
+      [ADA_ID]: { solves: Object.fromEntries(solvedIds.map((id) => [id, SOLVED_AT])), team: "red", joinedAt: JOINED_AT },
     }),
   );
 }
@@ -236,17 +234,17 @@ describe("the profile's story-lock disclaimer (#570)", () => {
   // stay off the page either way (#463).
   it("folds a teammate's deleted solve into the ceiling at its solve-time points", async () => {
     moduleLive.mockImplementation((id: string) => id === "classic");
-    getSession.mockResolvedValue({ user: { login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue({ points: 0, maxPoints: 0, patched: 0, failed: 0, total: 0 });
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
     getResolvedModules.mockResolvedValue([
       { id: "classic", nav: { href: "/challenges", label: "Challenges" }, targets: [], title: "Classic", blurb: "" },
     ]);
     // The roster resolves once, off the store team this page already read.
-    getViewerTeam.mockResolvedValue({ slug: "red", name: "Red", members: ["ada", "grace"] });
+    getViewerTeam.mockResolvedValue({ slug: "red", name: "Red", members: [ADA_ID, "grace"] });
     listChallenges.mockResolvedValue(CHALLENGES);
     listStories.mockResolvedValue([STORY]);
-    getClassicTotals.mockResolvedValue(new Map([["ada", { points: 10, solved: 1, lastAt: null }]]));
+    getClassicTotals.mockResolvedValue(new Map([[ADA_ID, { points: 10, solved: 1, lastAt: null }]]));
     getViewerClassic.mockResolvedValue({ solved: { "step-1": { points: 10, at: SOLVED_AT } }, attempts: {} });
     // grace solved step-1 (unlocking step-2 for the team) and gone-1 — a
     // challenge since deleted from the catalogue, banked at 70 pts.
@@ -261,7 +259,7 @@ describe("the profile's story-lock disclaimer (#570)", () => {
     ]);
     upstashPipeline.mockImplementation(
       unlockPipeline({
-        ada: { solves: { "step-1": SOLVED_AT }, team: "red", joinedAt: JOINED_AT },
+        [ADA_ID]: { solves: { "step-1": SOLVED_AT }, team: "red", joinedAt: JOINED_AT },
         grace: { solves: { "step-1": SOLVED_AT, "gone-1": SOLVED_AT }, team: "red", joinedAt: JOINED_AT },
       }),
     );
@@ -270,7 +268,7 @@ describe("the profile's story-lock disclaimer (#570)", () => {
 
     // One team read, and the fold is handed exactly that roster.
     expect(getViewerTeam).toHaveBeenCalledTimes(1);
-    expect(getTeamClassicTotalsBatch).toHaveBeenCalledWith([["ada", "grace"]]);
+    expect(getTeamClassicTotalsBatch).toHaveBeenCalledWith([[ADA_ID, "grace"]]);
     // The ceiling carries the teammate's deleted solve at its solve-time
     // points: step-1 (10) + step-2 (50) + gone-1 (70) = 130 — count and
     // ceiling agree because they come from the same fold. A fold handed
@@ -295,7 +293,7 @@ describe("the profile's story-lock disclaimer (#570)", () => {
   // issued at all.
   it("advances a solo contestant's own story, preserving their banked points", async () => {
     moduleLive.mockImplementation((id: string) => id === "classic");
-    getSession.mockResolvedValue({ user: { login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue({ points: 0, maxPoints: 0, patched: 0, failed: 0, total: 0 });
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
     getResolvedModules.mockResolvedValue([
@@ -305,7 +303,7 @@ describe("the profile's story-lock disclaimer (#570)", () => {
     // and gone-1 — a challenge since deleted, banked at 70 pts.
     listChallenges.mockResolvedValue(CHALLENGES);
     listStories.mockResolvedValue([STORY]);
-    getClassicTotals.mockResolvedValue(new Map([["ada", { points: 80, solved: 2, lastAt: null }]]));
+    getClassicTotals.mockResolvedValue(new Map([[ADA_ID, { points: 80, solved: 2, lastAt: null }]]));
     getViewerClassic.mockResolvedValue({
       solved: { "step-1": { points: 10, at: SOLVED_AT }, "gone-1": { points: 70, at: SOLVED_AT } },
       attempts: {},
@@ -313,7 +311,7 @@ describe("the profile's story-lock disclaimer (#570)", () => {
     // The member record names no team, so under the team-of-one scope their
     // own solves count.
     upstashPipeline.mockImplementation(
-      unlockPipeline({ ada: { solves: { "step-1": SOLVED_AT, "gone-1": SOLVED_AT }, team: "", joinedAt: "" } }),
+      unlockPipeline({ [ADA_ID]: { solves: { "step-1": SOLVED_AT, "gone-1": SOLVED_AT }, team: "", joinedAt: "" } }),
     );
 
     const html = renderToStaticMarkup(await ProfilePage());
@@ -342,7 +340,7 @@ describe("the profile's story-lock disclaimer (#570)", () => {
   it("does not let a pre-join solve open the next step for the team", async () => {
     givenTeam(["step-1"], 10, 1);
     upstashPipeline.mockImplementation(
-      unlockPipeline({ ada: { solves: { "step-1": SOLVED_AT }, team: "red", joinedAt: "2026-08-03T00:00:00.000Z" } }),
+      unlockPipeline({ [ADA_ID]: { solves: { "step-1": SOLVED_AT }, team: "red", joinedAt: "2026-08-03T00:00:00.000Z" } }),
     );
 
     const html = renderToStaticMarkup(await ProfilePage());
@@ -365,18 +363,18 @@ describe("the profile's story-lock disclaimer (#570)", () => {
   // the ceiling exactly as the fold reported them.
   it("hides a locked step even when a teammate's banked solve holds its record", async () => {
     moduleLive.mockImplementation((id: string) => id === "classic");
-    getSession.mockResolvedValue({ user: { login: "ada", image: null } });
+    getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
     getUser.mockResolvedValue({ points: 0, maxPoints: 0, patched: 0, failed: 0, total: 0 });
     getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
     getResolvedModules.mockResolvedValue([
       { id: "classic", nav: { href: "/challenges", label: "Challenges" }, targets: [], title: "Classic", blurb: "" },
     ]);
     // The roster resolves once, off the store team this page already read.
-    getViewerTeam.mockResolvedValue({ slug: "red", name: "Red", members: ["ada", "grace"] });
+    getViewerTeam.mockResolvedValue({ slug: "red", name: "Red", members: [ADA_ID, "grace"] });
     listChallenges.mockResolvedValue(CHALLENGES);
     listStories.mockResolvedValue([STORY]);
     // ada's own step-1 solve (post-join, so it counts) opens step 2 for red.
-    getClassicTotals.mockResolvedValue(new Map([["ada", { points: 10, solved: 1, lastAt: null }]]));
+    getClassicTotals.mockResolvedValue(new Map([[ADA_ID, { points: 10, solved: 1, lastAt: null }]]));
     getViewerClassic.mockResolvedValue({ solved: { "step-1": { points: 10, at: SOLVED_AT } }, attempts: {} });
     // The fold carries both records, wherever they were made: step-1 (10)
     // and grace's step-3 (90).
@@ -395,7 +393,7 @@ describe("the profile's story-lock disclaimer (#570)", () => {
     // the step would render.
     upstashPipeline.mockImplementation(
       unlockPipeline({
-        ada: { solves: { "step-1": SOLVED_AT }, team: "red", joinedAt: JOINED_AT },
+        [ADA_ID]: { solves: { "step-1": SOLVED_AT }, team: "red", joinedAt: JOINED_AT },
         grace: { solves: { "step-3": SOLVED_AT }, team: "red", joinedAt: "2026-08-03T00:00:00.000Z" },
       }),
     );

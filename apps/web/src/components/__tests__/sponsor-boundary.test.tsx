@@ -4,7 +4,7 @@
 // leaderboard-branding.test.tsx), the footer's text-only credit line, the
 // /sponsors page, and the leaderboard's projector display (`?display=1`) —
 // and nowhere else. A full multi-route render (header, hero, /challenges, /flags,
-// /quiz, /ai, /rules, /how-to-play) would need each of those routes' own
+// /quiz, /rules, /how-to-play) would need each of those routes' own
 // heavy per-page mock rig duplicated into this one file; instead this file
 // pins the boundary at the COMPONENT layer, which is where every one of
 // those pages would actually receive sponsor data from if it ever did.

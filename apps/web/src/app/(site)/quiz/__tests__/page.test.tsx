@@ -12,9 +12,9 @@ const launchLock = vi.hoisted(() => ({
 vi.mock("@/lib/launch", () => launchLock);
 import { renderToStaticMarkup } from "react-dom/server";
 
-const { moduleLive, isAdminLogin, getSession, listQuestions, getViewerQuiz, getAdminSettings, getResolvedModules } = vi.hoisted(() => ({
+const { moduleLive, isAdminPlayer, getSession, listQuestions, getViewerQuiz, getAdminSettings, getResolvedModules } = vi.hoisted(() => ({
   moduleLive: vi.fn(),
-  isAdminLogin: vi.fn(),
+  isAdminPlayer: vi.fn(),
   getSession: vi.fn(),
   listQuestions: vi.fn(),
   getViewerQuiz: vi.fn(),
@@ -36,7 +36,7 @@ vi.mock("next/navigation", async (importOriginal) => ({
 }));
 vi.mock("@/lib/resolved-modules", () => ({ getResolvedModules }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
-vi.mock("@/lib/admin-auth", () => ({ isAdminLogin }));
+vi.mock("@/lib/admin-auth", () => ({ isAdminPlayer }));
 vi.mock("@/lib/admin-store", () => ({ getAdminSettings }));
 vi.mock("@/lib/quiz-store", () => ({
   listQuestions,
@@ -46,6 +46,9 @@ vi.mock("@/lib/quiz-store", () => ({
 }));
 
 import QuizPage from "@/app/(site)/quiz/page";
+
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+const BOB_ID = "1c0f5a4d-2e3b-4d6c-9f70-8b9cad0e1f30";
 
 const baseQuestions = [
   {
@@ -84,7 +87,7 @@ const baseQuestions = [
 
 beforeEach(() => {
   vi.clearAllMocks();
-  isAdminLogin.mockReturnValue(false);
+  isAdminPlayer.mockReturnValue(false);
   // Registry-default fallback, same shape resolveModules would produce for an
   // event with only the quiz module enabled and no organizer overrides. Tests
   // that care about an organizer-renamed title override this per-case.
@@ -101,7 +104,7 @@ describe("quiz page gate", () => {
 describe("quiz page view model", () => {
   it("derives answered/exhausted/cooldown/unanswered per question from viewer progress and settings", async () => {
     moduleLive.mockReturnValue(true);
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listQuestions.mockResolvedValue(baseQuestions);
     getAdminSettings.mockResolvedValue({ quizMaxAttempts: 2, quizRetryAfterMin: 5 });
     getViewerQuiz.mockResolvedValue({
@@ -131,7 +134,8 @@ describe("quiz page view model", () => {
     const html = renderToStaticMarkup(await QuizPage());
 
     expect(getViewerQuiz).not.toHaveBeenCalled();
-    expect(html).toMatch(/sign in with github/i);
+    expect(html).toMatch(/sign in to answer questions/i);
+    expect(html).not.toMatch(/sign in with github/i);
     expect(html).not.toContain("<button");
   });
 
@@ -150,8 +154,8 @@ describe("quiz page view model", () => {
   // dead end for them and a useless one for whoever has to author the bank.
   it("routes an organizer to the authoring tab from the empty state", async () => {
     moduleLive.mockReturnValue(true);
-    isAdminLogin.mockReturnValue(true);
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    isAdminPlayer.mockReturnValue(true);
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
     listQuestions.mockResolvedValue([]);
     getViewerQuiz.mockResolvedValue({ answered: {}, attempts: {} });
     getAdminSettings.mockResolvedValue({ quizMaxAttempts: null, quizRetryAfterMin: null });
@@ -165,8 +169,8 @@ describe("quiz page view model", () => {
 
   it("shows a signed-in contestant the plain empty state, with no admin link", async () => {
     moduleLive.mockReturnValue(true);
-    isAdminLogin.mockReturnValue(false);
-    getSession.mockResolvedValue({ user: { login: "bob" } });
+    isAdminPlayer.mockReturnValue(false);
+    getSession.mockResolvedValue({ user: { id: BOB_ID, login: "bob" } });
     listQuestions.mockResolvedValue([]);
     getViewerQuiz.mockResolvedValue({ answered: {}, attempts: {} });
     getAdminSettings.mockResolvedValue({ quizMaxAttempts: null, quizRetryAfterMin: null });
@@ -206,7 +210,7 @@ describe("quiz page blurb and progress line", () => {
   });
 
   it("renders the organizer's blurb as the page header's description", async () => {
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
 
     const html = renderToStaticMarkup(await QuizPage());
 
@@ -219,7 +223,7 @@ describe("quiz page blurb and progress line", () => {
   });
 
   it("carries the viewer's progress in the board strip, once — the old sentence is gone", async () => {
-    getSession.mockResolvedValue({ user: { login: "alice" } });
+    getSession.mockResolvedValue({ user: { id: ALICE_ID, login: "alice" } });
 
     const html = renderToStaticMarkup(await QuizPage());
 
@@ -239,7 +243,8 @@ describe("quiz page blurb and progress line", () => {
 
     const html = renderToStaticMarkup(await QuizPage());
 
-    expect(html).toMatch(/sign in with github to answer questions/i);
+    expect(html).toMatch(/sign in to answer questions/i);
+    expect(html).not.toMatch(/sign in with github/i);
     // And the header still describes the module rather than the viewer.
     expect(html).toMatch(/<h1[^>]*>Round 1<\/h1><p[^>]*>Ten questions on the OWASP Top 10, one point each\.<\/p>/);
   });
@@ -258,7 +263,8 @@ describe("quiz page blurb and progress line", () => {
 
     // Non-vacuity: this really is the empty-state render, not a populated one.
     expect(html).toMatch(/no quiz questions are available/i);
-    expect(html).toMatch(/sign in with github to answer questions/i);
+    expect(html).toMatch(/sign in to answer questions/i);
+    expect(html).not.toMatch(/sign in with github/i);
   });
 
   it("falls back to the registry default blurb when the organizer set none", async () => {

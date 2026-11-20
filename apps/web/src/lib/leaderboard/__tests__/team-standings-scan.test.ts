@@ -91,11 +91,11 @@ describe("team discovery through the leaderboard pipeline", () => {
     ]);
     // Both Alpha members hold "shared": its 11 points count once for the
     // team while each player's original total and case-insensitive team stay.
-    expect(result.entries.map(({ login, points, rank, team }) => ({ login, points, rank, team }))).toEqual([
-      { login: "bob", points: 18, rank: 1, team: "alpha" },
-      { login: "alice", points: 11, rank: 2, team: "alpha" },
-      { login: "cara", points: 7, rank: 3, team: "beta" },
-      { login: "solo", points: 4, rank: 4, team: null },
+    expect(result.entries.map(({ playerId, points, rank, team }) => ({ playerId, points, rank, team }))).toEqual([
+      { playerId: "bob", points: 18, rank: 1, team: "alpha" },
+      { playerId: "alice", points: 11, rank: 2, team: "alpha" },
+      { playerId: "cara", points: 7, rank: 3, team: "beta" },
+      { playerId: "solo", points: 4, rank: 4, team: null },
     ]);
   });
 });

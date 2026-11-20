@@ -50,43 +50,50 @@ from before the kit required it is the common case), or run
 interpolation failure inside a script that pipes compose's stderr to
 `/dev/null` looks like an empty service list, not an error.
 
-## `/admin` 403s for everyone, including you
+## `/admin` says Forbidden for everyone, including you
 
-**Symptom.** Nobody — including you — can open `/admin`; every listed admin
-gets the 403 wall.
+**Symptom.** Nobody — including you — can open `/admin`; every account gets
+the Forbidden page.
 
-**Diagnosis.** `ADMIN_LOGINS` is empty or unset in `.env`, or it is set but
-the app was not restarted after you changed it. Since #386 part 4 the app no
-longer bakes an admins list at build time — it reads the comma-separated
-`ADMIN_LOGINS` env var at runtime, and an empty set (unset, blank, or every
-entry failing the GitHub-login shape check) refuses every login, including
-one that used to work. (The event's name and the rest of its branding, the
-fork org, and which Secure Development targets run are separate runtime
-settings — the name and targets default to "OWASP CTF in a Box" / all six
-either way, so a stock-looking name or a full target list is not a symptom of this
-problem on its own.)
+**Diagnosis.** An admin is a kit account that claimed an admin claim code at
+`/admin/claim`
+([ADR 72](decisions.md#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)).
+The Forbidden page names which case you are in:
 
-**Fix.** Set `ADMIN_LOGINS` in `.env` to a comma-separated list of GitHub
-logins (case doesn't matter — logins join case-insensitively everywhere in
-this repo), then restart the app container — no rebuild needed, since this is
-a runtime read, not a build arg:
+- **"No organizer has claimed this box yet."** Nobody has claimed. Sign in,
+  open `/admin/claim` and enter the code provisioning printed. Lost it?
+  Rotate it (**Fix**, below).
+- **"ADMIN_CLAIM_CODE_HASH is not set or is not a SHA-256"** as well. The app
+  has no usable hash, so nobody can claim with a bootstrap code. A code an
+  admin issued would still work, but with nobody claimed there is none. The
+  key is missing from `.env`, the app container was not recreated after it
+  was set (`docker compose restart` keeps the old environment), or the value
+  is the code itself pasted where its hash belongs (64 lowercase hex is a hash; eight groups of
+  four is a code). Compose must also pass `ADMIN_CLAIM_CODE_HASH` through to
+  the app service's environment — `docker-compose.yml` does, but a customized
+  override file that dropped it reproduces this symptom.
+- **No notice.** Admins exist, and you are not one of them. Ask an admin to
+  issue you a code from the Admins tab. If no admin can sign in any more,
+  rotate the bootstrap code (below): it works whether or not admins exist.
 
-```sh
-docker compose --profile secdev --profile app up -d
-```
+`ADMIN_LOGINS` is not read by anything; a line left in `.env` grants nothing.
 
-(Quiz/classic/ai-only events: `--profile app` alone.) Compose must also be
-passing `ADMIN_LOGINS` through to the app service's environment — it is on
-recent `docker-compose.yml`, but a customized override file that dropped it
-would reproduce this exact symptom.
+**Fix.** Rotate the bootstrap code. Each command prints the new code once:
 
-**On AWS** the list is the `admin_logins` Terraform variable, not `.env`.
-Set it in `terraform.tfvars` and run `terraform apply`, which rolls out a new
-app task definition. An empty value is refused at plan time.
+- **Compose box:** `./setup/ctf-setup.sh admin-code`, then recreate the app
+  container (`docker compose up -d --no-deps --force-recreate app`) — no
+  rebuild, since this is a runtime read, but not a plain
+  `docker compose restart` either, which keeps the old environment.
+- **Fly:** `./deploy/fly/deploy.sh --skip-build --new-admin-code`.
+- **AWS:** `./deploy/aws-terraform/deploy.sh --skip-build --new-admin-code`.
+
+Then claim at `/admin/claim` with the printed code; hyphens and case do not
+matter. A code wrongly entered five times locks that account's claims for 15
+minutes.
 
 ## Only the landing page loads (module pages redirect to `/`)
 
-**Symptom.** Contestants open `/challenges`, `/flags`, `/quiz`, `/ai` or
+**Symptom.** Contestants open `/challenges`, `/flags`, `/quiz` or
 `/leaderboard` and land back on `/`, which says **Launching soon.** or shows
 a countdown; a script calling a submit or answer API gets
 `403 { "error": "not-launched" }`. You, signed in as an admin, see every page
@@ -115,14 +122,14 @@ any more (the password gate was removed in v0.6) — delete them. See
 
 ## A board that was on before the upgrade is gone
 
-**Symptom.** After upgrading, Quiz, Jeopardy, or AI no longer appears in the
+**Symptom.** After upgrading, Quiz or Jeopardy no longer appears in the
 nav or on the landing page, even though nothing about that module changed.
 
 **Diagnosis.** Not a bug and nothing was deleted. Since #386, module
 enablement is decided at runtime in `/admin`, not baked into the image —
 and on a fresh deployment (or one whose stored settings have never named
 this module) only Secure Development starts on, and only when the stack has
-a scorer image; Quiz, Jeopardy and AI always start **off**.
+a scorer image; Quiz and Jeopardy always start **off**.
 
 **Fix.** `/admin` → Event tab → Modules, and switch it on. The board's
 data was never touched — solves, attempts and points come back exactly as
@@ -141,7 +148,8 @@ Work down this list — each item is a different subsystem:
    before the launch or after the end **never counts**, not even after you
    unfreeze or set a start — the poller logs it as `refused (paused)` or
    `refused (outside-window)`. A score timed before the last master reset
-   never counts either, logged `refused (pre-reset)`. The contestant has to
+   never counts either, logged `refused (pre-reset)`. `refused
+   (player-deleted)` is a deleted contestant's PR: nothing to do. The contestant has to
    push again once scoring is live. One exception: a freeze set straight on
    the settings hash (`HSET … paused 1`, no recorded `pausedSince`) has an unknown start, so the
    scorer holds the scores it reads during it and judges them once the freeze
@@ -162,12 +170,104 @@ Work down this list — each item is a different subsystem:
    could not read the Secure Development target list from
    `ctf:admin:settings` — it waits rather than guessing, so fix Redis and the
    next tick catches up. A tick log with `dropped` counts names why a comment
-   was refused (forged author, unknown target, malformed marker).
+   was refused (forged author, unknown target, malformed marker, or a
+   rejected release of a held score). A PR author who has not linked GitHub is
+   not a drop: the score is **held** (`held` count, listed on the Secure
+   Development admin tab) and released on a later tick once the author links
+   before Scoring closes; one linked at or after the close shows as
+   `unclaimed` and never scores. A link with no recorded time
+   (`ctf:link:at`) counts as made after the close whenever `scoringEndsAt`
+   is set: if an author you expect to score shows `unclaimed`, have them sign
+   in again before the close, which stamps the time (CHANGELOG #741 has the
+   one-off command that stamps every link). The `unlinked` tally of earlier
+   builds is this `held` count. The poller never logs the login. Sync also
+   refuses to start without Redis
+   (`ctf-sync: Secure Development needs Redis to attribute PRs to players`).
+   A tick that keeps logging `scorer 503` for one player's PRs, with the
+   event launched and not frozen, can mean a delete or a GitHub unlink of that player left its
+   token on `ctf:score-hold:<player id>` (the scorer's reply body is
+   `player scores on hold`, and the app log names the failed lift). For a delete, run it again. With no delete or unlink of the
+   player still running, `DEL ctf:score-hold:<player id>` releases their
+   scores, but only while the player's account still exists; a deleted
+   player's hold is what refuses their PRs. A `scorer 503` whose body reads
+   `the login no longer links to this player` is the link moving between
+   sync's lookup and the write (an unlink, a delete, delete all accounts);
+   the next tick looks the login up again and holds or scores the PR, so one
+   such line is not a fault.
 4. **Is the score comment authored by `github-actions[bot]`?** Only that
    author is trusted — a comment posted any other way (including by you) is
    dropped by design.
 5. **Poll cadence is ~30 s** — a score that lands a minute late in a busy
    tick is normal, not stuck.
+
+## Nothing posts to Discord
+
+**Symptom.** The channel stays quiet while the event runs, or one kind of
+announcement posts while another never does. The card's status line and the
+app log are the two places that say why.
+
+**Diagnosis.** Four independent gates can each keep a post from leaving.
+Work through them in order; the [Discord announcements](operations.md#discord-announcements)
+section has the card's full behavior.
+
+1. **No webhook, or the switch for that kind is off.** Announcements are
+   opt-in twice: saving a webhook turns nothing on, and each kind has its own
+   switch on `/admin` → **Event** → **Discord announcements**. The line
+   under the field says "A webhook is configured." or "No webhook
+   configured"; check it alongside the relevant switch (First blood, Event
+   launch, Scoring paused / resumed, or Remaining-time checks). Turning a
+   switch on later does not replay first bloods or a launch that has already
+   happened — only a real edge observed after it is armed posts. Paste the
+   webhook again and press **Save**, then enable the kind you want.
+
+2. **The event was not launched, or the edge is not eligible.** Launch posts
+   only when the observer sees scoring go from not launched to launched; a
+   box that starts already launched seeds silently instead of posting a
+   retroactive launch. Pause/resume posts only for a live, unclosed event:
+   a pause that begins while scoring is already closed is never announced,
+   and lifting it later posts nothing. Closing at **Scoring closes** is not
+   announced, and Remaining-time checks are silenced while the event is
+   unlaunched, paused, or closed. Check the **Right now:** readout under the
+   schedule and the **Scoring opens** / **Scoring closes** fields. Set
+   **Scoring opens** to now to launch immediately (with the launch switch
+   already on), or wait for the next real freeze/unfreeze edge; enabling
+   announcements after the fact will not backfill one. First blood is
+   solve-triggered rather than schedule-gated, so old solves still do not
+   replay.
+
+3. **Discord returned HTTP 429.** The log line is
+   `[announce] discord post rate limited: HTTP 429`. The sender prefers
+   Discord's `Retry-After` header, falls back to the JSON `retry_after`
+   seconds, and defaults to one second when neither is usable. It then parks
+   every delivery sweep and **Send test** behind a shared cooldown until that
+   instant (concurrent 429s keep the later deadline). The parked entries keep
+   their pending/failed status and the 429 does not consume an attempt;
+   delivery resumes on the first armed tick after the cooldown expires,
+   normally within 30 seconds.
+   For a non-429 rejection or a timeout (the POST is capped at five seconds)
+   the entry is marked failed and retried on the 30-second ticker, up to
+   three failed attempts in total, with no exponential backoff. Delivery is
+   at-least-once, not exactly-once: a success whose write is lost can post
+   again. Check the log/status line and wait out the retry instant rather
+   than repeatedly pressing **Send test**; a persistent non-429 failure means
+   check that the webhook is still valid and the channel still accepts it.
+
+4. **Redis is unavailable.** The announcer keeps its config, claims, outbox
+   and cooldown in Redis. The fail-closed paths are the config read (a
+   failure skips the tick —
+   `[announce] config read failed, skipping tick`), a claim or enqueue (a
+   failure records nothing), and the webhook-target read (a failure leaves
+   queued entries untouched for a later pass). The cooldown read is the
+   exception: it fails open to "no cooldown", because a Redis blip must not
+   pause delivery; a cooldown-read failure alone does not stop a pass, but
+   the config and target reads still have to succeed. With Redis actually
+   unavailable those fail, so nothing is posted until it is readable again —
+   check `/health/deep` and the app log for `NOAUTH` or `fetch failed`, then
+   fix the path to Redis
+   ([`NOAUTH`](#services-log-noauth-authentication-required),
+   [`fetch failed`](#a-service-cant-reach-another-nothing-but-fetch-failed)).
+   Entries already in the outbox are retried after recovery, but events that
+   occurred while Redis was down may be lost, and no delivery is guaranteed.
 
 ## The fork's Action fails: "no matching manifest for linux/amd64"
 
@@ -259,7 +359,7 @@ place that failure is visible from outside. Read the body:
   as down only when both are. See the srh and failover
   drills in the [AWS runbook](aws.md#failure-drills).
 - **`"scorer": "down"`** — Redis is fine but the scorer's `/healthz` did not
-  answer. Quiz, Jeopardy and AI keep scoring; Secure Development scores stop
+  answer. Quiz and Jeopardy keep scoring; Secure Development scores stop
   landing and the board shows stale SD totals. Restart the scorer container
   (on AWS, `aws ecs update-service --cluster <cluster> --service scorer
   --force-new-deployment`, after reading its `stoppedReason`);
@@ -358,14 +458,88 @@ smoke stack's mock service.
 **Symptom.** Logs say it is refusing to serve because `EVENT_URL` is
 `http://` on a non-loopback host.
 
-**Diagnosis.** Deliberate: sessions are cookie-only and the cookie is only
-`Secure` over HTTPS — serving a real event over HTTP makes every session
-(an organizer's included) sniffable.
+**Diagnosis.** Deliberate: the session cookie is only `Secure` over HTTPS — serving a
+real event over HTTP makes every session (an organizer's included) sniffable.
 
 **Fix.** Set an `https://` `EVENT_URL` (Caddy provisions TLS). Only for a
 deliberately TLS-less closed network: `ALLOW_INSECURE_EVENT_URL=1` in
 `.env`, which downgrades the refusal to a warning that says exactly what
 you gave up.
+
+## Players see "Too many attempts. Try again in N seconds."
+
+**Symptom.** Several people in one room, or behind one NAT or CDN edge, get a
+429 on `/sign-in`, or one player does after a few wrong passwords.
+
+**Diagnosis.** The Redis limiter on the auth endpoints. Per client address:
+300 account creations and 600 sign-ins per 10 minutes; per address and
+username: 10 password attempts per 15 minutes
+([budgets](operations.md#account-sign-up-and-sign-in-limits)). The address is
+the rightmost `X-Forwarded-For` entry on compose and AWS and `Fly-Client-IP`
+on Fly, so behind Cloudflare it is the edge's and everyone sharing that edge
+shares the per-address budgets. On Fly, if every player shares one budget
+with no CDN in front, check that the app container has
+`TRUSTED_CLIENT_IP_HEADER=fly-client-ip` (`deploy/fly/render-compose.sh`
+sets it); without it the key is Fly's own app address. The message
+carries the wait; `Retry-After` has it too. The limiter fails closed, so a
+429 on every attempt with no crowd can also mean Redis is unreachable (see
+the `NOAUTH` entry above and `/health/deep`).
+
+**Fix.** Wait out the window. The budgets are constants in
+`apps/web/src/lib/rate-limit-store.ts`, not an admin setting; raise them there
+only for an event that needs it.
+
+## Players cannot link GitHub: the startup log says the GitHub keys are missing
+
+**Symptom.** The app logs `[startup] Secure Development is on (SCORE_IMAGE is
+set) but GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET are missing: players cannot
+link GitHub, so no PR will score.` and `/profile` and `/challenges` say GitHub
+linking is not set up.
+
+**Cause and fix.** Secure Development needs the GitHub OAuth app. Set both
+`GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (see
+[Sign-in providers](hosting.md#sign-in-providers)), then recreate the app
+container (`docker compose up -d --no-deps --force-recreate app`, or
+redeploy on Fly or AWS); a plain restart keeps the old environment. GitHub
+counts as configured only with both keys non-blank.
+
+## Sign-in says "That sign-in option is not available."
+
+**Symptom.** A player is refused with `PROVIDER_DISABLED` when starting or
+finishing a GitHub sign-in.
+
+**Cause and fix.** An organizer switched GitHub sign-in off in the `/admin`
+Event tab's Sign-in section; the callback is gated too, so a sign-in started
+before the switch fails at the end. Switch it back on, or have the player use
+username and password. `SIGN_IN_SETTINGS_UNREADABLE` ("Sign-in options could
+not be loaded") means the switch could not be read from Redis; retry, and see
+[`/health/deep`](#the-monitor-says-healthdeep-is-503-but-the-site-loads-fine).
+
+## A player forgot their password
+
+**Symptom.** A player cannot sign in by username and has no other sign-in on
+the account.
+
+**Fix.** In `/admin`, open the Support tab, find the player and press **Reset
+password**, then **Issue reset code** to confirm. Hand the code over in person; the player enters it at `/reset`
+and chooses a new password. A code works once and expires after 15 minutes,
+and a new code voids the old one. If `/reset` says the code is invalid, it was
+used, expired, replaced, or its issuer lost admin access: issue another. See
+[Accounts](operations.md#accounts).
+
+## A GitHub login cannot be linked
+
+**Symptom.** A player's GitHub sign-in or link is refused, or their PRs stay
+held, although the GitHub account is theirs.
+
+**Cause and fix.** Deleting a contestant blocks their GitHub login from
+linking to any account until the next master reset, so a deleted player's
+scores cannot be claimed by a new account. If that login belongs to someone
+who should be playing, run the master reset (it clears the block along with
+the rest of the event's progress). Before the event that is fine; mid-event
+the player needs a different GitHub account. Unlinking a link
+that has not scored, from the Support tab, does not block the login. See
+[Accounts](operations.md#accounts).
 
 ## Still stuck
 

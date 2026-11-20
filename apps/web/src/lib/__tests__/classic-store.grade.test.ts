@@ -335,10 +335,12 @@ describe("the grading script's arguments", () => {
       "ctf:classic:solvecount",
       "ctf:classic:solved",
       "ctf:classic:lastAt",
+      "ctf:announce:first",
     ]);
     expect(argv[0]).toBe("chal-1");
     expect(argv[2]).toBe(new Date(Number(argv[5])).toISOString());
     expect(argv[3]).toBe("alice");
+    expect(argv[10]).toBe("classic:chal-1");
   });
 
   it("passes the CURRENT cooldown setting to the script, never a stored cutoff", async () => {
@@ -600,10 +602,17 @@ describe("story lock (#463)", () => {
     await submitFlag("alice", "chal-1", "CTF{x}");
     const { keys, argv } = lastEval();
     expect(argv[8]).toBe("recon");
-    // KEYS[9..] (index 8 on): KEYS[8] is the lastAt hash (#522).
+    // KEYS[9] is the first-solver hash (#590); KEYS[10..] are lockKeys.
     expect(keys[7]).toBe("ctf:classic:lastAt");
-    expect(keys.slice(8)).toEqual(["ctf:classic:solves:alice", "ctf:user:alice", "ctf:classic:solves:bob", "ctf:user:bob"]);
+    expect(keys.slice(8)).toEqual([
+      "ctf:announce:first",
+      "ctf:classic:solves:alice",
+      "ctf:user:alice",
+      "ctf:classic:solves:bob",
+      "ctf:user:bob",
+    ]);
     expect(argv[9]).toBe("red");
+    expect(argv[10]).toBe("classic:chal-1");
   });
 
   it("reports the script's `locked` exactly as an unknown challenge — no oracle, never a wrong answer", async () => {

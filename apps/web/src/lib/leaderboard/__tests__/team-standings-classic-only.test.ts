@@ -81,7 +81,7 @@ describe("a classic-only event", () => {
 
     const out = await withModuleContributions(empty());
 
-    expect(out.entries.map((e) => [e.login, e.points, e.rank])).toEqual([
+    expect(out.entries.map((e) => [e.playerId, e.points, e.rank])).toEqual([
       ["ada", 40, 1],
       ["bob", 10, 2],
     ]);
@@ -147,7 +147,7 @@ describe("a classic-only event", () => {
 
     const out = await pipeline(empty());
 
-    expect(out.entries.map((e) => [e.login, e.team])).toEqual([["Ada", "red"]]);
+    expect(out.entries.map((e) => [e.playerId, e.team])).toEqual([["Ada", "red"]]);
   });
 
   it("leaves the teams at zero when the team totals read fails", async () => {

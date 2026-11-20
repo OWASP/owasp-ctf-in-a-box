@@ -90,7 +90,7 @@ the `scorer` and `sync` repositories on a Secure Development event.
 
 ```sh
 cd deploy/aws-terraform
-cp terraform.tfvars.example terraform.tfvars    # edit: domain, github_org, admin_logins, github_client_id, github_app_id
+cp terraform.tfvars.example terraform.tfvars    # edit: domain, github_org, github_client_id, github_app_id
 cp backend.tf.example backend.tf                # edit: your state bucket (step 4)
 terraform init
 terraform apply \
@@ -100,7 +100,34 @@ terraform apply \
 docker login ghcr.io                            # Secure Development: the scorer package is private
 ./deploy.sh --scorer-source ghcr.io/<your-event-org>/score:latest   # build, mirror, push
 terraform apply                                 # the rest of the stack
+./deploy.sh --skip-build --new-admin-code \
+  --scorer-source ghcr.io/<your-event-org>/score:latest   # set the admin claim code; prints it once
 ```
+
+The admin claim code comes last because it needs the stack. The full apply
+creates the SSM parameter `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` holding a
+placeholder the app reads as unset, so `/admin` stays closed (fail closed)
+until `deploy.sh` writes a real hash into it. The first `deploy.sh` above, run
+before the full apply, publishes the images and says the code is not set yet.
+On an event without Secure Development, drop `--scorer-source` from both
+`deploy.sh` lines.
+
+**Upgrading an existing stack** to a version with claim codes, in this order:
+
+1. Remove `admin_logins` from `terraform.tfvars`.
+2. `./deploy.sh` (no `--skip-build`, no `--apply`) builds and pushes this
+   revision's images and writes `image.auto.tfvars`. It does not apply.
+   `--skip-build` would refuse here, because this revision's app image is not
+   in ECR yet.
+3. `terraform apply` creates the placeholder parameter and points the app
+   task at it. Until the next step, bootstrap-code claims are unavailable;
+   admins who already hold a grant are unaffected.
+4. `./deploy.sh --skip-build --new-admin-code` writes the hash, prints the
+   code once and rolls the app so it reads it.
+
+On a Secure Development stack, both `deploy.sh` runs need the scorer image,
+`--scorer-source <image>` or `SCORE_IMAGE`; `--skip-build` does not lift
+that requirement.
 
 The image variables in `terraform.tfvars.example` are placeholders for that
 bootstrap apply only. A full `terraform apply` while one is still the
@@ -144,13 +171,22 @@ Fargate services for whichever modules this event runs — a quiz-only event
 brings up no scorer and no poller, the same rule as the compose profiles.
 
 **Terraform cannot build an image; `deploy.sh` does.** The app takes no
-build-time configuration at all (config v2, #386): `github_org` and
-`admin_logins` are two Terraform variables, set in `terraform.tfvars` — this
-path's equivalent of the wizard's `.env` — and mirrored into the app's
-task-definition environment the same way `scorer_image` is. Change either and
-`terraform apply` rolls it out; nothing has to be rebuilt or repushed.
-`admin_logins` must name at least one login and `github_client_id` must be the
-OAuth app's client id (without it no one can sign in). `github_org` and
+build-time configuration at all (config v2, #386): `github_org` is a
+Terraform variable, set in `terraform.tfvars` — this path's equivalent of the
+wizard's `.env` — and mirrored into the app's task-definition environment the
+same way `scorer_image` is. Change it and `terraform apply` rolls it out;
+nothing has to be rebuilt or repushed. Admins are not a variable at all:
+once the stack is applied, `deploy.sh` writes the admin claim code's hash into
+the Terraform-created parameter `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` (while it
+still holds the placeholder) and prints the code once; sign in and enter it at
+`/admin/claim`. Lost it, or locked out?
+`./deploy.sh --skip-build --new-admin-code` writes a new one and rolls the app
+so it reads it. `github_client_id` must be the
+GitHub OAuth app's client id whenever `enable_secure_development` is true;
+otherwise it is optional, and empty leaves GitHub sign-in off (the
+`<ssm_prefix>/GITHUB_CLIENT_SECRET` parameter is read only when the id is
+set). GitHub is the one OAuth provider; its callback is
+`<EVENT_URL>/api/auth/callback/github`. `github_org` and
 `github_app_id` are required whenever `enable_secure_development` is true:
 `sync` authenticates as a GitHub App and exits at startup without either. All
 of these are refused at plan time, not at apply. The Secure Development
@@ -174,6 +210,10 @@ The value of any variable whose name looks like a credential is replaced
 (`SECRET`, `TOKEN`, `PASSWORD`, `PRIVATE_KEY`, `CONNECTION_STRING`, `API_KEY`,
 a `_KEY` or `AUTH` suffix, and similar), while the name stays visible. Any
 `scheme://user:pass@host` is printed as `scheme://***@host`.
+
+Without `--dry-run`, the script checks AWS credentials before reading Terraform
+outputs. If an SSO session has expired, run
+`aws sso login --profile <profile>` and retry.
 
 Watch a rollout:
 
@@ -452,7 +492,7 @@ than waiting out its timeout.
 4. `terraform apply`. The previous task definition rolls out the same way
    the bad one did.
 
-A change to `admin_logins`, `github_org` or any other variable rolls back
+A change to `github_org` or any other variable rolls back
 the same way: set the old value and `terraform apply`.
 
 ### Load testing on AWS

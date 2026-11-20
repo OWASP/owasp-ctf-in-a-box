@@ -150,7 +150,7 @@ describe("the locked count reaches the profile and the leaderboard (#570)", () =
     const board = await withModuleContributions(empty()).then(withTeamStandings);
 
     const teamDetail = board.teams[0].modules!.classic!.detail;
-    const contestant = board.entries.find((e) => e.login === "ada");
+    const contestant = board.entries.find((e) => e.playerId === "ada");
     const contestantDetail = contestant?.modules?.classic?.detail;
     if (teamDetail.kind !== "classic" || contestantDetail?.kind !== "classic") {
       throw new Error("classic block missing from the pipeline's rows");

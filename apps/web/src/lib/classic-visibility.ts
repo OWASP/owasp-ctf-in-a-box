@@ -10,7 +10,7 @@
 // 404s) rather than serve what it cannot prove is open.
 
 import "server-only";
-import { isAdminLogin } from "@/lib/admin-auth";
+import { isAdminPlayer } from "@/lib/admin-auth";
 import { listChallenges, listStories } from "@/lib/classic-store";
 import { challengeStatus, isChallengeVisible, visibleChallenges, type ChallengeStatus } from "@/lib/classic-release";
 import { getTeamClassicSolvedIds } from "@/lib/classic-team";
@@ -18,6 +18,7 @@ import { isModuleLive } from "@/lib/enabled-modules";
 import { getLaunchAccess } from "@/lib/launch";
 import { isLocked, storyPositions } from "@/lib/story-lock";
 import { hasTeam } from "@/lib/team-store";
+import type { Player } from "@/lib/player";
 
 type ClassicVisibilityState = "visible" | "module-off" | "not-launched" | "teamless" | "missing" | "locked";
 
@@ -31,15 +32,19 @@ type ClassicVisibility = {
   hidden?: Exclude<ChallengeStatus, { kind: "live" }>;
 };
 
-export async function classicVisibility(login: string | undefined, id: string): Promise<ClassicVisibility> {
+/** Who is looking: the player id keys their team and solves, and decides
+ *  admin preview. */
+export type ClassicViewer = Pick<Player, "id">;
+
+export async function classicVisibility(viewer: ClassicViewer | null, id: string): Promise<ClassicVisibility> {
   if (!(await isModuleLive("classic"))) return { state: "module-off", preview: false };
-  const access = await getLaunchAccess(login);
+  const access = await getLaunchAccess(viewer?.id);
   if (!access.allowed) return { state: "not-launched", preview: false };
   const { preview } = access;
   // A signed-in contestant with no team is sent to form one before any board
   // content; an admin is only told. Signed-out visitors read the board.
-  const admin = Boolean(login) && (await isAdminLogin(login));
-  if (login && !admin && !(await hasTeam(login))) return { state: "teamless", preview };
+  const admin = viewer !== null && (await isAdminPlayer(viewer.id));
+  if (viewer && !admin && !(await hasTeam(viewer.id))) return { state: "teamless", preview };
   const all = await listChallenges();
   const nowMs = Date.now();
   // A hidden challenge is `missing`, the answer an unknown id gets: on the
@@ -59,21 +64,21 @@ export async function classicVisibility(login: string | undefined, id: string): 
   if (!preview) {
     const visibleIds = new Set(all.filter((c) => isChallengeVisible(c, nowMs)).map((c) => c.id));
     const pos = storyPositions(await listStories(), visibleIds).get(id);
-    if (pos?.prereq && isLocked(pos, login ? await getTeamClassicSolvedIds(login) : new Set())) {
+    if (pos?.prereq && isLocked(pos, viewer ? await getTeamClassicSolvedIds(viewer.id) : new Set())) {
       return { state: "locked", preview };
     }
   }
   return { state: "visible", preview };
 }
 
-/** Whether `login` is an admin and `id` is a challenge contestants cannot see
+/** Whether `playerId` is an admin and `id` is a challenge contestants cannot see
  *  right now: an admin's submission or hint reveal on it is a dry run, which
  *  records nothing for them. Any read failure answers false, which takes the
  *  normal path, where the grading and hint scripts refuse a hidden challenge
  *  themselves: never a write for it either way. */
-export async function adminSeesHidden(login: string, id: string): Promise<boolean> {
+export async function adminSeesHidden(playerId: string | undefined, id: string): Promise<boolean> {
   try {
-    if (!(await isAdminLogin(login))) return false;
+    if (!(await isAdminPlayer(playerId))) return false;
     const record = (await listChallenges()).find((c) => c.id === id);
     return record !== undefined && !isChallengeVisible(record, Date.now());
   } catch {

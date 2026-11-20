@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { transferCaptain } from "@/lib/team-store";
 
 function statusForError(error: string): number {
@@ -9,17 +9,15 @@ function statusForError(error: string): number {
 }
 
 export async function POST(request: Request) {
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  const login = (session.user as { login?: string }).login;
-  if (!login) return NextResponse.json({ error: "session has no GitHub login" }, { status: 400 });
+  const player = await getPlayer(request.headers);
+  if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const playerId = player.id;
 
   const body = await request.json().catch(() => ({}));
   const slug = typeof body.slug === "string" ? body.slug : "";
   const to = typeof body.to === "string" ? body.to : "";
 
-  const result = await transferCaptain(login, slug, to);
+  const result = await transferCaptain(playerId, slug, to);
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: statusForError(result.error) });
   return NextResponse.json({ team: result.team });
 }

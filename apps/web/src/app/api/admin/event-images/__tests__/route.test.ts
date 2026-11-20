@@ -4,6 +4,7 @@
 // names the slot, and every write leaves an audit line.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const { requireAdmin, getEventImagesMeta, setEventImage, clearEventImage, writeAdminAudit, EventImageValidationError } = vi.hoisted(() => {
   class EventImageValidationError extends Error {
@@ -39,7 +40,7 @@ const req = (method: string, body?: unknown) =>
 
 beforeEach(() => {
   for (const m of [requireAdmin, getEventImagesMeta, setEventImage, clearEventImage, writeAdminAudit]) m.mockReset();
-  requireAdmin.mockResolvedValue({ ok: true, login: "organizer" });
+  requireAdmin.mockResolvedValue({ ok: true, login: "organizer", player: { ...actor("organizer"), image: null, githubLogin: "organizer" } });
 });
 
 describe("the admin gate", () => {
@@ -76,7 +77,7 @@ describe("POST", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ slot: "icon", image: meta });
     expect(setEventImage).toHaveBeenCalledWith("icon", { data: "AAAA", declaredType: "image/png" });
-    expect(writeAdminAudit).toHaveBeenCalledWith("organizer", "event-image-set", { slot: "icon", etag: meta.etag });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("organizer"), "event-image-set", { slot: "icon", etag: meta.etag });
   });
 
   it.each([
@@ -117,7 +118,7 @@ describe("DELETE", () => {
     const res = await DELETE(req("DELETE", { slot: "logo" }));
     expect(res.status).toBe(200);
     expect(clearEventImage).toHaveBeenCalledWith("logo");
-    expect(writeAdminAudit).toHaveBeenCalledWith("organizer", "event-image-clear", { slot: "logo" });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("organizer"), "event-image-clear", { slot: "logo" });
   });
 
   it("refuses an unknown slot", async () => {

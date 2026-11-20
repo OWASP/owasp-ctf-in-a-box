@@ -16,3 +16,15 @@ export const ADMIN_AUDIT_KEY = "ctf:admin:audit";
  *  construction — the same retention policy ACTIVITY_LOG_MAX sets for the
  *  contestant-facing log. */
 export const AUDIT_CAP = 500;
+
+/** Who an audit entry is by: the admin's player id, which is what the entry
+ *  keys on, and their display name at the time, so the entry still reads
+ *  after a rename or after the account is gone. A `Player` fits this shape;
+ *  writers copy these two fields and nothing else. */
+export type AuditActor = { id: string; name: string };
+
+/** The audit actor for a signed-in admin: exactly the id and name, so a
+ *  `Player`'s other fields (its GitHub login among them) never reach a line. */
+export function auditActor(who: AuditActor): AuditActor {
+  return { id: who.id, name: who.name };
+}

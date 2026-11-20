@@ -12,6 +12,7 @@ const settings: AdminSettings = {
   paused: false,
   teamRegistrationOpen: true,
   displayQr: true,
+  signInProviders: { github: true },
   hintsEnabled: null,
   hintCost: null,
   hintsMinSolves: null,
@@ -19,7 +20,6 @@ const settings: AdminSettings = {
   quizMaxAttempts: null,
   quizRetryAfterMin: null,
   classicCooldownSec: null,
-  aiCooldownSec: null,
   teamMaxMembers: null,
   scoreCooldownMin: null,
   scoringStartsAt: null,
@@ -60,14 +60,14 @@ describe("AdminHintsTab", () => {
     expect(html).toContain("Hint cost");
     expect(html).toContain("Hints: solves required");
     expect(html).toContain("Hints: unlock after (min)");
-    expect(html).toMatch(/Jeopardy and AI sell their hints/);
+    expect(html).toMatch(/Jeopardy sells its hints/);
     // Secure Development is named as having NONE, not as a seller: nothing in
     // the kit authors hint text for a target (issue #334), and the old copy
     // sent organizers to a tab with no hint field.
     expect(html).toMatch(/Secure Development have no hints/);
     // and the removed wording must not come back alongside it — the positive
     // assertion alone would pass with both sentences on the panel.
-    expect(html).not.toMatch(/Secure Development, Jeopardy and AI/);
+    expect(html).not.toMatch(/Secure Development, Jeopardy/);
     expect(html).not.toMatch(/Each module.s own tab holds the hint text/);
   });
 

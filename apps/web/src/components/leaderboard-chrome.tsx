@@ -12,16 +12,29 @@ const PODIUM: Record<number, string> = {
   3: "#14b8a6", // teal-bronze
 };
 
-export function Avatar({ login, size = 32 }: { login: string; size?: number }) {
+/** The player's profile image, or their initial when they have none. Never a
+ *  URL built from a name or an id: the profile image is the only source. */
+export function Avatar({ name, image, size = 32 }: { name: string; image: string | null; size?: number }) {
+  if (image) {
+    return (
+      <Image
+        src={image}
+        alt=""
+        width={size}
+        height={size}
+        className="flex-none rounded-full border border-white/10"
+        unoptimized
+      />
+    );
+  }
   return (
-    <Image
-      src={`https://avatars.githubusercontent.com/${login}`}
-      alt=""
-      width={size}
-      height={size}
-      className="flex-none rounded-full border border-white/10"
-      unoptimized
-    />
+    <span
+      aria-hidden="true"
+      className="flex flex-none items-center justify-center rounded-full border border-white/10 bg-white/[0.06] font-mono uppercase text-zinc-300"
+      style={{ width: size, height: size, fontSize: Math.max(9, Math.round(size * 0.42)) }}
+    >
+      {name.slice(0, 1)}
+    </span>
   );
 }
 

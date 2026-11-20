@@ -8,7 +8,7 @@ import ModuleDetail from "@/components/module-detail";
 import type { LeaderboardEntry, ModuleProgress } from "@/lib/leaderboard/types";
 
 const entry = (): LeaderboardEntry => ({
-  rank: 1, login: "ada", team: null, points: 30, patched: 3, failed: 0, total: 3,
+  rank: 1, playerId: "ada", name: "ada", image: null, team: null, points: 30, patched: 3, failed: 0, total: 3,
   apps: {}, updatedAt: null,
 });
 
@@ -46,18 +46,6 @@ describe("ModuleDetail", () => {
     const html = renderToStaticMarkup(<ModuleDetail moduleId="quiz" progress={progress} entry={entry()} enabledApps={[]} />);
     expect(html).toContain("flags");
     expect(html).not.toContain("answered");
-  });
-
-  it("renders the ai shape from a discriminated detail", () => {
-    const progress: ModuleProgress = {
-      points: 20, completed: 2, lastActivityAt: null,
-      detail: { kind: "ai", solved: 2, total: 3, points: 20 },
-    };
-    const html = renderToStaticMarkup(<ModuleDetail moduleId="ai" progress={progress} entry={entry()} enabledApps={[]} />);
-    expect(html).toMatch(/2\s*\/\s*3/);
-    expect(html).toContain("challenges");
-    expect(html).not.toContain("answered");
-    expect(html).not.toContain("flags");
   });
 
   it("renders the secure-development shape from a discriminated detail", () => {

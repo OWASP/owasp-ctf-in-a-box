@@ -10,7 +10,6 @@ import { hintBalance, type HintBalance } from "@/lib/hint-balance";
 import { SCORE_LOWERING_KEY, SCORE_REV_KEY } from "@/lib/leaderboard/fold-cache";
 import { HINTS_AVAILABLE, resolveHintConfig } from "@/lib/hint-config";
 import { appsById, type AppId } from "@/lib/apps";
-import { AI_HINTS_KEY, aiSolvesKey } from "@/lib/ai-keys";
 import {
   CLASSIC_CHALLENGES_KEY,
   CLASSIC_HIDDEN_LUA,
@@ -39,7 +38,7 @@ import {
 export { getHintNotice, getHintPenalties, HINTS_AVAILABLE, resolveHintConfig } from "@/lib/hint-config";
 
 /**
- * Paid hints — for `classic` and `ai`. **Secure Development has none**, and
+ * Paid hints — for `classic`. **Secure Development has none**, and
  * cannot: no code path in this kit writes a `hints:<app>` field — not the
  * scorer (it has no concept of a hint at all: `grep -rni hint scorer/src/`
  * is empty), not the admin panel (`admin-secure-dev-tab.tsx` has no hint
@@ -49,8 +48,8 @@ export { getHintNotice, getHintPenalties, HINTS_AVAILABLE, resolveHintConfig } f
  *
  * Purchases are recorded under the site's ctf: namespace, which
  * the scorer never rewrites, so penalties survive re-scores:
- *   SADD ctf:user:<login>:hints "<app>/<challengeId>"   (what the user bought)
- *   HINCRBY ctf:hints:spent <login> HINT_COST           (running penalty total)
+ *   SADD ctf:user:<playerId>:hints "<app>/<challengeId>"   (what the user bought)
+ *   HINCRBY ctf:hints:spent <playerId> HINT_COST           (running penalty total)
  * Displayed scores subtract the penalty as an overlay (see
  * leaderboard/hint-penalties.ts) — the scorer's leaderboard ZSET is never
  * decremented.
@@ -84,14 +83,12 @@ export { getHintNotice, getHintPenalties, HINTS_AVAILABLE, resolveHintConfig } f
 const userHintsKey = (login: string) => `ctf:user:${login}:hints`;
 
 /** Where a target's hint texts live. Classic hints sit in the site-owned
- *  `ctf:classic:hints` hash, written by classic-store's authoring path
- *  (#190); ai hints in the site-owned `ctf:ai:hints` hash, same reasoning.
+ *  `ctf:classic:hints` hash, written by classic-store's authoring path.
  *  There is no secure-development arm, because nothing writes one (#334).
- *  One reveal/charge/penalty machinery serves all three — the default
- *  `hints:${target}` template is secure-dev's shape only, so classic and ai
- *  each need an explicit arm or a reveal would silently read an empty hash. */
-const hintHashKey = (target: HintTarget) =>
-  target === "classic" ? CLASSIC_HINTS_KEY : target === "ai" ? AI_HINTS_KEY : `hints:${target}`;
+ *  One reveal/charge/penalty machinery serves both — the default
+ *  `hints:${target}` template is secure-dev's shape only, so classic needs
+ *  an explicit arm or a reveal would silently read an empty hash. */
+const hintHashKey = (target: HintTarget) => (target === "classic" ? CLASSIC_HINTS_KEY : `hints:${target}`);
 
 /** Catalogue ids look like "Challenge-5-Admin-Section" — reject anything
  *  weirder before it reaches Redis. */
@@ -103,12 +100,11 @@ export function isAppId(value: string): value is AppId {
 
 /** Everything a hint can be bought against: a secure-development target, the
  *  classic board (whose hints are per-challenge but gated board-wide —
- *  categories are display groupings, not progress domains), or the ai
- *  module (same board-wide gating as classic). */
-export type HintTarget = AppId | "classic" | "ai";
+ *  categories are display groupings, not progress domains). */
+export type HintTarget = AppId | "classic";
 
 export function isHintTarget(value: string): value is HintTarget {
-  return value === "classic" || value === "ai" || isAppId(value);
+  return value === "classic" || isAppId(value);
 }
 
 // Charge-if-new + return the hint in one atomic script: SADD's return value
@@ -320,16 +316,12 @@ type RevealResult =
  *  case-insensitively because GitHub logins are, while the stored field keeps
  *  whatever casing the PR author used. */
 async function countSolves(login: string, target: HintTarget): Promise<number> {
-  // Classic and ai: the anti-burner gate counts solves on the WHOLE board —
-  // the per-login solves hash has one field per solved challenge (#190),
-  // same shape for ai (issue #211) — NOT secure-dev's shared
+  // Classic: the anti-burner gate counts solves on the WHOLE board —
+  // the per-player solves hash has one field per solved challenge (#190) —
+  // NOT secure-dev's shared
   // `ctf:solves:<target>` hash the default arm below assumes.
   if (target === "classic") {
     const [res] = await upstashPipeline([["HLEN", classicSolvesKey(login)]]);
-    return Number(res.result) || 0;
-  }
-  if (target === "ai") {
-    const [res] = await upstashPipeline([["HLEN", aiSolvesKey(login)]]);
     return Number(res.result) || 0;
   }
   const [res] = await upstashPipeline([["HKEYS", `ctf:solves:${target}`]]);
@@ -438,7 +430,7 @@ export async function hintGate(
   // other module consumer; only a module that answers "off" is refused
   // here. (The quiz has no hints by design — a question's hint is its
   // choices.)
-  const targetModule = target === "classic" ? "classic" : target === "ai" ? "ai" : "secure-development";
+  const targetModule = target === "classic" ? "classic" : "secure-development";
   if (!(await isModuleLive(targetModule))) {
     return { allowed: false, reason: "disabled" };
   }
@@ -812,15 +804,13 @@ type ViewerHints = {
   classic: Record<string, string>;
   /** Bought CLASSIC hints by challenge id and level. */
   classicLevels: Record<string, Record<number, string>>;
-  /** Bought AI hints, keyed by challenge id (issue #211). */
-  ai: Record<string, string>;
   /** Total penalty points. */
   spent: number;
   /** Hints bought (purchases, not points). */
   count: number;
 };
 
-const NO_HINTS: ViewerHints = { purchased: {}, classic: {}, classicLevels: {}, ai: {}, spent: 0, count: 0 };
+const NO_HINTS: ViewerHints = { purchased: {}, classic: {}, classicLevels: {}, spent: 0, count: 0 };
 
 export async function getViewerHints(login: string): Promise<ViewerHints> {
   // Cheap capability check first — no credentials means no settings read.
@@ -841,7 +831,6 @@ export async function getViewerHints(login: string): Promise<ViewerHints> {
   const purchased: ViewerHints["purchased"] = {};
   const classic: ViewerHints["classic"] = {};
   const classicLevels: ViewerHints["classicLevels"] = {};
-  const ai: ViewerHints["ai"] = {};
   if (owned.length > 0) {
     const texts = (
       await upstashPipeline(
@@ -859,7 +848,7 @@ export async function getViewerHints(login: string): Promise<ViewerHints> {
       if (target === "classic") {
         (classicLevels[id] ??= {})[level] = text;
         if (level === 1) classic[id] = text;
-      } else if (target === "ai") ai[id] = text;
+      }
       else (purchased[target] ??= {})[id] = text;
     });
   }
@@ -868,7 +857,6 @@ export async function getViewerHints(login: string): Promise<ViewerHints> {
     purchased,
     classic,
     classicLevels,
-    ai,
     spent,
     count: owned.length,
   };
@@ -932,29 +920,9 @@ export async function getClassicHintIds(): Promise<string[]> {
     // The try now covers resolveHintConfig (→ getAdminSettings) as well as
     // the HKEYS read: a transient settings-read error used to reject
     // OUTSIDE this catch, which rejected the whole Promise.all callers run
-    // it under (the /ai and /flags pages) and 500'd the public board instead
+    // it under (the /flags page) and 500'd the public board instead
     // of degrading like every other read here.
     console.error("Classic hint availability fetch failed:", errorLabel(err));
-    return [];
-  }
-}
-
-/** Which ai challenge ids have a hint — public shape (no text), mirroring
- *  `getClassicHintIds` (issue #211). Degrades to [] on any failure so the
- *  board renders without the hint layer. */
-export async function getAiHintIds(): Promise<string[]> {
-  if (!HINTS_AVAILABLE) return [];
-  if (!(await isModuleLive("ai"))) return [];
-  try {
-    if (!(await resolveHintConfig()).enabled) return [];
-    const [res] = await upstashPipeline([["HKEYS", AI_HINTS_KEY]]);
-    return Array.isArray(res.result) ? (res.result as string[]) : [];
-  } catch (err) {
-    // Mirrors getClassicHintIds exactly: the try widens to cover
-    // resolveHintConfig (→ getAdminSettings), not just the HKEYS read, so a
-    // settings-read blip degrades to [] here instead of rejecting the
-    // Promise.all callers (the /ai and /flags pages) run it under.
-    console.error("AI hint availability fetch failed:", errorLabel(err));
     return [];
   }
 }

@@ -8,7 +8,8 @@
 # deploy.sh.
 #
 # Config v2 (#386) removed the app's build-time config entirely: GITHUB_ORG
-# and ADMIN_LOGINS are runtime environment reads now (ecs.tf), so deploy.sh
+# is a runtime environment read and ADMIN_CLAIM_CODE_HASH a runtime secret now
+# (ecs.tf), so deploy.sh
 # has no file to require and no config to bake into the image. What used to be
 # the config-bake tests below now assert the ABSENCE of that machinery —
 # no --config flag, no EVENT_CONFIG_B64 build arg — with a named failure, so a
@@ -98,6 +99,7 @@ fake_repo() {
   cp "$SCRIPT" "$repo/deploy/aws-terraform/deploy.sh"
   cp "$ROOT/scripts/lib/redact.sh" "$repo/scripts/lib/redact.sh"
   cp "$ROOT/scripts/lib/dotenv.sh" "$repo/scripts/lib/dotenv.sh"
+  cp "$ROOT/scripts/lib/claim-code.sh" "$repo/scripts/lib/claim-code.sh"
   printf 'FROM scratch\n' > "$repo/apps/web/Dockerfile"
   git -C "$repo" init -q
   git -C "$repo" config user.email bats@example.invalid
@@ -210,6 +212,20 @@ me"
   echo "$output" | grep -q 'ecr_app_repository_url'
 }
 
+@test "AWS credential check preserves CLI errors before Terraform reads state" {
+  cat > "$STUBS/aws" <<EOF
+#!/bin/sh
+echo "aws \$*" >> "$CALLS"
+echo "Could not connect to the endpoint URL" >&2
+exit 1
+EOF
+  run "$SCRIPT"
+  [ "$status" -ne 0 ] &&
+    echo "$output" | grep -Fq 'Could not connect to the endpoint URL' &&
+    echo "$output" | grep -Fq 'AWS credential check failed' &&
+    [ "$(cat "$CALLS")" = "aws sts get-caller-identity" ]
+}
+
 @test "the dry-run registry placeholder cannot be mistaken for a real one" {
   repo="$(fake_repo)"
   run "$repo/deploy/aws-terraform/deploy.sh" --dry-run
@@ -253,7 +269,10 @@ SOURCE_DIGEST="aaaaaaaaaaaabbbbbbbbbbbbccccccccccccddddddddddddeeeeeeeeeeeeffff"
 #      "ecr-error" to make every ECR describe-images an access error;
 #      "two-digests" to give the pulled scorer a second (ECR) RepoDigests entry;
 #      "prefixed-mirror" to list, first, a mirror whose name ENDS in the source's;
-#      "port-no-tag" to name the source by a registry port and no tag.
+#      "port-no-tag" to name the source by a registry port and no tag;
+#      "bootstrap" for a stack after only the targeted ECR/KMS apply: the
+#      ssm_prefix, secrets_kms_key_arn, cluster_name and event_url outputs
+#      do not exist yet, so reading them fails.
 applied_stack_stubs() {
   local secdev="$1"
   local mode="${2:-}"
@@ -267,6 +286,14 @@ case "\$*" in
   if [ "$secdev" = "1" ]; then printf '%s' "$ACCT_REGISTRY/owasp-ctf-sync"; fi ;;
 *ecr_scorer_repository_url*)
   if [ "$secdev" = "1" ]; then printf '%s' "$ACCT_REGISTRY/owasp-ctf-scorer"; fi ;;
+*ssm_prefix*|*secrets_kms_key_arn*|*cluster_name*|*event_url*)
+  if [ "$mode" = "bootstrap" ]; then echo "Output not found" >&2; exit 1; fi
+  case "\$*" in
+  *ssm_prefix*) printf '%s' /owasp-ctf ;;
+  *secrets_kms_key_arn*) printf '%s' arn:aws:kms:us-east-1:123456789012:key/fixture ;;
+  *cluster_name*) printf '%s' owasp-ctf ;;
+  *event_url*) printf '%s' https://ctf.example.org ;;
+  esac ;;
 esac
 exit 0
 EOF
@@ -285,6 +312,14 @@ case "\$*" in
   fi
   exit 254 ;;
 *get-login-password*) echo stub-password ;;
+*describe-parameters*)
+  if [ "\${CLAIM_PARAM_VERSION:-2}" = fail ]; then echo "An error occurred (AccessDeniedException)" >&2; exit 254; fi
+  printf '%s\n' "\${CLAIM_PARAM_VERSION:-2}" ;;
+*describe-services*)
+  if [ -n "\${DESCRIBE_SERVICES_FAIL:-}" ]; then echo "An error occurred (AccessDeniedException)" >&2; exit 254; fi
+  printf '%s\n' "\${APP_SERVICE_ACTIVE:-1}" ;;
+*update-service*)
+  if [ -n "\${UPDATE_SERVICE_FAIL:-}" ]; then echo "An error occurred (AccessDeniedException)" >&2; exit 254; fi ;;
 esac
 exit 0
 EOF
@@ -574,6 +609,7 @@ redact_shapes() {
     EVENT_URL=https://admin:LEAKurl10@ctf.example.org/path \
     https://x-access-token:LEAKbare11@github.com/org/repo.git \
     BETTER_AUTH_URL=https://ctf.example.org GITHUB_APP_ID=4242 \
+    --name /ctf/ADMIN_CLAIM_CODE_HASH --value LEAKssm13 \
     --platform linux/amd64 ghcr.io/org/score@sha256:abc123' _ "$REDACT_LIB"
 }
 
@@ -592,6 +628,7 @@ redact_shapes() {
   echo "$output" | grep -qF 'db_password=<redacted>'
   echo "$output" | grep -qF 'EVENT_URL=https://***@ctf.example.org/path'
   echo "$output" | grep -qF 'https://***@github.com/org/repo.git'
+  echo "$output" | grep -qF -- '--name /ctf/ADMIN_CLAIM_CODE_HASH --value <redacted>'
 }
 
 @test "redactor: harmless keys and arguments pass through untouched" {
@@ -606,4 +643,200 @@ redact_shapes() {
   grep -qF '. "$ROOT/scripts/lib/redact.sh"' "$SCRIPT"
   grep -qF 'DRY-RUN: $(redact_args "$@")' "$SCRIPT"
   [ -z "$(grep -nE '^[[:space:]]*redacted\(\)' "$SCRIPT")" ]
+}
+
+# --- the admin claim code (ADR 72) -------------------------------------------
+#
+# Terraform owns the parameter's EXISTENCE: an SSM SecureString holding a
+# placeholder (version 1) that the app reads as unset. deploy.sh only writes
+# the real hash, and only once the stack exists. It tells "never set" from
+# "set" by the parameter's version — metadata, never a decrypting read. The
+# code is printed once, after the write succeeded, and never reaches AWS.
+
+claim_code_of() { printf '%s\n' "$1" | grep -oE '([0-9a-f]{4}-){7}[0-9a-f]{4}' | head -1; }
+
+@test "after the bootstrap apply, a deploy still publishes the images and says how to set the code" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0 bootstrap
+  run "$repo/deploy/aws-terraform/deploy.sh"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -q '^app_image = ' "$repo/deploy/aws-terraform/image.auto.tfvars"
+  [ -z "$(claim_code_of "$output")" ]
+  [ -z "$(grep -E '^aws (ssm put-parameter|ecs update-service)' "$CALLS")" ]
+  echo "$output" | grep -qF 'deploy.sh --skip-build --new-admin-code'
+}
+
+@test "--new-admin-code before the stack exists is refused, after the images" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0 bootstrap
+  run "$repo/deploy/aws-terraform/deploy.sh" --new-admin-code
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'terraform apply'
+  [ -z "$(claim_code_of "$output")" ]
+  [ -z "$(grep '^aws ssm put-parameter' "$CALLS")" ]
+}
+
+@test "a placeholder parameter gets the code, printed once, and the running app is rolled" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_VERSION=1 run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -eq 0 ]
+  code="$(claim_code_of "$output")"
+  [ -n "$code" ]
+  [ "$(printf '%s\n' "$output" | grep -cF "$code")" -eq 1 ]
+  echo "$output" | grep -qF 'https://ctf.example.org/admin/claim'
+  echo "$output" | grep -qF 'live once the new app deployment finishes'
+  want="$(bash -c '. "$1"; claim_code_hash "$2"' _ "$ROOT/scripts/lib/claim-code.sh" "$code")"
+  put="$(grep '^aws ssm put-parameter' "$CALLS")"
+  echo "$put" | grep -qF -- '--type SecureString'
+  echo "$put" | grep -qF -- '--key-id arn:aws:kms:us-east-1:123456789012:key/fixture'
+  echo "$put" | grep -qF -- '--name /owasp-ctf/ADMIN_CLAIM_CODE_HASH'
+  echo "$put" | grep -qF -- '--overwrite'
+  [ -z "$(grep -F "$code" "$CALLS")" ]
+  put_at="$(grep -n '^aws ssm put-parameter' "$CALLS" | head -1 | cut -d: -f1)"
+  roll_at="$(grep -n '^aws ecs update-service' "$CALLS" | head -1 | cut -d: -f1)"
+  [ -n "$roll_at" ]
+  [ "$put_at" -lt "$roll_at" ]
+  echo "$put" | grep -qF -- "--value $want"
+}
+
+@test "a placeholder parameter on a stack whose app service is not created yet skips the roll" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_VERSION=1 APP_SERVICE_ACTIVE=0 run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -eq 0 ]
+  [ -n "$(claim_code_of "$output")" ]
+  grep -q '^aws ecs describe-services' "$CALLS"
+  [ -z "$(grep '^aws ecs update-service' "$CALLS")" ]
+}
+
+# DescribeParameters pages, and --query runs per page: an empty page before
+# the match must not turn a placeholder into "could not read the version".
+@test "a paged version lookup (an empty page, then version 1) still writes the code" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_VERSION="$(printf '\n\t1')" run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -eq 0 ]
+  grep -q '^aws ssm put-parameter' "$CALLS"
+  [ -n "$(claim_code_of "$output")" ]
+}
+
+@test "the version lookup asks for every page's versions, not page-local index 0" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -eq 0 ]
+  grep '^aws ssm describe-parameters' "$CALLS" | grep -qF -- "--query Parameters[].Version"
+}
+
+@test "two versions for one name are refused, not guessed" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_VERSION="$(printf '2\t3')" run "$repo/deploy/aws-terraform/deploy.sh" --new-admin-code
+  [ "$status" -ne 0 ]
+  [ -z "$(grep '^aws ssm put-parameter' "$CALLS")" ]
+  echo "$output" | grep -qF 'could not read the version'
+}
+
+@test "a set parameter is left alone: nothing written, no code" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_VERSION=3 run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -eq 0 ]
+  [ -z "$(claim_code_of "$output")" ]
+  [ -z "$(grep -E '^aws (ssm put-parameter|ecs update-service)' "$CALLS")" ]
+}
+
+@test "an applied stack that predates the parameter says to apply, and writes nothing" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_VERSION=None run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF 'terraform apply'
+  [ -z "$(claim_code_of "$output")" ]
+  [ -z "$(grep '^aws ssm put-parameter' "$CALLS")" ]
+}
+
+@test "--new-admin-code overwrites a set parameter, then rolls the app" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_VERSION=3 run "$repo/deploy/aws-terraform/deploy.sh" --new-admin-code
+  [ "$status" -eq 0 ]
+  [ -n "$(claim_code_of "$output")" ]
+  echo "$output" | grep -qF -- './deploy/aws-terraform/deploy.sh --skip-build --new-admin-code'
+  grep '^aws ssm put-parameter' "$CALLS" | grep -qF -- '--overwrite'
+  grep '^aws ecs update-service' "$CALLS" | grep -qF -- '--cluster owasp-ctf --service app --force-new-deployment'
+}
+
+@test "with --apply the code is written after the apply, and the roll comes last" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_VERSION=3 run "$repo/deploy/aws-terraform/deploy.sh" --new-admin-code --apply
+  [ "$status" -eq 0 ]
+  apply_at="$(grep -n '^terraform .*apply' "$CALLS" | head -1 | cut -d: -f1)"
+  put_at="$(grep -n '^aws ssm put-parameter' "$CALLS" | head -1 | cut -d: -f1)"
+  roll_at="$(grep -n '^aws ecs update-service' "$CALLS" | head -1 | cut -d: -f1)"
+  [ -n "$apply_at" ]
+  [ -n "$put_at" ]
+  [ -n "$roll_at" ]
+  [ "$apply_at" -lt "$put_at" ]
+  [ "$put_at" -lt "$roll_at" ]
+}
+
+@test "a failed service check stops the deploy, keeps the printed code, and says activation is pending" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_VERSION=3 DESCRIBE_SERVICES_FAIL=1 run "$repo/deploy/aws-terraform/deploy.sh" --new-admin-code
+  [ "$status" -ne 0 ]
+  code="$(claim_code_of "$output")"
+  [ -n "$code" ]
+  [ "$(printf '%s\n' "$output" | grep -cF "$code")" -eq 1 ]
+  echo "$output" | grep -qF 'activation is still'
+  [ -z "$(grep '^aws ecs update-service' "$CALLS")" ]
+  echo "$output" | grep -qF -- '--force-new-deployment'
+}
+
+# The hash is already stored when the roll fails, so that hash is the one the
+# next app task reads: losing the code here would leave a box nobody can
+# claim with a bootstrap code until the next --new-admin-code.
+@test "a failed roll after the SSM write still prints the code once and says activation is pending" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_VERSION=3 UPDATE_SERVICE_FAIL=1 run "$repo/deploy/aws-terraform/deploy.sh" --new-admin-code
+  [ "$status" -ne 0 ]
+  grep -q '^aws ssm put-parameter' "$CALLS"
+  grep -q '^aws ecs update-service' "$CALLS"
+  echo "$output" | grep -qF 'activation is still'
+  echo "$output" | grep -qF -- 'aws ecs update-service --region us-east-1 --cluster owasp-ctf --service app --force-new-deployment'
+  code="$(claim_code_of "$output")"
+  [ -n "$code" ]
+  [ "$(printf '%s\n' "$output" | grep -cF "$code")" -eq 1 ]
+}
+
+@test "--dry-run --new-admin-code calls nothing and prints no code" {
+  run "$SCRIPT" --dry-run --new-admin-code
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qF -- '--name <ssm_prefix>/ADMIN_CLAIM_CODE_HASH --value <redacted>'
+  echo "$output" | grep -qF -- '--force-new-deployment'
+  [ -z "$(claim_code_of "$output")" ]
+  [ ! -s "$CALLS" ]
+}
+
+@test "the version check never decrypts" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -eq 0 ]
+  grep -q '^aws ssm describe-parameters' "$CALLS"
+  [ -z "$(grep -E 'get-parameter|--with-decryption' "$CALLS")" ]
+}
+
+@test "a failed version check stops the deploy instead of reading it as unset" {
+  repo="$(fake_repo)"
+  applied_stack_stubs 0
+  CLAIM_PARAM_VERSION=fail run "$repo/deploy/aws-terraform/deploy.sh"
+  [ "$status" -ne 0 ]
+  echo "$output" | grep -qF 'ADMIN_CLAIM_CODE_HASH'
+  [ -z "$(grep '^aws ssm put-parameter' "$CALLS")" ]
 }

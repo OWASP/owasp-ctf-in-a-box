@@ -19,8 +19,12 @@ One image (`scorer/Dockerfile`), two modes:
 
 - **`score serve`** (the image's default CMD) — the leaderboard API that
   runs on your box as the `scorer` compose service. Four routes: `POST
-  /score` (bearer-token authed, the single score writer), `GET /leaderboard`
-  (the shape the app renders), `GET /challenges` (the challenge catalogue the
+  /score` (bearer-token authed, the single score writer; the body is
+  `{player, target, solved, pr, sha, at}` where `player` is the kit's
+  lowercase-UUID player id, and any other `player`, including a body that
+  carries `author` instead, is a `400 invalid player`), `GET /leaderboard`
+  (the shape the app renders: rows `{rank, player, points, lastSolveAt,
+  apps}` and a score-over-time series keyed by `player`), `GET /challenges` (the challenge catalogue the
   app's `/challenges` page prefers over its static per-app cards), and `GET
   /healthz`. Everything but `POST /score` is unauthenticated — it is all
   public catalogue and standings data. `POST /score` times each solve by the
@@ -28,7 +32,15 @@ One image (`scorer/Dockerfile`), two modes:
   with a final `422` a score posted before the launch, outside the scoring
   window, during a recorded freeze or before the last master reset (a freeze
   hand-set on the settings hash, with no recorded start, holds it with a
-  retryable `503` instead)
+  retryable `503` instead). It also refuses a deleted player's score: a final
+  `422` with `refused: "player-deleted"` once the delete has finished, and a
+  retryable `503` (`player scores on hold`) while a delete or a GitHub unlink
+  of that player is still running. A payload may carry `login`, the GitHub
+  login sync resolved `player` from: the solve is then written only while
+  `ctf:link:github:<login>` still names `player`, checked in the same script
+  as the write, and a link that moved or went since sync read it answers a
+  retryable `503` (`the login no longer links to this player`) so sync
+  resolves the login again. Sync always sends it; a malformed one is a `400`
   ([ADR 67](decisions.md#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)). Backed by Redis via the Upstash-REST
   proxy when `UPSTASH_REDIS_REST_URL` is set, an in-memory store otherwise.
 
@@ -55,8 +67,10 @@ and no upstream service anywhere:
    `github-actions[bot]`, carrying the machine-readable
    `<!-- ctf-score: {...} -->` marker.
 4. The kit's `sync` service polls the org's repos, trusts only
-   `github-actions[bot]` comments, parses the marker, and POSTs the score
-   to `score serve` on your box.
+   `github-actions[bot]` comments, parses the marker, resolves its `author`
+   (the GitHub login) to a player id through the link key the app wrote at
+   that player's GitHub sign-in, and POSTs the score to `score serve` on your
+   box. A PR author nobody has linked is held until they link.
 5. The app reads `GET /leaderboard` from that same serve process. The
    response pairs the ranked standings with a rubric-derived `catalog`
    (per target, each challenge's `id`/`name`/`points`/`owasp` — `owasp` is

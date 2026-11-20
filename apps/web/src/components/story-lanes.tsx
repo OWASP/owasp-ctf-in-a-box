@@ -21,7 +21,7 @@ export type StoryStepView =
       /** Teams that solved it (#595); null when unread. A locked step has
        *  no count at all: it is invisible (ADR 60). */
       teamsSolved: number | null;
-      /** Its first solver's login (#188); null when nobody has solved it or
+      /** Its first solver's display name (#188); null when nobody has solved it or
        *  the solves could not be read. A locked step has none: like its
        *  count, who solved it first would say something about it. */
       firstBlood: string | null;
@@ -64,7 +64,7 @@ export default function StoryLanes({ stories, basePath }: { stories: StoryLaneVi
                       Step {step.position} · {step.category}
                     </span>
                     <span className={`line-clamp-2 text-sm font-medium ${step.solved ? "text-[#22c55e]" : "text-white"}`}>{step.title}</span>
-                    {step.firstBlood && <FirstBloodLine login={step.firstBlood} />}
+                    {step.firstBlood && <FirstBloodLine name={step.firstBlood} />}
                     <span className={`font-mono text-xs tabular-nums ${step.solved ? "text-[#22c55e]/80" : "text-muted"}`}>
                       {step.points} pts{step.teamsSolved !== null && <> · {teamsLabel(step.teamsSolved)}</>}
                       {step.solved && " ✓"}

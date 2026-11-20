@@ -47,6 +47,7 @@ vi.mock("@/lib/attachment-files-store", () => ({
 }));
 
 import { CLASSIC_IMPORT_MAX_BYTES, GET, POST } from "@/app/api/admin/classic/bundle/route";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const MB = 1024 * 1024;
 const URL_ = "http://box.test/api/admin/classic/bundle";
@@ -59,7 +60,7 @@ const post = (body: unknown) => new Request(URL_, { method: "POST", body: JSON.s
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+  h.requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
   h.importClassicBundle.mockResolvedValue({ created: 1, updated: 0, categories: 1 });
   h.exportAttachmentFiles.mockResolvedValue([{ item: "web-one-ab12cd", sha256: "ab".repeat(32), bytes: "AAAA" }]);
 });
@@ -98,13 +99,13 @@ describe("POST /api/admin/classic/bundle", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ created: 1, updated: 0, categories: 1 });
     expect(h.importClassicBundle).toHaveBeenCalledWith(expect.objectContaining({ version: 3 }));
-    expect(h.writeAdminAudit).toHaveBeenCalledWith("alice", "classic-import", { created: 1, updated: 0, categories: 1 });
+    expect(h.writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "classic-import", { created: 1, updated: 0, categories: 1 });
   });
 
   it("audits how many files the import filled", async () => {
     h.importClassicBundle.mockResolvedValue({ created: 1, updated: 0, categories: 1, files: 2 });
     await POST(post({ import: validRaw }));
-    expect(h.writeAdminAudit).toHaveBeenCalledWith("alice", "classic-import", { created: 1, updated: 0, categories: 1, files: 2 });
+    expect(h.writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "classic-import", { created: 1, updated: 0, categories: 1, files: 2 });
   });
 
   it("400s an invalid bundle with the parser's errors and never imports", async () => {

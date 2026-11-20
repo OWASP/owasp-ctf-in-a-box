@@ -5,11 +5,18 @@ import { upstashEval } from "@/lib/upstash";
 /**
  * Per-login fixed-window rate limiter for authenticated routes.
  *
- * KEYED ON THE LOGIN, not the IP, and that is the point. An IP key is
- * spoofable here, because Caddy appends to `x-forwarded-for` rather than
- * replacing it. These routes run *after*
- * `auth.api.getSession()`, so there is a session-backed login to key on that a
- * caller cannot forge without forging the session itself.
+ * The per-player buckets are KEYED ON THE LOGIN, not the IP, and that is the
+ * point. A leftmost `x-forwarded-for` entry is spoofable here, because the
+ * proxy appends to the header rather than replacing it. These routes run
+ * *after* `auth.api.getSession()`, so there is a session-backed login to key
+ * on that a caller cannot forge without forging the session itself.
+ *
+ * The auth buckets (`signUpIp`, `signInIp`, `signInUser`) and `passwordReset`
+ * run before any session exists and key on the client address instead, the
+ * one the single trusted proxy vouches for (`client-ip.ts` says which
+ * header, per deploy path). Those counters are not a player's state, so
+ * `rateLimitKeysFor` does not list them; they hold that address until their
+ * window expires.
  *
  * Fixed window, not a sliding one: the thing being bounded is a burst (scripted
  * join-code guessing, a hammering client), and a fixed window costs one Lua
@@ -22,7 +29,9 @@ import { upstashEval } from "@/lib/upstash";
  * These bound abuse of routes that have their own correctness gates
  * underneath (`joinTeam` validates the code; `revealHint` charges atomically
  * and is idempotent), so a Redis blip must not stop contestants playing. Same
- * fail-open reasoning the freeze reads use — see AGENTS.md.
+ * fail-open reasoning the freeze reads use — see AGENTS.md. The one exception
+ * is opt-in per call (`failClosed`): the admin claim, where the budget is the
+ * guess bound itself.
  */
 
 type RateLimitVerdict =
@@ -31,7 +40,7 @@ type RateLimitVerdict =
 
 const rateKey = (bucket: string, login: string) => `ctf:rl:${bucket}:${login.toLowerCase()}`;
 
-// KEYS[1] = ctf:rl:<bucket>:<login>
+// KEYS[1] = ctf:rl:<bucket>:<playerId>
 // ARGV[1] = limit   ARGV[2] = window seconds
 //
 // INCR-then-EXPIRE inside one script: the window starts at the first request
@@ -54,28 +63,38 @@ if n > tonumber(ARGV[1]) then
 end
 return {1, 0}`;
 
+/** What a fail-closed budget answers when it cannot read its counter. */
+const FAIL_CLOSED_RETRY_SECONDS = 60;
+
 /**
  * Charge one request against `login`'s budget for `bucket`.
  *
  * @param limit   requests allowed per window
  * @param windowSeconds  window length
+ * @param opts.failClosed  refuse (Retry-After 60) instead of allowing when the
+ *   counter cannot be read. For a budget whose only job is bounding guesses at
+ *   a secret, where an unmetered attempt is the failure.
  */
 export async function consumeRateLimit(
   bucket: string,
   login: string,
   limit: number,
   windowSeconds: number,
+  opts: { failClosed?: boolean } = {},
 ): Promise<RateLimitVerdict> {
+  const unreadable = (): RateLimitVerdict =>
+    opts.failClosed ? { allowed: false, retryAfterSeconds: FAIL_CLOSED_RETRY_SECONDS } : { allowed: true };
   try {
     const raw = await upstashEval(CONSUME_SCRIPT, [rateKey(bucket, login)], [limit, windowSeconds]);
-    const [allowed, ttl] = Array.isArray(raw) ? (raw as [number, number]) : [1, 0];
+    if (!Array.isArray(raw)) return unreadable();
+    const [allowed, ttl] = raw as [number, number];
     if (allowed === 1) return { allowed: true };
     // Clamp to 1: `Retry-After: 0` reads as "retry now", which is the one
     // thing this response is saying not to do.
     return { allowed: false, retryAfterSeconds: Math.max(1, Number(ttl)) };
   } catch (err) {
-    console.error(`[rate-limit] ${bucket} charge failed, allowing: ${errorLabel(err)}`);
-    return { allowed: true };
+    console.error(`[rate-limit] ${bucket} charge failed, ${opts.failClosed ? "refusing" : "allowing"}: ${errorLabel(err)}`);
+    return unreadable();
   }
 }
 
@@ -91,16 +110,51 @@ export const RATE_LIMITS = {
    *  human pace: a contestant clicking through every hint on a page must
    *  never hit it. */
   hintReveal: { bucket: "hint-reveal", limit: 30, windowSeconds: 60 },
-  /** The ai module's cross-origin routes, keyed on `token.sub` — the only
-   *  identity these cookie-blind endpoints have. Generous, because a legitimate
-   *  external challenge may poll `/state` and retry a submission; the job is
-   *  bounding a runaway or a leaked token, not rationing play. */
-  aiSubmit: { bucket: "ai-submit", limit: 60, windowSeconds: 60 },
-  aiEvent: { bucket: "ai-event", limit: 60, windowSeconds: 60 },
-  aiState: { bucket: "ai-state", limit: 120, windowSeconds: 60 },
-  /** The admin "Send test" button (`admin/ai/test/route.ts`), keyed on the
-   *  admin's own login. Bounds accidental repeated clicks, not a real
-   *  workload — an organizer testing one challenge's wiring has no reason to
-   *  approach this in a normal session. */
-  aiAdminTest: { bucket: "ai-admin-test", limit: 10, windowSeconds: 60 },
+  /** Admin claim attempts (`/api/me/admin/claim`), keyed on the player id and
+   *  charged FAIL CLOSED. A code is 128 bits, so this is not what makes
+   *  guessing infeasible; it stops a script trying. There is deliberately no
+   *  global bucket: anyone could spend it and lock the organizer out of the
+   *  recovery claim. */
+  adminClaim: { bucket: "admin-claim", limit: 5, windowSeconds: 900 },
+  /** Password reset code redemptions (`/api/reset-password`), keyed on the
+   *  client address because the player is signed out, and charged FAIL
+   *  CLOSED. A code is 128 bits, so guessing is infeasible whatever this is;
+   *  the budget only throttles a script hammering the route. Sized like
+   *  signUpIp, because behind a venue NAT or a CDN edge every player shares
+   *  one address, and a small budget would let one person lock every reset
+   *  out. */
+  passwordReset: { bucket: "password-reset", limit: 300, windowSeconds: 900 },
+  /** Sign-up attempts per client address (`/sign-up/email`), charged fail
+   *  closed. Sized so a venue sharing one NAT, or a CDN edge address, still
+   *  fits a whole room signing up. */
+  signUpIp: { bucket: "signup-ip", limit: 300, windowSeconds: 10 * 60 },
+  /** Sign-in attempts per client address (`/sign-in/username`), fail closed.
+   *  Coarse on purpose: it bounds a script spraying many usernames from one
+   *  source without hurting a shared NAT. */
+  signInIp: { bucket: "signin-ip", limit: 600, windowSeconds: 10 * 60 },
+  /** Password guesses per source AND username, keyed `<ip>|<username>`, fail
+   *  closed. Guessing is bounded per source, and a stranger elsewhere cannot
+   *  spend a player's budget and lock them out. */
+  signInUser: { bucket: "signin-user", limit: 10, windowSeconds: 15 * 60 },
+  /** Username picks, keyed on the user id, charged FAIL OPEN like teamJoin:
+   *  it bounds request volume, and the write refuses on its own (a username
+   *  is set once, and the unique index refuses one already held). */
+  usernamePick: { bucket: "username-pick", limit: 20, windowSeconds: 10 * 60 },
+  /** Password adds, keyed on the user id, charged FAIL OPEN: it bounds
+   *  request volume, and better-auth's setPassword refuses on its own when a
+   *  password already exists and enforces the length bounds. */
+  setPassword: { bucket: "set-password", limit: 10, windowSeconds: 10 * 60 },
 } as const;
+
+/** Every rate-limit counter `player` can hold, keyed on the player id.
+ *  The admin delete clears them with the rest of the player's state. The
+ *  address-keyed auth buckets are not a player's and are not listed. */
+export function rateLimitKeysFor(player: string): string[] {
+  return [
+    RATE_LIMITS.teamJoin,
+    RATE_LIMITS.hintReveal,
+    RATE_LIMITS.adminClaim,
+    RATE_LIMITS.usernamePick,
+    RATE_LIMITS.setPassword,
+  ].map((r) => rateKey(r.bucket, player));
+}

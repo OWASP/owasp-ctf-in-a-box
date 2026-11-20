@@ -1,6 +1,6 @@
 "use client";
 
-// The row list the quiz, classic and ai admin panels share: one row per item
+// The row list the quiz and classic admin panels share: one row per item
 // with its title and a meta line, an Edit button, and a "⋯" menu holding the
 // rarer actions — Move up, Move down, Delete (admin-redesign.md § Content
 // screens). Before this every row carried four full-size buttons, so a
@@ -20,12 +20,12 @@
 // Organizers drag rows to reorder; the per-row Move items are the
 // keyboard-operable path, and not optional: dragging is a mouse gesture and
 // cannot be the only way to reorder an organizer's own content. A panel with
-// no reorder (ai) passes no `onMove` and gets neither drag nor the Move items.
+// no reorder passes no `onMove` and gets neither drag nor the Move items.
 //
 // The collapsed list shows the public half only: what the meta line says is
 // the panel's choice (`meta`), and the panels keep secrets — the correct
 // choice, the flag — for the edit form, never for a list that might be on a
-// projector. `rowExtra` renders under a row (ai's integration disclosure).
+// projector.
 //
 // The menu is a native <details>, so it is keyboard-operable and its items
 // stay in the static markup; choosing an item closes it.
@@ -77,7 +77,6 @@ export default function SortableList<Row>({
   onDelete,
   groupOf,
   groups,
-  rowExtra,
 }: {
   rows: readonly Row[];
   keyOf: (row: Row) => string;
@@ -105,8 +104,6 @@ export default function SortableList<Row>({
   /** Group rows under headings, in `groups` order — the category list. */
   groupOf?: (row: Row) => string;
   groups?: readonly string[];
-  /** Rendered under a row, full width (ai's integration disclosure). */
-  rowExtra?: (row: Row) => ReactNode;
 }) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
@@ -236,7 +233,6 @@ export default function SortableList<Row>({
                         </details>
                       </div>
                     </div>
-                    {rowExtra?.(row)}
                   </li>
                 );
               })}

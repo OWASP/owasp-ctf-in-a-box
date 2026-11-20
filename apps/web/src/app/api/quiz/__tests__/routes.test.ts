@@ -20,6 +20,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The activity log, so the dry-run test below can see that nothing was logged.
 const activityLog = vi.hoisted(() => ({ logActivity: vi.fn(async () => {}) }));
 vi.mock("@/lib/activity-log", () => activityLog);
+// The first-blood hook (#590): asserted below, and mocked so no test can
+// reach the real announcer (Redis + Discord).
+const announceNotify = vi.hoisted(() => ({ notifyFirstBlood: vi.fn(async () => {}) }));
+vi.mock("@/lib/announce/notify", () => announceNotify);
 
 const {
   getSession,
@@ -86,8 +90,7 @@ vi.mock("@/lib/quiz-store", () => ({
   QuizValidationError,
 }));
 // `adminErrorLabel` is the real (name+message, capped) implementation, not a
-// mock — mirrors admin/classic/route.test.ts and admin/ai/route.test.ts's
-// idiom.
+// mock — mirrors admin/classic/route.test.ts's idiom.
 vi.mock("@/lib/admin-store", () => ({
   writeAdminAudit,
   adminErrorLabel: (err: unknown) => (err instanceof Error ? `${err.name}: ${err.message}`.slice(0, 200) : "non-Error throw"),
@@ -101,6 +104,7 @@ import {
   QUESTION_KEYS,
   IMPORT_KEYS,
 } from "@/app/api/admin/quiz/route";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const answerReq = (body?: unknown) =>
   new Request("http://x/api/quiz/answer", { method: "POST", body: JSON.stringify(body ?? {}) });
@@ -111,7 +115,8 @@ const adminReq = (method: "GET" | "POST" | "DELETE", body?: unknown) =>
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
-const SESSION = { user: { login: "alice" } };
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+const SESSION = { user: { id: ALICE_ID, login: "alice" } };
 
 const QUESTION = {
   id: "q1",
@@ -143,7 +148,7 @@ beforeEach(() => {
   deleteQuestion.mockReset();
   writeAdminAudit.mockReset();
   getSession.mockResolvedValue(SESSION);
-  requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+  requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
   requireLaunchedApi.mockResolvedValue(null);
   launchApiAccess.mockImplementation(async (login: string) => ({ refused: await requireLaunchedApi(login), preview: false }));
   hasTeam.mockResolvedValue(true);
@@ -151,6 +156,8 @@ beforeEach(() => {
   isModuleLive.mockReset();
   isModuleLive.mockResolvedValue(true);
   activityLog.logActivity.mockClear();
+  announceNotify.notifyFirstBlood.mockReset();
+  announceNotify.notifyFirstBlood.mockResolvedValue(undefined);
 });
 
 describe("POST /api/quiz/answer", () => {
@@ -195,10 +202,10 @@ describe("POST /api/quiz/answer", () => {
     expect(answerQuestion).not.toHaveBeenCalled();
   });
 
-  it("400 for a session with no GitHub login", async () => {
-    getSession.mockResolvedValue({ user: {} });
+  it("401 for a session whose user id is not a player id", async () => {
+    getSession.mockResolvedValue({ user: { id: "alice", login: "alice" } });
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(401);
     expect(answerQuestion).not.toHaveBeenCalled();
   });
 
@@ -218,7 +225,7 @@ describe("POST /api/quiz/answer", () => {
     answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10 });
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
     expect(res.status).toBe(200);
-    expect(answerQuestion).toHaveBeenCalledWith("alice", "q1", ["b"], { dryRun: false });
+    expect(answerQuestion).toHaveBeenCalledWith(ALICE_ID, "q1", ["b"], { dryRun: false });
   });
 
   // --- the team requirement (issue #153) ------------------------------------
@@ -239,7 +246,7 @@ describe("POST /api/quiz/answer", () => {
     // a body-supplied login would let anyone borrow a team's membership.
     hasTeam.mockResolvedValue(false);
     await answerPOST(answerReq({ questionId: "q1", choices: ["b"], login: "mallory" }));
-    expect(hasTeam).toHaveBeenCalledWith("alice");
+    expect(hasTeam).toHaveBeenCalledWith(ALICE_ID);
   });
 
   it("checks the launch lock BEFORE the team, so a pre-launch caller is told that first", async () => {
@@ -267,7 +274,7 @@ describe("POST /api/quiz/answer", () => {
   it("derives login from the session, never the request body", async () => {
     answerQuestion.mockResolvedValue({ ok: true, correct: false });
     await answerPOST(answerReq({ questionId: "q1", choices: ["b"], login: "mallory" }));
-    expect(answerQuestion).toHaveBeenCalledWith("alice", "q1", ["b"], { dryRun: false });
+    expect(answerQuestion).toHaveBeenCalledWith(ALICE_ID, "q1", ["b"], { dryRun: false });
   });
 
   it("404 for an unknown/missing question", async () => {
@@ -292,11 +299,19 @@ describe("POST /api/quiz/answer", () => {
     },
   );
 
-  it("403 with retryAt for a cooldown refusal", async () => {
-    answerQuestion.mockResolvedValue({ ok: false, reason: "cooldown", retryAt: "2026-01-01T00:00:00.000Z" });
-    const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
-    expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({ error: "cooldown", retryAt: "2026-01-01T00:00:00.000Z" });
+  it("429 with Retry-After header and retryAt for a cooldown refusal", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2025-12-31T23:59:00.000Z"));
+    try {
+      const retryAt = "2026-01-01T00:00:00.000Z";
+      answerQuestion.mockResolvedValue({ ok: false, reason: "cooldown", retryAt });
+      const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("60");
+      expect(await res.json()).toEqual({ error: "cooldown", retryAt });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("200 with correct:true and points for a correct answer", async () => {
@@ -320,6 +335,47 @@ describe("POST /api/quiz/answer", () => {
       expect(text).not.toContain(choice.id);
       expect(text).not.toContain(choice.label);
     }
+  });
+});
+
+// First blood (#590): the hook fires for a FRESH solve only, carries the
+// SESSION's login, and must never be able to fail an answer that already
+// banked its points (non-blocking by contract).
+describe("the first-blood hook (#590)", () => {
+  it("announces a fresh solve with the session's login, module and id", async () => {
+    answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10 });
+    await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+    expect(announceNotify.notifyFirstBlood).toHaveBeenCalledTimes(1);
+    expect(announceNotify.notifyFirstBlood).toHaveBeenCalledWith({ module: "quiz", challengeId: "q1", playerId: ALICE_ID, points: 10 });
+  });
+
+  it("does NOT announce an idempotent re-submission (it banked nothing)", async () => {
+    answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 0, already: true });
+    await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+    expect(announceNotify.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("does NOT announce a dry run (an admin preview is not a solve)", async () => {
+    launchApiAccess.mockResolvedValue({ refused: null, preview: true });
+    answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10, dryRun: true });
+    await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+    expect(announceNotify.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("does NOT announce a wrong answer or a gate refusal", async () => {
+    answerQuestion.mockResolvedValue({ ok: true, correct: false });
+    await answerPOST(answerReq({ questionId: "q1", choices: ["a"] }));
+    answerQuestion.mockResolvedValue({ ok: false, reason: "paused" });
+    await answerPOST(answerReq({ questionId: "q1", choices: ["a"] }));
+    expect(announceNotify.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("the hook never blocks the response — a notify that never settles still yields 200", async () => {
+    answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10 });
+    announceNotify.notifyFirstBlood.mockReturnValue(new Promise<never>(() => {}));
+    const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ correct: true, points: 10 });
   });
 });
 
@@ -473,9 +529,8 @@ describe("POST /api/admin/quiz", () => {
     expect(res.status).toBe(503);
 
     // Every logged argument must be a primitive STRING, never the raw error
-    // object — see admin/ai/route.test.ts's equivalent case for why this,
-    // rather than a `logged.not.toContain(...)` string check alone, is what
-    // actually distinguishes redacted logging from raw logging.
+    // object: that, rather than a `logged.not.toContain(...)` string check
+    // alone, is what distinguishes redacted logging from raw logging.
     for (const call of spy.mock.calls) {
       for (const arg of call) {
         expect(typeof arg).toBe("string");
@@ -493,7 +548,7 @@ describe("POST /api/admin/quiz", () => {
     expect(upsertQuestion).toHaveBeenCalledWith(QUESTION, ["opt-right"]);
     expect(await res.json()).toEqual({ question: QUESTION, correct: ["opt-right"] });
 
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "quiz-upsert", { questionId: "q1" });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "quiz-upsert", { questionId: "q1" });
   });
 
   it("echoes the STORED correct set, not the caller's raw array", async () => {
@@ -536,7 +591,7 @@ describe("DELETE /api/admin/quiz", () => {
     const res = await adminDELETE(adminReq("DELETE", { id: "q1" }));
     expect(res.status).toBe(200);
     expect(deleteQuestion).toHaveBeenCalledWith("q1");
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "quiz-delete", { questionId: "q1" });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "quiz-delete", { questionId: "q1" });
   });
 
   it("400 with the message for a QuizValidationError from the store", async () => {
@@ -592,7 +647,7 @@ describe("POST /api/admin/quiz (bulk import)", () => {
   };
 
   beforeEach(() => {
-    requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+    requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
     importBundle.mockClear();
     importBundle.mockResolvedValue({ created: 1, updated: 0 });
   });
@@ -648,7 +703,7 @@ describe("POST /api/admin/quiz (bulk import)", () => {
   it("audits the import with its counts", async () => {
     importBundle.mockResolvedValue({ created: 3, updated: 2 });
     await adminPOST(adminReq("POST", { import: JSON.stringify(VALID_BUNDLE) }));
-    expect(writeAdminAudit).toHaveBeenCalledWith("alice", "quiz-import", { created: 3, updated: 2 });
+    expect(writeAdminAudit).toHaveBeenCalledWith(actor("alice"), "quiz-import", { created: 3, updated: 2 });
   });
 
   it("503s a store failure rather than blaming the organizer's file", async () => {
@@ -674,7 +729,7 @@ describe("POST /api/quiz/answer admin preview (#464)", () => {
     answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10, dryRun: true });
     const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
     expect(res.status).toBe(200);
-    expect(answerQuestion).toHaveBeenCalledWith("alice", "q1", ["b"], { dryRun: true });
+    expect(answerQuestion).toHaveBeenCalledWith(ALICE_ID, "q1", ["b"], { dryRun: true });
   });
 });
 

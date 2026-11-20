@@ -31,6 +31,14 @@ describe("errorLabel", () => {
     expect(errorLabel(new Error("x".repeat(1000)))).toHaveLength(200);
   });
 
+  it("redacts named secrets before the length cap", () => {
+    const url = "https://discord.com/api/webhooks/1/aaaaaaaaaaaaaaaaaaaaaa";
+    const label = errorLabel(new Error(`${"x".repeat(150)}${url}`), [url]);
+    expect(label).not.toContain("aaaaaaaa");
+    expect(label).toContain("[redacted]");
+    expect(label.length).toBeLessThanOrEqual(200);
+  });
+
   it("never stringifies a non-Error throw — a thrown string could BE the flag", () => {
     expect(errorLabel("CTF{thrown-as-string}")).toBe("non-Error throw");
     expect(errorLabel({ flag: "CTF{obj}" })).toBe("non-Error throw");
@@ -38,9 +46,9 @@ describe("errorLabel", () => {
   });
 });
 
-// #500 (M12): "cannot drift" only holds if there is ONE implementation. Two
-// byte-identical copies (`ai-http.ts`'s local `errorLabel`, `admin-store.ts`'s
-// `adminErrorLabel`) had grown back next to this one; a fix to the shared
+// #500 (M12): "cannot drift" only holds if there is ONE implementation. A
+// byte-identical copy (`admin-store.ts`'s `adminErrorLabel`) had grown back
+// next to this one; a fix to the shared
 // label — a tighter cap, a new redaction — would silently skip them. Walk the
 // app's source and refuse any other body that builds the label by hand.
 describe("errorLabel has exactly one implementation", () => {

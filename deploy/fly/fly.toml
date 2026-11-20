@@ -88,8 +88,14 @@ primary_region = "iad"
   # Fly restarting the one machine because Redis blipped would be worse than
   # the blip. Dependency health is /health/deep, watched by an external
   # monitor, never by this block. grace_period covers the compose bring-up.
+  #
+  # interval bounds recovery from a CONTAINER restart (the machine stays up):
+  # after a failed check the proxy treats the app as down until the next
+  # passing one, so a container back in two seconds still costs up to one
+  # interval of errors. Keep it short. A full MACHINE restart is slower: no
+  # check runs until grace_period has passed after the machine starts.
   [[http_service.checks]]
-    interval = "30s"
+    interval = "10s"
     timeout = "5s"
     grace_period = "20s"
     method = "GET"
@@ -114,10 +120,15 @@ primary_region = "iad"
   source = "ctf_data"
   destination = "/data"
 
-# Sized for five containers: Next.js is the heavy one, redis holds the whole
-# event in memory, and the scorer's judge runs elsewhere (on GitHub's runners),
-# so this only serves.
+# The smallest machine the five containers fit in: idle, they hold about
+# 665 MB at peak (Next.js ~320, srh ~100, scorer ~100, sync ~90, redis ~55),
+# and 512 MB cannot hold that. The scorer's judge runs on GitHub's runners, so
+# here it only serves. This is the between-events default; an event sizes up
+# with FLY_VM_SIZE / FLY_VM_MEMORY in the env file (deploy.sh renders them
+# into a deployed copy of this file, so a hotfix deploy mid-event keeps the
+# event size). See
+# "Machine size" in docs/fly.md.
 [[vm]]
-  memory = "2gb"
+  memory = "1gb"
   cpu_kind = "shared"
-  cpus = 2
+  cpus = 1

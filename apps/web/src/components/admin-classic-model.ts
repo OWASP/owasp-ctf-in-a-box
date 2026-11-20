@@ -41,10 +41,7 @@ export function classicInventory(rows: readonly AdminChallenge[], categories: re
   return { items: rows.length, categories: categories.length, unlisted: unlistedCount(rows, categories) };
 }
 
-/** Rows the board will not render, because their category is not in the list.
- *  Shared shape with ai's, kept as one implementation here and imported there
- *  — the two boards filter identically, so one drifting from the other would
- *  mean one panel warning where the other stays quiet. */
+/** Rows the board will not render, because their category is not in the list. */
 export function unlistedCount(
   rows: readonly { challenge: { category: string } }[],
   categories: readonly string[],

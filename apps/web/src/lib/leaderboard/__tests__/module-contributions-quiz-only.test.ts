@@ -51,12 +51,12 @@ beforeEach(() => {
 });
 
 describe("withModuleContributions on a quiz-only event", () => {
-  it("creates a row for a login with module points and no scoring entry", async () => {
+  it("creates a row for a player id with module points and no scoring entry", async () => {
     mocks.getQuizTotals.mockResolvedValue(new Map([["ada", totals(30, 3)]]));
 
     const out = await withModuleContributions(empty());
 
-    expect(out.entries.map((e) => e.login)).toEqual(["ada"]);
+    expect(out.entries.map((e) => e.playerId)).toEqual(["ada"]);
     expect(out.entries[0].points).toBe(30);
     expect(out.entries[0].rank).toBe(1);
     // Nothing was scored by a backend that isn't running: the
@@ -117,13 +117,13 @@ describe("withModuleContributions on a quiz-only event", () => {
 
     const out = await withModuleContributions(empty());
 
-    expect(out.entries.map((e) => [e.login, e.rank])).toEqual([
+    expect(out.entries.map((e) => [e.playerId, e.rank])).toEqual([
       ["scorer", 1],
       ["grinder", 2],
     ]);
   });
 
-  // #522: getQuizTotals now carries each login's last award time, so a full
+  // #522: getQuizTotals now carries each player id's last award time, so a full
   // points-and-answers tie goes to whoever got there first — it used to fall
   // through to the source order, because no quiz row had a time at all.
   it("breaks a full points-and-answers tie on the earlier last award", async () => {
@@ -136,7 +136,7 @@ describe("withModuleContributions on a quiz-only event", () => {
 
     const out = await withModuleContributions(empty());
 
-    expect(out.entries.map((e) => [e.login, e.rank])).toEqual([
+    expect(out.entries.map((e) => [e.playerId, e.rank])).toEqual([
       ["early", 1],
       ["late", 2],
     ]);
@@ -152,7 +152,7 @@ describe("withModuleContributions on a quiz-only event", () => {
 
     const out = await withModuleContributions(empty());
 
-    expect(out.entries.map((e) => e.login)).toEqual(["more", "fewer"]);
+    expect(out.entries.map((e) => e.playerId)).toEqual(["more", "fewer"]);
   });
 
   it("stamps sequential ranks across the created field", async () => {
@@ -166,7 +166,7 @@ describe("withModuleContributions on a quiz-only event", () => {
 
     const out = await withModuleContributions(empty());
 
-    expect(out.entries.map((e) => [e.login, e.rank])).toEqual([
+    expect(out.entries.map((e) => [e.playerId, e.rank])).toEqual([
       ["a", 1],
       ["b", 2],
       ["c", 3],
@@ -206,7 +206,7 @@ describe("withModuleContributions on a quiz-only event", () => {
     }
   });
 
-  it("creates no rows for a login that has answered nothing", async () => {
+  it("creates no rows for a player id that has answered nothing", async () => {
     mocks.getQuizTotals.mockResolvedValue(new Map([["ada", totals(0, 0)]]));
     const out = await withModuleContributions(empty());
     expect(out.entries).toEqual([]);
@@ -234,12 +234,12 @@ describe("withModuleContributions on a quiz-only event", () => {
   });
 
   // Belt and braces for the union: even on a board with no scoring backend, a
-  // row that somehow arrives with this login must not be joined by a created
+  // row that somehow arrives with this player id must not be joined by a created
   // twin.
   it("overlays onto an existing row rather than creating a second one", async () => {
     mocks.getQuizTotals.mockResolvedValue(new Map([["ada", totals(30, 3)]]));
     const existing: LeaderboardEntry = {
-      rank: 1, login: "ada", team: null, points: 0, patched: 0, failed: 0, total: 0,
+      rank: 1, playerId: "ada", name: "ada", image: null, team: null, points: 0, patched: 0, failed: 0, total: 0,
       apps: {}, updatedAt: null, lastSolveAt: null,
     };
 

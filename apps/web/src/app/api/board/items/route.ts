@@ -1,24 +1,22 @@
 import { NextResponse } from "next/server";
-import { LOGIN_RE } from "@/lib/admin-admins";
-import { getViewerAi, listAiChallenges } from "@/lib/ai-store";
 import { getViewerClassic, listChallenges, listStories } from "@/lib/classic-store";
 import { visibleNow } from "@/lib/classic-release";
 import { isLocked, lockedLabel, storyPositions } from "@/lib/story-lock";
 import { getTeamClassicSolvedIds, unlockingSolvedIds } from "@/lib/classic-team";
-import { auth } from "@/lib/auth";
+import { getPlayer, PLAYER_ID_RE } from "@/lib/player";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { requireLaunchedApi } from "@/lib/launch";
 import { getViewerQuiz, listQuestions } from "@/lib/quiz-store";
 
-/** How many logins one request may union — a team's roster, not a scrape. */
-const MAX_LOGINS = 8;
+/** How many players one request may union — a team's roster, not a scrape. */
+const MAX_PLAYERS = 8;
 
 /** `hidden` marks a story step redacted for this viewer: placeholder label,
  *  0 points, never `done` — nothing about it per position (ADR 60). */
 type Item = { id: string; label: string; points: number; done: boolean; earnedPoints?: number; hidden?: true };
 
 /**
- * Per-item quiz/classic/ai completion for a login (an expanded leaderboard
+ * Per-item quiz/classic completion for a player id (an expanded leaderboard
  * row) or a roster (an expanded team row, whose completion is the members'
  * union — the same union the team's banked points already reflect).
  *
@@ -26,37 +24,29 @@ type Item = { id: string; label: string; points: number; done: boolean; earnedPo
  * is already on the board as counts, and every label here (a question's
  * prompt, a challenge's title) is on a public page. What must never leave
  * this route is grading material — items are built field by field from the
- * public records, and the viewer maps carry only ids and banked points. The
- * ai arm reads through `listAiChallenges` (the contestant-safe lister) and
- * `getViewerAi` — never `listAiChallengesForAdmin`, which is the only ai
- * reader that carries flags, hints and signing keys.
+ * public records, and the viewer maps carry only ids and banked points.
  */
 export async function GET(request: Request) {
   // #464 pre-launch lock: this returns challenge titles and points, which is
   // module content. The session is optional here (the board is public once
   // launched); it is read only so an admin's preview board still loads.
-  const session = await auth.api.getSession({ headers: request.headers }).catch(() => null);
-  const viewerLogin = (session?.user as { login?: string } | undefined)?.login;
-  const notLaunched = await requireLaunchedApi(viewerLogin);
+  const viewer = await getPlayer(request.headers).catch(() => null);
+  const notLaunched = await requireLaunchedApi(viewer?.id);
   if (notLaunched) return notLaunched;
 
-  const raw = new URL(request.url).searchParams.get("logins") ?? "";
-  const logins = raw.split(",").map((l) => l.trim()).filter(Boolean);
-  if (logins.length === 0 || logins.length > MAX_LOGINS || !logins.every((l) => LOGIN_RE.test(l))) {
-    return NextResponse.json({ error: "bad logins" }, { status: 400 });
+  const raw = new URL(request.url).searchParams.get("players") ?? "";
+  const players = raw.split(",").map((p) => p.trim()).filter(Boolean);
+  if (players.length === 0 || players.length > MAX_PLAYERS || !players.every((p) => PLAYER_ID_RE.test(p))) {
+    return NextResponse.json({ error: "bad players" }, { status: 400 });
   }
 
-  const [quizLive, classicLive, aiLive] = await Promise.all([
-    isModuleLive("quiz"),
-    isModuleLive("classic"),
-    isModuleLive("ai"),
-  ]);
+  const [quizLive, classicLive] = await Promise.all([isModuleLive("quiz"), isModuleLive("classic")]);
 
   let quiz: Item[] | null = null;
   if (quizLive) {
     const [questions, viewers] = await Promise.all([
       listQuestions(),
-      Promise.all(logins.map((l) => getViewerQuiz(l))),
+      Promise.all(players.map((p) => getViewerQuiz(p))),
     ]);
     quiz = questions.map((q) => {
       const hit = viewers.map((v) => v.answered[q.id]).find(Boolean);
@@ -69,7 +59,7 @@ export async function GET(request: Request) {
   if (classicLive) {
     const [storedChallenges, viewers, stories] = await Promise.all([
       listChallenges(),
-      Promise.all(logins.map((l) => getViewerClassic(l))),
+      Promise.all(players.map((p) => getViewerClassic(p))),
       listStories(),
     ]);
     // A hidden challenge (disabled, or not yet released) does not exist here,
@@ -78,7 +68,7 @@ export async function GET(request: Request) {
     const challenges = visibleNow(storedChallenges);
     // #463: a story step is redacted to its position alone — label, points
     // AND id, since an id is derived from the title — unless it is open BOTH
-    // for the queried logins (the team whose row this is) AND for the
+    // for the queried players (the team whose row this is) AND for the
     // VIEWER's own team. This route is public, so the queried team alone
     // would let anyone read the leader's unlocked steps by expanding a row.
     const positions = storyPositions(stories, new Set(challenges.map((c) => c.id)));
@@ -90,8 +80,8 @@ export async function GET(request: Request) {
     const [teamUnlocked, viewerSolved] =
       positions.size > 0
         ? await Promise.all([
-            unlockingSolvedIds(logins),
-            viewerLogin ? getTeamClassicSolvedIds(viewerLogin) : Promise.resolve(new Set<string>()),
+            unlockingSolvedIds(players),
+            viewer ? getTeamClassicSolvedIds(viewer.id) : Promise.resolve(new Set<string>()),
           ])
         : [new Set<string>(), new Set<string>()];
     classic = challenges.map((c) => {
@@ -108,17 +98,5 @@ export async function GET(request: Request) {
     });
   }
 
-  let ai: Item[] | null = null;
-  if (aiLive) {
-    const [challenges, viewers] = await Promise.all([
-      listAiChallenges(),
-      Promise.all(logins.map((l) => getViewerAi(l))),
-    ]);
-    ai = challenges.map((c) => {
-      const hit = viewers.map((v) => v.solved[c.id]).find(Boolean);
-      return { id: c.id, label: c.title, points: c.points, done: Boolean(hit), earnedPoints: hit?.points };
-    });
-  }
-
-  return NextResponse.json({ quiz, classic, ai, classicHiddenSolved });
+  return NextResponse.json({ quiz, classic, classicHiddenSolved });
 }

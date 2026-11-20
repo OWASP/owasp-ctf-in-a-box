@@ -1,7 +1,7 @@
 // `secure-development` module's definition — one entry of the REGISTRY
 // literal in lib/modules.ts, held in its own file so that file stays about
 // the types and the accessors, and a copy edit to one module stops touching
-// all four.
+// all three.
 //
 // `ModuleDef` comes back as a TYPE import — erased at compile time, so
 // modules.ts -> this file -> modules.ts is not a runtime edge. The URLs the
@@ -67,7 +67,7 @@ export const SECURE_DEVELOPMENT_DEF: ModuleDef = {
   // holds the character React actually emitted (U+2019 and ASCII ' — they
   // are NOT interchangeable), so the rendered bytes are unchanged.
   guide: {
-    lede: "New to the competition? Here's everything you need to go from a GitHub sign-in to your first patched challenge.",
+    lede: "New to the competition? Here's everything you need to go from signing in to your first patched challenge.",
     metaDescription:
       "Step-by-step guide to OWASP Secure Development: fork a target, patch a real vulnerability, open a PR, and get scored automatically.",
     loop: {
@@ -87,8 +87,8 @@ export const SECURE_DEVELOPMENT_DEF: ModuleDef = {
     },
     steps: (ctx) => [
       {
-        title: "Sign in with GitHub",
-        body: "Use the sign-in button in the header. Your GitHub login is how the leaderboard and your profile track your progress. The scorer credits points to the account that authors the pull request, so play from the same account you sign in with.",
+        title: "Sign in and link GitHub",
+        body: "Use the sign-in button in the header to create an account or sign in, then link your GitHub account from your profile. The scorer credits points to the GitHub account that authors the pull request, and the link is what ties those points to you. A PR from an unlinked GitHub account is held until its author links it before scoring closes.",
       },
       {
         // Scores for this module arrive from GitHub through the poller, so
@@ -252,7 +252,7 @@ git push -u origin fix/<short-description>`,
     notes: [
       "Every push to an open PR re-runs the scorer, and the run evaluates your whole app, so you can keep stacking fixes on one branch or open a fresh PR per fix, whichever you prefer.",
       "Your best-ever result per challenge is what counts. A later fix always replaces an earlier miss; you can never lose points by trying.",
-      "Points are credited to the GitHub account that authored the PR. A challenge patched by several teammates counts once for the team, so a team's total can be less than its members' points added together.",
+      "Points are credited to the player whose linked GitHub account authored the PR. A challenge patched by several teammates counts once for the team, so a team's total can be less than its members' points added together.",
     ],
     scoring:
       "Every challenge is worth a fixed number of points based on difficulty, and harder vulnerabilities pay out more. Points post once the event receives your PR’s passing result, usually a few minutes after the push, and your best-ever result for each challenge is what counts, so a later fix always replaces an earlier miss. Your live total, per-app breakdown, and patched and non-patched counts are visible on your profile once you’re signed in.",
@@ -263,14 +263,14 @@ git push -u origin fix/<short-description>`,
   // patches, hints — which is exactly why none of them can stay in the
   // platform's own list.
   rules: (ctx) => ({
-    // The generic "your GitHub login is your identity" sentence lives in
+    // The generic "your account is your identity" sentence lives in
     // the platform's own Teams list — three modules each restating it
     // rendered as three near-identical adjacent bullets. This module keeps
     // only the nuance the generic sentence cannot carry: points credit the
     // PULL REQUEST'S author, which is not automatically the signed-in
     // session.
     teams: [
-      "Points for a patch credit the pull request's author — open every PR from the same GitHub account you sign in with, or your score lands on a row you can't see.",
+      "Points for a patch credit the pull request's author. Link your GitHub account from your profile and open every PR from that account, or your score is held until its author links it before scoring closes.",
     ],
     fairPlay: [
       `Only the ${ctx.appCount} challenge ${ctx.appCount === 1 ? "target" : "targets"} (${ctx.appList}) ${ctx.appCount === 1 ? "is" : "are"} in scope. Do not attack the CI scoring pipeline, the leaderboard, or other contestants' forks.`,
@@ -338,7 +338,7 @@ git push -u origin fix/<short-description>`,
       },
       {
         q: "How is my progress tracked?",
-        a: "Sign in with GitHub to claim your row on the live leaderboard and see a full per-app, per-challenge breakdown on your profile. Points are credited to the account that authored the pull request, so open your PRs from the same account you sign in with. Otherwise your score lands on a row you can't see.",
+        a: "Sign in and link your GitHub account from your profile to claim your row on the live leaderboard and see a full per-app, per-challenge breakdown on your profile. Points are credited to the GitHub account that authored the pull request, so open your PRs from the account you linked. A score from an unlinked GitHub account is held until its author links it before scoring closes.",
       },
       {
         q: "Are there hints?",
@@ -361,7 +361,7 @@ git push -u origin fix/<short-description>`,
   // page that tells contestants what they are permitted to attack.
   terms: (ctx) => ({
     eligibility: [
-      "You need a GitHub account. Your GitHub login is your identity for scoring, so open every pull request from the account you sign in with. Points are credited to the PR author and cannot be moved between accounts afterwards.",
+      "You need a GitHub account, linked to your account on this site from your profile. Open every pull request from that GitHub account. Points are credited to the PR author and cannot be moved between accounts afterwards.",
       "Organizers and anyone who worked on the challenge targets, the scorer, or the rubric may compete for fun but are not eligible for prizes.",
     ],
     scope: [
@@ -430,9 +430,9 @@ git push -u origin fix/<short-description>`,
         ],
       },
       {
-        title: "Set ADMIN_LOGINS in .env",
+        title: "Claim the first admin at /admin/claim",
         where: "outside",
-        body: "Without it nobody is an admin, even the deployer. It's a runtime env var, not baked into the image, so a change needs a restart, not a rebuild.",
+        body: "Sign in, open /admin/claim and enter the admin claim code. Setup, the Fly deploy and the AWS deploy print it once; if it is lost, rotate it (docs/troubleshooting.md). Without a claimed seat nobody is an admin, even the deployer. Issue codes from the Admins tab to add more organizers.",
       },
       {
         title: "Set the re-run cooldown",

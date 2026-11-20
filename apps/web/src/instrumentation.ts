@@ -1,4 +1,28 @@
+import { trustedClientIpHeader } from "@/lib/client-ip";
+import { errorLabel } from "@/lib/error-label";
+import { configuredProviders } from "@/lib/sign-in-providers";
 import { checkEventUrl } from "@/lib/secure-url";
+
+/** Starts the Discord-announcer ticker (#590) once per server instance, in
+ *  the nodejs runtime only (the announcer's stores are server-only Redis
+ *  readers; the Edge copy of this file must not load them), fire-and-forget
+ *  — instrumentation's register() completes before the first request, so a
+ *  slow first tick must never gate serving. Every failure inside the ticker
+ *  is already logged and swallowed; startAnnounceTicker itself no-ops when
+ *  Redis env is absent or when already started. */
+async function startDiscordAnnouncer(): Promise<void> {
+  if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  try {
+    const { startAnnounceTicker } = await import("@/lib/announce/ticker");
+    startAnnounceTicker();
+  } catch (err) {
+    // A boot that cannot load the announcer still serves the event — the
+    // announcer is optional by construction. errorLabel caps the value to a
+    // name+message and never stringifies a non-Error throw, so a raw
+    // exception message or secret cannot enter the log.
+    console.error("ctf-app: discord announcer not started:", errorLabel(err));
+  }
+}
 
 /**
  * Next's server-startup hook: called once per server instance, and completes
@@ -16,11 +40,25 @@ import { checkEventUrl } from "@/lib/secure-url";
  * Node built-ins, so it runs identically in both.
  */
 export function register() {
+  // Throws on a malformed TRUSTED_CLIENT_IP_HEADER, refusing to boot rather
+  // than keying every client on one address (see client-ip.ts).
+  trustedClientIpHeader();
+
+  // Quiz and classic still serve without GitHub keys, so this logs rather
+  // than refusing to boot.
+  if ((process.env.SCORE_IMAGE ?? "").trim() !== "" && !configuredProviders().includes("github")) {
+    console.error(
+      "[startup] Secure Development is on (SCORE_IMAGE is set) but GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET are missing: players cannot link GitHub, so no PR will score.",
+    );
+  }
+
   const verdict = checkEventUrl({
     url: process.env.BETTER_AUTH_URL,
     nodeEnv: process.env.NODE_ENV,
     allowInsecure: process.env.ALLOW_INSECURE_EVENT_URL === "1",
   });
+
+  startDiscordAnnouncer();
 
   if (verdict.level === "ok") return;
 

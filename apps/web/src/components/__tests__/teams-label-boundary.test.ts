@@ -2,9 +2,9 @@
 //
 // `challenge-board.tsx` and `story-lanes.tsx` render on the server and call
 // `teamsLabel()`. Called from a `"use client"` module, it throws at request
-// time ("Attempted to call teamsLabel() from the server"), so /flags and /ai
-// stop rendering. Vitest has no RSC boundary, so no behavioural test here can
-// fail on it; the classic-only and ai-only bring-ups request those pages
+// time ("Attempted to call teamsLabel() from the server"), so /flags stops
+// rendering. Vitest has no RSC boundary, so no behavioural test here can
+// fail on it; the classic-only bring-up requests that page
 // against a built image. This pins the file relationships instead, the same
 // way admin-tab-urls.test.tsx does for the admin tabs.
 import { readFileSync } from "node:fs";

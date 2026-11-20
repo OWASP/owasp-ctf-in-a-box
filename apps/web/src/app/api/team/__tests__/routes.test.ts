@@ -1,18 +1,19 @@
 // Route-level tests for the team captain + join-by-code API. Auth guard and
 // the team store are both mocked — no Upstash or GitHub session needed.
 //
-// login is ALWAYS derived from the session server-side; none of these routes
+// The player id is ALWAYS derived from the session server-side; none of these routes
 // trust a client-supplied captain identity.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
-  getSession, joinTeam, createSoloTeam, removeMember, renameTeam, transferCaptain, disbandTeam, regenerateCode,
+  getSession, joinTeam, createTeam, createSoloTeam, removeMember, renameTeam, transferCaptain, disbandTeam, regenerateCode,
   consumeRateLimit, leaveTeam,
 } = vi.hoisted(
   () => ({
     getSession: vi.fn(),
     joinTeam: vi.fn(),
+    createTeam: vi.fn(),
     createSoloTeam: vi.fn(),
     removeMember: vi.fn(),
     renameTeam: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/team-store", () => ({
   leaveTeam,
   joinTeam,
+  createTeam,
   createSoloTeam,
   removeMember,
   renameTeam,
@@ -44,6 +46,7 @@ vi.mock("@/lib/rate-limit-store", () => ({
   RATE_LIMITS: { teamJoin: { bucket: "team-join", limit: 10, windowSeconds: 600 } },
 }));
 
+import { POST as createPOST } from "@/app/api/team/route";
 import { POST as joinPOST } from "@/app/api/team/join/route";
 import { POST as removePOST } from "@/app/api/team/remove/route";
 import { POST as renamePOST } from "@/app/api/team/rename/route";
@@ -55,11 +58,13 @@ import { POST as leavePOST } from "@/app/api/team/leave/route";
 
 const req = (body?: unknown) => new Request("http://x/api/team/x", { method: "POST", body: JSON.stringify(body ?? {}) });
 
-const SESSION = { user: { login: "alice" } };
+const ALICE = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+const SESSION = { user: { id: ALICE, login: "alice", username: "alice" } };
 
 beforeEach(() => {
   getSession.mockReset();
   joinTeam.mockReset();
+  createTeam.mockReset();
   createSoloTeam.mockReset();
   removeMember.mockReset();
   renameTeam.mockReset();
@@ -81,13 +86,13 @@ describe("POST /api/team/join rate limiting", () => {
     expect(joinTeam).not.toHaveBeenCalled();
   });
 
-  it("charges the session login, not an IP header a caller controls", async () => {
+  it("charges the session player, not an IP header a caller controls", async () => {
     // An IP key would be spoofable (Caddy APPENDS to x-forwarded-for). This
     // route runs after getSession, so it keys on something a caller cannot
     // forge without forging the session.
     joinTeam.mockResolvedValue({ ok: true, team: { slug: "t" } });
     await joinPOST(req({ code: "abc123" }));
-    expect(consumeRateLimit).toHaveBeenCalledWith("team-join", "alice", 10, 600);
+    expect(consumeRateLimit).toHaveBeenCalledWith("team-join", ALICE, 10, 600);
   });
 
   it("does not charge a request that never had a code to test", async () => {
@@ -124,11 +129,11 @@ describe("POST /api/team/join", () => {
     expect(await res.json()).toMatchObject({ error: "Invalid or expired join code" });
   });
 
-  it("200 on success, calling joinTeam(login, code)", async () => {
+  it("200 on success, calling joinTeam(playerId, code)", async () => {
     joinTeam.mockResolvedValue({ ok: true, team: "the-avengers" });
     const res = await joinPOST(req({ code: "abc123" }));
     expect(res.status).toBe(200);
-    expect(joinTeam).toHaveBeenCalledWith("alice", "abc123");
+    expect(joinTeam).toHaveBeenCalledWith(ALICE, "abc123");
     expect(await res.json()).toMatchObject({ team: "the-avengers" });
   });
 });
@@ -145,7 +150,7 @@ describe("POST /api/team/remove", () => {
     removeMember.mockResolvedValue({ ok: false, error: "Only the team captain can do that" });
     const res = await removePOST(req({ slug: "s", member: "bob" }));
     expect(res.status).toBe(403);
-    expect(removeMember).toHaveBeenCalledWith("alice", "s", "bob", { confirmClosed: false });
+    expect(removeMember).toHaveBeenCalledWith(ALICE, "s", "bob", { confirmClosed: false });
   });
 
   it("200 on success", async () => {
@@ -167,20 +172,20 @@ describe("exits after registration closes (#597)", () => {
     const res = await leavePOST(req({}));
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: CLOSED, needsConfirm: true });
-    expect(leaveTeam).toHaveBeenCalledWith("alice", { confirmClosed: false });
+    expect(leaveTeam).toHaveBeenCalledWith(ALICE, { confirmClosed: false });
   });
 
   it("leave: passes a confirmed exit through", async () => {
     leaveTeam.mockResolvedValue({ ok: true, team: null });
     const res = await leavePOST(req({ confirm: true }));
     expect(res.status).toBe(200);
-    expect(leaveTeam).toHaveBeenCalledWith("alice", { confirmClosed: true });
+    expect(leaveTeam).toHaveBeenCalledWith(ALICE, { confirmClosed: true });
   });
 
   it("leave: anything but a literal true does not confirm", async () => {
     leaveTeam.mockResolvedValue({ ok: true, team: null });
     await leavePOST(req({ confirm: "yes" }));
-    expect(leaveTeam).toHaveBeenCalledWith("alice", { confirmClosed: false });
+    expect(leaveTeam).toHaveBeenCalledWith(ALICE, { confirmClosed: false });
   });
 
   it("remove: 409 with the warning when unconfirmed, and a confirmed retry goes through", async () => {
@@ -190,7 +195,7 @@ describe("exits after registration closes (#597)", () => {
     expect(await res.json()).toMatchObject({ needsConfirm: true });
     removeMember.mockResolvedValueOnce({ ok: true, team: "s" });
     expect((await removePOST(req({ slug: "s", member: "bob", confirm: true }))).status).toBe(200);
-    expect(removeMember).toHaveBeenLastCalledWith("alice", "s", "bob", { confirmClosed: true });
+    expect(removeMember).toHaveBeenLastCalledWith(ALICE, "s", "bob", { confirmClosed: true });
   });
 });
 
@@ -206,7 +211,7 @@ describe("POST /api/team/rename", () => {
     renameTeam.mockResolvedValue({ ok: false, error: "Only the team captain can do that" });
     const res = await renamePOST(req({ slug: "s", name: "New Name" }));
     expect(res.status).toBe(403);
-    expect(renameTeam).toHaveBeenCalledWith("alice", "s", "New Name");
+    expect(renameTeam).toHaveBeenCalledWith(ALICE, "s", "New Name");
   });
 
   it("200 on success", async () => {
@@ -229,7 +234,7 @@ describe("POST /api/team/transfer", () => {
     transferCaptain.mockResolvedValue({ ok: false, error: "Only the team captain can do that" });
     const res = await transferPOST(req({ slug: "s", to: "bob" }));
     expect(res.status).toBe(403);
-    expect(transferCaptain).toHaveBeenCalledWith("alice", "s", "bob");
+    expect(transferCaptain).toHaveBeenCalledWith(ALICE, "s", "bob");
   });
 
   it("200 on success", async () => {
@@ -252,7 +257,7 @@ describe("POST /api/team/disband", () => {
     disbandTeam.mockResolvedValue({ ok: false, error: "Only the team captain can do that" });
     const res = await disbandPOST(req({ slug: "s" }));
     expect(res.status).toBe(403);
-    expect(disbandTeam).toHaveBeenCalledWith("alice", "s");
+    expect(disbandTeam).toHaveBeenCalledWith(ALICE, "s");
   });
 
   it("200 on success", async () => {
@@ -275,7 +280,7 @@ describe("POST /api/team/regen-code", () => {
     regenerateCode.mockResolvedValue({ ok: false, error: "Only the team captain can do that" });
     const res = await regenPOST(req({ slug: "s" }));
     expect(res.status).toBe(403);
-    expect(regenerateCode).toHaveBeenCalledWith("alice", "s");
+    expect(regenerateCode).toHaveBeenCalledWith(ALICE, "s");
   });
 
   it("409 in demo mode", async () => {
@@ -307,17 +312,17 @@ describe("POST /api/team/solo", () => {
     expect(createSoloTeam).not.toHaveBeenCalled();
   });
 
-  it("400s a session with no GitHub login, without touching the store", async () => {
-    getSession.mockResolvedValue({ user: {} });
+  it("401s a session whose user id is not a player id, without touching the store", async () => {
+    getSession.mockResolvedValue({ user: { id: "alice", login: "alice" } });
     const res = await soloPOST(req());
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(401);
     expect(createSoloTeam).not.toHaveBeenCalled();
   });
 
   it("names the team from the SESSION, ignoring anything in the body", async () => {
     createSoloTeam.mockResolvedValue({ ok: true, team: "alice" });
     await soloPOST(req({ login: "mallory", name: "mallorys-team" }));
-    expect(createSoloTeam).toHaveBeenCalledWith("alice");
+    expect(createSoloTeam).toHaveBeenCalledWith(ALICE, "alice");
     expect(createSoloTeam).toHaveBeenCalledTimes(1);
   });
 
@@ -333,5 +338,34 @@ describe("POST /api/team/solo", () => {
     const res = await soloPOST(req());
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "Registration is closed" });
+  });
+});
+
+// A player who has not picked a username (a first OAuth sign-in) has no name
+// to show on the board or the roster, so every route that puts them on a team
+// refuses before any write.
+describe("team routes refuse a player with no username", () => {
+  beforeEach(() => {
+    getSession.mockResolvedValue({ user: { id: ALICE, login: "alice" } });
+  });
+
+  it.each([
+    ["create", () => createPOST(req({ name: "Red" })), () => createTeam],
+    ["join", () => joinPOST(req({ code: "abc123" })), () => joinTeam],
+    ["solo", () => soloPOST(req()), () => createSoloTeam],
+  ])("%s answers 409 username_required and writes nothing", async (_name, call, store) => {
+    const res = await call();
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "username_required" });
+    expect(store()).not.toHaveBeenCalled();
+    expect(consumeRateLimit).not.toHaveBeenCalled();
+  });
+
+  it("still lets a player with a username through", async () => {
+    getSession.mockResolvedValue(SESSION);
+    createTeam.mockResolvedValue({ ok: true, team: { slug: "red" } });
+    const res = await createPOST(req({ name: "Red" }));
+    expect(res.status).toBe(200);
+    expect(createTeam).toHaveBeenCalledWith(ALICE, "Red");
   });
 });

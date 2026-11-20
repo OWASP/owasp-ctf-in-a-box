@@ -4,14 +4,18 @@
 # Subcommands (run with NO subcommand, or `wizard`, for the guided setup):
 #   wizard    DEFAULT — step-by-step zero-to-scored: inspects state and only
 #             prompts for what's missing. Asks for each value inline (the
-#             bootstrap keys GITHUB_ORG / ADMIN_LOGINS / SCORE_IMAGE, EVENT_URL,
-#             App/OAuth credentials) with instructions + URLs,
+#             bootstrap keys GITHUB_ORG / SCORE_IMAGE, EVENT_URL,
+#             App/OAuth credentials) with instructions + URLs, and generates
+#             the admin claim code (printed once, only its hash is written),
 #             writing them as you go — no editing files by hand between steps.
 #             Guides + verifies each UI-only step. Resumable (safe to re-run).
 #             Ends by OFFERING an optional fly.io deploy (default no).
 #             Orchestrates the subcommands below.
 #   check     verify local prerequisites (gh auth, docker, compose)
-#   secrets   generate .env secret values
+#   secrets   generate .env secret values and the admin claim code
+#   admin-code  write a new ADMIN_CLAIM_CODE_HASH and print its code once — the
+#             lock-out recovery path (ADR 72); the old code stops working once
+#             the app container is recreated with the new hash
 #   org       fork targets, render scoring workflows from the in-repo template
 #             + print install steps, mirror scorer image
 #             (idempotent/re-runnable: every step is skipped once its
@@ -44,8 +48,9 @@
 #                 the secret is read from a hidden prompt, never on argv)
 #
 # Every setting this script reads comes from the env file (.env by default,
-# --out elsewhere): GITHUB_ORG names the event org, ADMIN_LOGINS says who may
-# open /admin, and SCORE_IMAGE being NON-EMPTY is how a box says "this event
+# --out elsewhere): GITHUB_ORG names the event org, ADMIN_CLAIM_CODE_HASH is
+# the SHA-256 of the one-time code that claims the first admin seat at
+# /admin/claim (ADR 72), and SCORE_IMAGE being NON-EMPTY is how a box says "this event
 # runs Secure Development" — with it empty there are no forks to provision, no
 # scorer to mirror and nothing to poll. Which modules run, and which Secure
 # Development targets, are runtime settings in /admin (config v2).
@@ -64,6 +69,8 @@ WORKFLOW_TEMPLATE="$SCRIPT_DIR/../scorer/consumer-workflow.example.yml"
 # below are thin wrappers over it.
 # shellcheck source=scripts/lib/dotenv.sh
 . "$SCRIPT_DIR/../scripts/lib/dotenv.sh"
+# shellcheck source=scripts/lib/claim-code.sh
+. "$SCRIPT_DIR/../scripts/lib/claim-code.sh"
 
 # ANSI colors — only when stdout is a TTY and NO_COLOR is unset (respect the
 # NO_COLOR convention + non-interactive/piped output stays plain for logs/CI).
@@ -544,18 +551,36 @@ doctor_check_sync_app() {
   return $crc
 }
 
-# Check (a) — ADMIN_LOGINS. Always checked, regardless of
-# Secure Development: an event with no admins is broken either way, and the
-# failure (every login 403s on /admin) is otherwise silent until someone
-# tries the panel.
-doctor_check_admin_logins() {
-  local crc=0 admins; admins="$(env_val ADMIN_LOGINS)"
-  if [ -n "$admins" ]; then
-    printf '%s✅ ADMIN_LOGINS: %s%s\n' "$C_GREEN" "$admins" "$C_RESET"
-  else
-    printf '%s❌ ADMIN_LOGINS is empty — nobody can open /admin; set it in .env and restart the app%s\n' \
-      "$C_RED" "$C_RESET"
+# Check (a) — the admin claim-code hash (ADR 72). Always checked, regardless
+# of Secure Development: without a usable hash no bootstrap-code claim works
+# (existing admins and the codes they issue are unaffected), so an unclaimed
+# box 403s every account on /admin, silently until someone tries the panel,
+# and a claimed one has no lock-out recovery code. The value is never
+# printed: a pasted code IS the secret.
+# This cannot see Redis, so it cannot say whether the code was claimed.
+doctor_check_admin_claim() {
+  local crc=0 hash url
+  hash="$(env_val ADMIN_CLAIM_CODE_HASH)"
+  url="$(env_url)"
+  if claim_code_is_hash "$hash"; then
+    printf '%s✅ ADMIN_CLAIM_CODE_HASH: set — claim it at %s/admin/claim if nobody has%s\n' \
+      "$C_GREEN" "${url:-<EVENT_URL>}" "$C_RESET"
+  elif [ -z "$hash" ]; then
+    printf '%s❌ ADMIN_CLAIM_CODE_HASH is not set — nobody can claim /admin with a bootstrap code; run %s%s\n' \
+      "$C_RED" "$(admin_code_cmd)" "$C_RESET"
     crc=1
+  elif claim_code_normalize "$hash" >/dev/null; then
+    printf '%s❌ ADMIN_CLAIM_CODE_HASH looks like the code itself, not its hash — run %s for a fresh code%s\n' \
+      "$C_RED" "$(admin_code_cmd)" "$C_RESET"
+    crc=1
+  else
+    printf '%s❌ ADMIN_CLAIM_CODE_HASH is not a 64-hex SHA-256 — run %s%s\n' \
+      "$C_RED" "$(admin_code_cmd)" "$C_RESET"
+    crc=1
+  fi
+  if env_has ADMIN_LOGINS; then
+    printf '%s⚠️  ADMIN_LOGINS is ignored — admins are kit accounts that claimed a code at /admin/claim; delete the line from %s%s\n' \
+      "$C_YELLOW" "${OUT:-.env}" "$C_RESET"
   fi
   return $crc
 }
@@ -836,7 +861,7 @@ cmd_doctor() {
   # leaves for the fork-visibility check.
   local doctor_launch=unknown
 
-  doctor_check_admin_logins || rc=1
+  doctor_check_admin_claim || rc=1
   doctor_check_github_org "$org" || rc=1
   doctor_check_redis_password
   doctor_check_launch
@@ -1110,7 +1135,7 @@ mirror_image() {
   arch="$(docker image inspect --format '{{.Architecture}}' "$src" 2>/dev/null || true)"
   if [ "$arch" != "amd64" ]; then
     echo "ERROR: $src is $arch, not amd64 — GitHub runners need linux/amd64." >&2
-    echo "Rebuild + push amd64:  docker buildx build --platform linux/amd64 -t $dest --push scorer/" >&2
+    echo "Rebuild + push amd64:  docker buildx build --platform linux/amd64 --provenance=false --sbom=false -t $dest --push scorer/" >&2
     return 1
   fi
   docker tag "$src" "$dest"
@@ -1131,11 +1156,18 @@ cmd_check() {
 }
 
 cmd_secrets() {
-  local out="${OUT:-.env}"
+  local out="${OUT:-.env}" code hash recover
   # `-e || -L`, not `-f`: `-f` follows symlinks, so a dangling link at $out
   # would pass this check and the redirect below would write the secrets to
   # wherever the link points.
   if [ -e "$out" ] || [ -L "$out" ]; then echo "$out exists; refusing to overwrite" >&2; exit 1; fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "DRY-RUN: would write $out with fresh secrets and a new ADMIN_CLAIM_CODE_HASH, and print its code once"
+    return 0
+  fi
+  code="$(claim_code_new)" || exit 1
+  hash="$(claim_code_hash "$code")" || exit 1
+  recover="$(admin_code_cmd "$out")"
   # Owner-only from the first byte, and created exclusively: `umask 077` so a
   # plain redirect cannot land 0644 under the usual 022 umask, and `noclobber`
   # so bash opens with O_EXCL — which fails on any pre-existing path, symlink
@@ -1152,30 +1184,88 @@ cmd_secrets() {
     # not optional for a working stack. Only srh ever uses it; no other
     # service is given it, and no other service can reach redis.
     echo "REDIS_PASSWORD=$(openssl rand -hex 24)"
+    echo "# GitHub sign-in: offered only when both the id and secret are set."
+    echo "# Callback URL: <EVENT_URL>/api/auth/callback/github"
     echo "GITHUB_CLIENT_ID="
     echo "GITHUB_CLIENT_SECRET="
     echo "GITHUB_APP_ID="
     echo "GITHUB_APP_PRIVATE_KEY="
     echo "GITHUB_APP_INSTALLATION_ID="
     echo "EVENT_URL=http://localhost"
-    # GITHUB_ORG and ADMIN_LOGINS are emitted even though they are empty:
-    # a key that is absent is a key nobody knows to fill in, and both fail
-    # CLOSED — no org means nothing to poll or fork, and no admin means a
-    # /admin nobody can open.
+    # GITHUB_ORG is emitted even though it is empty: a key that is absent is
+    # a key nobody knows to fill in, and it fails CLOSED — no org means
+    # nothing to poll or fork.
     echo "# GITHUB_ORG: the disposable per-event GitHub org. The app links forks"
     echo "# there, sync polls its repos, and ctf-setup provisions it."
     echo "GITHUB_ORG="
-    echo "# ADMIN_LOGINS: comma-separated GitHub logins allowed into /admin."
-    echo "# EMPTY LOCKS EVERYONE OUT — /admin forbids every login (fail closed)."
-    echo "ADMIN_LOGINS="
+    echo "# ADMIN_CLAIM_CODE_HASH: SHA-256 of the one-time admin claim code printed"
+    echo "# when this file was written — never the code itself. Claim the first"
+    echo "# admin seat at /admin/claim. Lost it? $recover"
+    echo "ADMIN_CLAIM_CODE_HASH=$hash"
     echo "# SCORE_IMAGE: your own scorer image, built from scorer/ (docs/scorer.md),"
     echo "# e.g. ghcr.io/<your-event-org>/score:latest. No default — the upstream"
     echo "# image is private and the kit does not assume access to it. NON-EMPTY"
     echo "# is also how this box says the event runs Secure Development at all."
-    echo "SCORE_IMAGE="
+    echo "# Left unset on purpose: the setup wizard asks and writes it (an empty"
+    echo "# SCORE_IMAGE= means no Secure Development). Setting up by hand? Add it:"
+    echo "# SCORE_IMAGE=ghcr.io/<your-event-org>/score:latest"
   } > "$out"
   )
-  echo "wrote $out — fill in GITHUB_ORG, ADMIN_LOGINS, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY, SCORE_IMAGE"
+  echo "wrote $out — fill in GITHUB_ORG, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY (the GitHub keys are needed only with SCORE_IMAGE, which runs Secure Development; without it, GitHub sign-in is optional)"
+  claim_code_announce "$code" "<EVENT_URL>" "$recover"
+}
+
+# The recovery command for the env file in use: `--out` is named (shell-quoted)
+# whenever it is not the default, because a bare `admin-code` rotates .env —
+# another deployment's code, or no file at all.
+admin_code_cmd() {
+  local out="${1:-${OUT:-.env}}"
+  if [ "$out" = ".env" ]; then
+    printf '%s' "./setup/ctf-setup.sh admin-code"
+  else
+    printf '%s' "./setup/ctf-setup.sh admin-code --out $(printf '%q' "$out")"
+  fi
+}
+
+# rotate_claim_code <env-file> — generate a code, write only its hash, and
+# print the code once. Called only off --dry-run.
+rotate_claim_code() {
+  local out="$1" code hash url
+  code="$(claim_code_new)" || return 1
+  hash="$(claim_code_hash "$code")" || return 1
+  if ! set_env_var "$out" ADMIN_CLAIM_CODE_HASH "$hash"; then
+    echo "could not write ADMIN_CLAIM_CODE_HASH to $out — nothing changed, and the current code still works" >&2
+    return 1
+  fi
+  url="$(env_url)"
+  claim_code_announce "$code" "${url:-http://localhost}" "$(admin_code_cmd "$out")"
+}
+
+# `admin-code`: always rotates (ADR 72). The lock-out recovery path: the new
+# code works whether or not admins exist, and the old one stops matching the
+# moment the app reads the new hash.
+cmd_admin_code() {
+  local out="${OUT:-.env}"
+  require_env_file
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "DRY-RUN: would write a new ADMIN_CLAIM_CODE_HASH to $out and print its code once"
+    return 0
+  fi
+  rotate_claim_code "$out" || exit 1
+  # Compose lets the shell environment win over the env file, so a hash still
+  # exported in this shell would keep the old code live and the new one dead.
+  # `env -u` drops it for that one command (BSD and GNU env both have -u).
+  if [ "${ADMIN_CLAIM_CODE_HASH+x}" = x ]; then
+    echo "NOTE: ADMIN_CLAIM_CODE_HASH is exported in this shell, and compose would use it"
+    echo "      over $out. Run 'unset ADMIN_CLAIM_CODE_HASH', or use the command below as printed."
+  fi
+  echo "Recreate the app container to use it (a plain restart keeps the old environment):"
+  if [ "$out" = ".env" ]; then
+    echo "  env -u ADMIN_CLAIM_CODE_HASH docker compose up -d --no-deps --force-recreate app"
+  else
+    # Compose interpolates the project .env unless told otherwise.
+    echo "  env -u ADMIN_CLAIM_CODE_HASH docker compose --env-file $(printf '%q' "$out") up -d --no-deps --force-recreate app"
+  fi
 }
 
 # `org`: provision every target's fork — fork, ctf branch, branch
@@ -1603,12 +1693,23 @@ open_url() {
 
 # Set (or replace) KEY=value in an env file. base64 values contain / + =, so
 # we drop-and-append rather than sed the value in place.
+#
+# Every step checks its own status and returns 1 on failure, removing the
+# temp copy: callers run this under `||` or `if !`, where `set -e` does not
+# apply, so an unchecked failed `mv` would read as success. The temp file is
+# made beside the env file, so a failure never leaves a copy of every secret
+# in $TMPDIR.
 set_env_var() {
-  local file="$1" key="$2" val="$3" tmp
-  tmp="$(mktemp)"
-  grep -v "^${key}=" "$file" > "$tmp" || true
-  printf '%s=%s\n' "$key" "$val" >> "$tmp"
-  mv "$tmp" "$file"
+  local file="$1" key="$2" val="$3" tmp rc
+  tmp="$(mktemp "${file}.tmp.XXXXXX" 2>/dev/null)" || return 1
+  # grep exits 1 when it selects no line (an empty file, or only this key),
+  # which is fine; 2 is a read error, which must not become an empty file.
+  if grep -v "^${key}=" "$file" > "$tmp"; then :; else
+    rc=$?
+    if [ "$rc" -ne 1 ]; then rm -f "$tmp"; return 1; fi
+  fi
+  printf '%s=%s\n' "$key" "$val" >> "$tmp" || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$file" || { rm -f "$tmp"; return 1; }
 }
 
 # app-manifest: render a self-submitting HTML form carrying app-manifest.json
@@ -1829,24 +1930,6 @@ wiz_ask() {
   printf -v "$__var" '%s' "$__reply"
 }
 
-# Normalise a list typed at a prompt into the comma-separated form the app
-# parses: "alice, Bob  carol" -> "alice,Bob,carol". Spaces AND commas are both
-# separators, because organizers type both — and ADMIN_LOGINS is split on
-# commas ONLY (apps/web/src/lib/admin-logins.ts), so "alice bob" left as typed
-# would be one junk entry that matches nobody and an /admin that forbids them
-# both. Prints nothing for an empty or separators-only answer, which is what
-# makes the caller's "at least one admin" refusal fire.
-#
-# No spaces after the commas: this value is written to an env file that
-# docker compose interpolates, where the shape stays a plain single token.
-csv_of() {
-  local out="" x
-  for x in $(printf '%s' "$1" | tr ',' ' '); do
-    out="$out${out:+,}$x"
-  done
-  printf '%s' "$out"
-}
-
 # Every target this build can provision, space-separated, read from
 # targets.tsv — the same file prov_field/prov_repo_name validate against.
 # Deliberately NOT a second hardcoded list: a target added to the TSV and not
@@ -1885,7 +1968,8 @@ require_targets() {
 # on) for the later steps, which must not re-read the file under --dry-run
 # where nothing was written.
 #
-# Three keys, and only three: GITHUB_ORG, ADMIN_LOGINS and SCORE_IMAGE.
+# Two keys, plus EVENT_URL: GITHUB_ORG and SCORE_IMAGE. The admin claim code
+# is step 3's other half (wiz_claim_code).
 # Everything else an event needs — the event's name and branding, which
 # modules run, which Secure Development targets run, the schedule — is a
 # RUNTIME setting in /admin (config v2), so it is neither asked here nor
@@ -1895,31 +1979,14 @@ require_targets() {
 # questions with piped answers instead of walking nine steps to reach one
 # write. Every answer defaults to what the file already carries: re-running
 # the wizard is the documented recovery path, and an Enter-through must not
-# switch the org, drop an admin or turn Secure Development off.
+# switch the org or turn Secure Development off.
 wiz_event_basics() {
-  local out="$1" ev_org ev_admins ev_score ev_url adm_default sd_default
+  local out="$1" ev_org ev_score ev_url sd_default
   echo "  Answer a few questions to write $out (Enter accepts the [default])."
   echo "  The event's name, the modules that run and the Secure Development"
   echo "  targets are runtime settings — set them in /admin once it is up."
 
   wiz_ask ev_org "GitHub org (disposable per-event org)" "$(env_val GITHUB_ORG)"
-
-  # The login running the wizard, so Enter accepts and the empty-admins path
-  # disappears for the common case. NOT under --dry-run: that makes zero gh
-  # calls (AGENTS.md), which is exactly why the refusal below is reachable.
-  adm_default="$(env_val ADMIN_LOGINS)"
-  if [ -z "$adm_default" ] && [ "$DRY_RUN" -ne 1 ]; then
-    adm_default="$(gh api user --jq .login 2>/dev/null || true)"
-  fi
-  wiz_ask ev_admins "Admin GitHub login(s), comma-separated" "$adm_default"
-  ev_admins="$(csv_of "$ev_admins")"
-  # Fail CLOSED, and say so, rather than writing the lockout: an empty
-  # ADMIN_LOGINS makes /admin forbid EVERY login (admin-auth.ts), which is
-  # silent until an organizer tries to open the panel mid-event.
-  if [ -z "$ev_admins" ]; then
-    echo "  refusing to write $out: at least one admin login is required — /admin would forbid everyone" >&2
-    return 1
-  fi
 
   # The one setup-time fact left about Secure Development: whether its
   # containers run at all. SCORE_IMAGE non-empty IS that answer, everywhere
@@ -1960,14 +2027,13 @@ wiz_event_basics() {
   fi
 
   if [ "$DRY_RUN" -eq 1 ]; then
-    echo "  DRY-RUN: would write GITHUB_ORG, ADMIN_LOGINS and SCORE_IMAGE to $out"
+    echo "  DRY-RUN: would write GITHUB_ORG and SCORE_IMAGE to $out"
     [ -z "$ev_url" ] || echo "  DRY-RUN: would set EVENT_URL=$ev_url in $out"
   else
     set_env_var "$out" GITHUB_ORG "$ev_org"
-    set_env_var "$out" ADMIN_LOGINS "$ev_admins"
     set_env_var "$out" SCORE_IMAGE "$ev_score"
     [ -z "$ev_url" ] || set_env_var "$out" EVENT_URL "$ev_url"
-    echo "  ✅ wrote GITHUB_ORG, ADMIN_LOGINS and SCORE_IMAGE to $out"
+    echo "  ✅ wrote GITHUB_ORG and SCORE_IMAGE to $out"
   fi
   WIZ_SCORE_IMAGE="$ev_score"
 }
@@ -2216,18 +2282,43 @@ wiz_secret_env() {
   fi
 }
 
+# Step 3's other half: the admin claim code (ADR 72). Generated when the file
+# has no valid hash; otherwise kept, and rotated only on an explicit yes
+# (default No, and ask_yn answers no under --dry-run). `fresh`=1 is a first
+# run whose step 2 just wrote a code, so there is nothing to offer.
+wiz_claim_code() {
+  local out="$1" fresh="$2" have
+  have="$(env_val ADMIN_CLAIM_CODE_HASH)"
+  if claim_code_is_hash "$have"; then
+    echo "  ✅ admin claim code: set"
+    if [ "$fresh" -eq 1 ]; then return 0; fi
+    if ask_yn "  Issue a new admin claim code? (the current one stops working)" N; then
+      rotate_claim_code "$out" || return 1
+    fi
+    return 0
+  fi
+  if [ -n "$have" ]; then
+    echo "  ⚠️  ADMIN_CLAIM_CODE_HASH in $out is not a SHA-256 — replacing it with a new code"
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "  DRY-RUN: would write a new ADMIN_CLAIM_CODE_HASH to $out and print its code once"
+    return 0
+  fi
+  rotate_claim_code "$out"
+}
+
 # Step 3 of the wizard: Event basics — the whole of what this wizard writes.
 #
-# Already answered when there is an admin (the one key every event needs;
-# empty makes /admin forbid everyone), the Secure Development question has
-# been PUT at all (the SCORE_IMAGE line exists, empty or not — `secrets`
-# writes it empty, so only a hand-rolled file lacks it), and, if that
-# answer was yes, an org to fork into. An app-only event legitimately has
-# no GITHUB_ORG, so demanding one here would re-ask it every single run.
+# Already answered when the Secure Development question has been PUT at all
+# (a SCORE_IMAGE line exists, empty or not), and, if that answer was yes, an
+# org to fork into. `secrets` writes no SCORE_IMAGE line, only a comment, so
+# a file whose first wizard run stopped before this step still reads as
+# unanswered and is asked again. An app-only event legitimately has no
+# GITHUB_ORG, so demanding one here would re-ask it every single run.
 wiz_basics() {
   local out="$1" url_asked="$2" basics_done=0
   wiz_step "3/9  Event basics ($out)"
-  if [ -n "$(env_val ADMIN_LOGINS)" ] && env_has SCORE_IMAGE; then
+  if env_has SCORE_IMAGE; then
     if ! runs_secdev || [ -n "$(env_val GITHUB_ORG)" ]; then basics_done=1; fi
   fi
   if [ "$basics_done" -eq 1 ]; then
@@ -2236,7 +2327,7 @@ wiz_basics() {
     # Enter-through changing it. Turning Secure Development ON later is an
     # edit to this file, not a re-run, so say where the switch is.
     local have_org; have_org="$(env_val GITHUB_ORG)"
-    echo "  ✅ $out (org: ${have_org:-<none>}, admins: $(env_val ADMIN_LOGINS))"
+    echo "  ✅ $out (org: ${have_org:-<none>})"
     if runs_secdev; then
       echo "     Secure Development: on (SCORE_IMAGE=$(env_val SCORE_IMAGE))"
     else
@@ -2245,6 +2336,10 @@ wiz_basics() {
     WIZ_SCORE_IMAGE="$(env_val SCORE_IMAGE)"
   elif ! wiz_event_basics "$out" "$url_asked"; then
     echo "  Fix that and re-run the wizard — it resumes." >&2
+    exit 1
+  fi
+  if ! wiz_claim_code "$out" "$url_asked"; then
+    echo "  Could not write the admin claim code — fix that and re-run the wizard." >&2
     exit 1
   fi
 }
@@ -2306,18 +2401,19 @@ wiz_sync_app() {
 
 # Step 6 of the wizard: sign-in OAuth app.
 wiz_oauth_app() {
-  local org="$1"
+  local org="$1" secdev="${2:-0}"
   wiz_step "6/9  Sign-in OAuth app"
-  if [ -n "$(env_val GITHUB_CLIENT_ID)" ] && [ -n "$(env_val GITHUB_CLIENT_SECRET)" ]; then
+  if [ "$secdev" -ne 1 ]; then
+    echo "  ⏭  GitHub sign-in is optional without Secure Development — skipped"
+  elif [ -n "$(env_val GITHUB_CLIENT_ID)" ] && [ -n "$(env_val GITHUB_CLIENT_SECRET)" ]; then
     echo "  ✅ OAuth app configured"
   elif [ "$DRY_RUN" -eq 1 ]; then
     echo "  DRY-RUN: would open the OAuth-app page, then prompt Client ID + hidden secret"
   else
-    # Every event needs sign-in, Secure Development or not — but `oauth-app`
-    # opens the ORG's registration page, and an app-only event has no org. It
-    # would exit 1 naming GITHUB_ORG and take the wizard down with it, so
-    # point at the personal-account page instead (registering it there is
-    # already a documented option).
+    # `oauth-app` opens the ORG's registration page, and a Secure Development
+    # event with no org would exit 1 naming GITHUB_ORG and take the wizard
+    # down with it, so point at the personal-account page instead
+    # (registering it there is already a documented option).
     if [ -z "$org" ]; then
       echo "  No event org, so register the OAuth app on your own account:"
       echo "    https://github.com/settings/applications/new"
@@ -2415,9 +2511,9 @@ wiz_ui_only_steps() {
 # to pull, and asking for one would fail the bring-up outright. Poll is the
 # transport (#377, ADR 56), so `secdev` is the only answer.
 #
-# No build-arg: the app reads GITHUB_ORG and ADMIN_LOGINS from the env file
-# at RUN time (config v2) — nothing is baked into the image, so
-# changing an admin is an edit and a restart, not a rebuild.
+# No build-arg: the app reads GITHUB_ORG and ADMIN_CLAIM_CODE_HASH from the
+# env file at RUN time (config v2) — nothing is baked into the image, so a new
+# claim code is an edit and a container recreate, not a rebuild.
 wiz_bring_up() {
   local secdev="$1"
   wiz_step "8/9  Bring the containers up"
@@ -2459,11 +2555,12 @@ wiz_done() {
   echo
   open_at="$(env_url)"
   if [ -n "$open_at" ]; then
-    echo "== Done. Open $open_at, sign in, and check /admin."
+    echo "== Done. Open $open_at/admin/claim, sign in, and enter the admin claim code."
   else
-    echo "== Done. Set EVENT_URL in $out, then open it, sign in and check /admin."
+    echo "== Done. Set EVENT_URL in $out, then open <EVENT_URL>/admin/claim, sign in and enter the admin claim code."
   fi
-  echo "   $out is the whole bootstrap plane: GITHUB_ORG, ADMIN_LOGINS, SCORE_IMAGE,"
+  echo "   Lost the code? $(admin_code_cmd "$out") prints a new one."
+  echo "   $out is the whole bootstrap plane: GITHUB_ORG, ADMIN_CLAIM_CODE_HASH, SCORE_IMAGE,"
   echo "   EVENT_URL and the secrets. Everything else — which modules run, the event's"
   echo "   name and branding, the schedule, hint policy, caps — is set in /admin."
   echo "   Re-run 'ctf-setup.sh doctor' anytime to re-verify provisioning."
@@ -2510,7 +2607,7 @@ cmd_wizard() {
 
   wiz_scorer_image "$secdev"
   wiz_sync_app "$secdev"
-  wiz_oauth_app "$org"
+  wiz_oauth_app "$org" "$secdev"
   wiz_org "$org" "$secdev"
   wiz_ui_only_steps "$org" "$secdev" "$provisioned"
   wiz_bring_up "$secdev"
@@ -2531,7 +2628,7 @@ cmd_wizard() {
 # script's own shell: a refusal inside a `$(env_val ...)` stops only that
 # subshell, and a caller such as `[ -n "$(env_val X)" ]` would read it as
 # empty. `check` reads no env file, so a broken one does not block it.
-ENV_KEYS="SCORE_IMAGE GITHUB_ORG ADMIN_LOGINS EVENT_URL GITHUB_APP_ID
+ENV_KEYS="SCORE_IMAGE GITHUB_ORG ADMIN_CLAIM_CODE_HASH EVENT_URL GITHUB_APP_ID
 GITHUB_APP_PRIVATE_KEY GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET"
 if [ "$CMD" != "__selftest" ]; then
   if [ "$CMD" != check ]; then
@@ -2542,6 +2639,7 @@ if [ "$CMD" != "__selftest" ]; then
     ""|wizard) cmd_wizard ;;
     check) cmd_check ;;
     secrets) cmd_secrets ;;
+    admin-code) cmd_admin_code ;;
     org) cmd_org ;;
     render) cmd_render ;;
     upgrade) cmd_upgrade ;;
@@ -2553,7 +2651,7 @@ if [ "$CMD" != "__selftest" ]; then
     app-config) cmd_app_config ;;
     oauth-app) cmd_oauth_app ;;
     oauth-config) cmd_oauth_config ;;
-    *) echo "usage: ctf-setup.sh [wizard|check|secrets|org|render|upgrade|teardown|doctor|private|launch|app-manifest|app-config|oauth-app|oauth-config] [--dry-run] [--out .env] [--app-id N] [--pem path] [--installation-id N] [--client-id ID]" >&2
+    *) echo "usage: ctf-setup.sh [wizard|check|secrets|admin-code|org|render|upgrade|teardown|doctor|private|launch|app-manifest|app-config|oauth-app|oauth-config] [--dry-run] [--out .env] [--app-id N] [--pem path] [--installation-id N] [--client-id ID]" >&2
        echo "  run with no subcommand (or 'wizard') for the guided step-by-step setup" >&2; exit 2 ;;
   esac
 fi

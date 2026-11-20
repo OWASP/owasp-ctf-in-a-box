@@ -2,8 +2,7 @@
 // added just for this test. AdminModuleSetup is purely presentational — every
 // bit of state it shows (the module's setup content, the live counts) arrives
 // as props — so `renderToStaticMarkup` sees exactly what an organizer sees,
-// in whichever state the test hands it. Same pattern as
-// admin-ai-integration.test.tsx's `AiIntegrationPanel`.
+// in whichever state the test hands it.
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ModuleSetupContent, SetupStep } from "@/lib/modules";
@@ -181,7 +180,7 @@ describe("challenges the board does not render", () => {
   });
 
   it("warns in the panel, in the amber it uses for unfinished work", () => {
-    const html = renderToStaticMarkup(<AdminModuleSetup title="AI" setup={setup} inventory={{ items: 5, categories: 1, unlisted: 3 }} />);
+    const html = renderToStaticMarkup(<AdminModuleSetup title="Jeopardy" setup={setup} inventory={{ items: 5, categories: 1, unlisted: 3 }} />);
     expect(html).toContain("3 challenges are in a category that is not in the list below");
     expect(html).toContain("contestants never see them");
     // The STATUS LINE is amber, not green: a green "setup complete" sitting

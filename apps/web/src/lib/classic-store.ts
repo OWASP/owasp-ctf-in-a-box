@@ -39,6 +39,7 @@ import { isChallengeVisible, isReleaseInstant } from "@/lib/classic-release";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import { parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
+import { ANNOUNCE_FIRST_KEY } from "@/lib/announce/keys";
 import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 import {
   CLASSIC_CHALLENGES_KEY as CHALLENGES_KEY,
@@ -92,11 +93,11 @@ import {
  *                                 against.
  *   ctf:classic:categories       string, JSON array of category names in the
  *                                 organizer's chosen display order.
- *   ctf:classic:solves:<login>   hash, id -> JSON {points, at} — records ONLY
+ *   ctf:classic:solves:<playerId>   hash, id -> JSON {points, at} — records ONLY
  *                                 solves. Points are captured at solve time,
  *                                 so a later re-pricing of a challenge never
  *                                 rewrites history.
- *   ctf:classic:attempts:<login> hash, id -> JSON {attempts, firstAt, lastAt, lastAtMs}
+ *   ctf:classic:attempts:<playerId> hash, id -> JSON {attempts, firstAt, lastAt, lastAtMs}
  *        firstAt is the FIRST submission's time and is carried forward across
  *        rewrites; absent on rows written before it existed.
  *                                 — every submission, right or wrong; the
@@ -149,7 +150,7 @@ import {
 // Key names/builders live in ./classic-keys (a dependency-free module) rather
 // than as local consts here — see classic-keys.ts's header comment for why.
 // POINTS_KEY/SOLVED_KEY/SOLVECOUNT_KEY are running totals, updated atomically
-// by SUBMIT_SCRIPT alongside the per-login solve row, so a leaderboard overlay
+// by SUBMIT_SCRIPT alongside the per-player solve row, so a leaderboard overlay
 // costs one HGETALL each regardless of board size.
 
 /** Default seconds a login must wait between submissions on the SAME
@@ -811,7 +812,7 @@ export async function importBundle(bundle: ClassicBundle): Promise<ImportSummary
   // write pipeline would replace the box's whole category list with only the
   // bundle's — and re-spell every stored challenge's category to the bundle's
   // casing, hiding them from the board's exact-match filter. A failed HKEYS
-  // would report every row `created`. Same guard as ai-store's.
+  // would report every row `created`. Same guard as quiz-store's.
   const failedRead = [idsRes, categoriesRes, storiesRes].find((r) => r?.error);
   if (failedRead) throw new Error(`Upstash read failed before import: ${failedRead.error}`);
 
@@ -992,14 +993,14 @@ export async function exportBundle(): Promise<ClassicBundle> {
  *  the challenge (contestants stop seeing it, and it cannot be
  *  submitted against — SUBMIT_SCRIPT's step 1 returns `missing` without the
  *  `flagnorm` row), but it deliberately does NOT touch contestant history.
- *  `ctf:classic:solves:<login>` / `ctf:classic:attempts:<login>` rows for the
+ *  `ctf:classic:solves:<playerId>` / `ctf:classic:attempts:<playerId>` rows for the
  *  deleted id stay put, and the aggregate counters are not decremented — so
  *  points already banked for this challenge REMAIN on the leaderboard.
  *  Clearing banked points is the master reset's job (admin-store's
  *  `resetEvent`).
  *
  *  That's a deliberate contract, mirroring `deleteQuestion`: cascading a
- *  delete across every per-login hash plus aggregate decrements is a fan-out
+ *  delete across every per-player hash plus aggregate decrements is a fan-out
  *  destructive write with no atomic story and no undo, and retiring a
  *  challenge is a far more common need than un-awarding points for it.
  *  Because the aggregates outlive the challenge, a login can hold more solves
@@ -1075,7 +1076,7 @@ function extractAttempt(v: Record<string, unknown>): Attempt | null {
 }
 
 // `parseJsonValue` / `parseHashEntries` / `parseCounterHash` come from
-// lib/redis-decode.ts — the one copy quiz, classic and ai share (#504 M13).
+// lib/redis-decode.ts — the one copy quiz and classic share (#504 M13).
 
 export type ViewerClassic = {
   /** Solves only, keyed by challenge id. Points are what the challenge was
@@ -1129,7 +1130,7 @@ export async function getSolveCounts(): Promise<Map<string, number>> {
 /** One login's (or one team's) classic aggregate, as consumed by the
  *  leaderboard overlay. */
 /** `itemIds` is present only on the TEAM path, whose fold already dedupes by
- *  item id — the aggregate per-login path has running counters with no memory
+ *  item id — the aggregate per-player path has running counters with no memory
  *  of which items produced them. Where it is present a caller can union it
  *  with the live catalogue for a denominator that survives an organizer
  *  deleting a solved item; where it is absent the caller clamps. */
@@ -1138,7 +1139,7 @@ export type ClassicTotal = { points: number; solved: number; lastAt: string | nu
 /** Per-login classic totals for every login that has solved at least one
  *  challenge — three HGETALLs in one pipeline (`ctf:classic:points`,
  *  `ctf:classic:solved`, `ctf:classic:lastAt`), maintained atomically by
- *  SUBMIT_SCRIPT alongside the per-login solve row. The cost does not grow
+ *  SUBMIT_SCRIPT alongside the per-player solve row. The cost does not grow
  *  with the board.
  *
  *  `lastAt` is the login's latest award time, the leaderboard's
@@ -1172,7 +1173,7 @@ export async function getClassicTotals(): Promise<Map<string, ClassicTotal>> {
  *  teammates both solved. The aggregates can't serve a team: they're running
  *  totals with no memory of WHICH challenges contributed, so there is no way
  *  to dedupe from them. Instead this reads each member's
- *  `ctf:classic:solves:<login>` hash directly and dedupes by challenge id,
+ *  `ctf:classic:solves:<playerId>` hash directly and dedupes by challenge id,
  *  keeping the EARLIEST solve's stored points for any challenge two or more
  *  members hold (a later solve by a teammate — or a since-changed price
  *  recorded on someone else's row — never changes what the team already
@@ -1350,16 +1351,16 @@ if not dry and classicHidden(cRaw) then return {'missing'} end
 if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then return {'already'} end
 -- STORY LOCK (#463): ARGV[9] names this step's prerequisite ("" when the
 -- challenge is not a later story step). It is open only if some TEAMMATE
--- holds it, and made that solve while on this team (#602): KEYS[9..] are
+-- holds it, and made that solve while on this team (#602): KEYS[10..] are
 -- (solves hash, user record) pairs, ARGV[10] the viewer's team slug. See
--- storyLockLua in classic-team.ts. (KEYS[8] is the lastAt hash, #522: never
--- part of this loop.)
+-- storyLockLua in classic-team.ts. (KEYS[8] is the lastAt hash, #522; KEYS[9]
+-- is the first-solver hash: never part of this loop.)
 -- Checked FIRST, before the flag hash is read and before any read or write
 -- of attempts: a locked step touches no secret, spends no attempt and cannot
 -- be used to test a flag. The store reports it exactly like an unknown
 -- challenge (no oracle). A dry-run preview skips it.
 if not dry and ARGV[9] and ARGV[9] ~= '' then
-${storyLockLua(9, 9, 10)}
+${storyLockLua(10, 9, 10)}
   if not open then return {'locked'} end
 end
 local target = redis.call('HGET', KEYS[3], ARGV[1])
@@ -1369,7 +1370,7 @@ local cooldownMs = tonumber(ARGV[5])
 local nowMs = tonumber(ARGV[6])
 
 -- The shared attempt-row read (#504 M13) — attempts, lastAtMs and firstAt —
--- declared here as ATTEMPT_ROW_LUA, so quiz's and ai's scripts read the same
+-- declared here as ATTEMPT_ROW_LUA, so quiz's script reads the same
 -- three fields out of the same row shape.
 ${ATTEMPT_ROW_LUA}
 
@@ -1416,6 +1417,10 @@ local prevAt = redis.call('HGET', KEYS[8], ARGV[4])
 if not prevAt or not string.match(prevAt, '^%d%d%d%d%-%d%d%-%d%dT') or prevAt < ARGV[3] then
   redis.call('HSET', KEYS[8], ARGV[4], ARGV[3])
 end
+-- Name the first SOLVER in the same atomic award that banks the solve. The
+-- announcer reads this record instead of racing its own claim, so a later
+-- notification can never hand first blood to a slower solver.
+redis.call('HSETNX', KEYS[9], ARGV[11], cjson.encode({playerId = ARGV[4], at = ARGV[3]}))
 return {'correct', tostring(points)}`;
 
 export type SubmitResult =
@@ -1551,7 +1556,8 @@ export async function submitFlag(
         SOLVECOUNT_KEY, // KEYS[6]
         SOLVED_KEY, // KEYS[7]
         LAST_AT_KEY, // KEYS[8] — login -> latest award time
-        ...lockKeys, // KEYS[9..] — (solves hash, user record) per teammate, for the story lock
+        ANNOUNCE_FIRST_KEY, // KEYS[9] — first-solver record for the announcer
+        ...lockKeys, // KEYS[10..] — (solves hash, user record) per teammate, for the story lock
       ],
       // BOTH comparison forms go in, and the script picks. Normalizing on this
       // side is non-negotiable (Lua's string.lower is ASCII-only — see the
@@ -1569,6 +1575,7 @@ export async function submitFlag(
         dryRun ? "1" : "0", // ARGV[8] — dry run: grade, write nothing
         prereq, // ARGV[9] — story prerequisite, "" when none
         lockTeam, // ARGV[10] — the viewer's team slug, "" for a team of one
+        `classic:${challengeId}`, // ARGV[11] — first-solver ledger field
       ],
     );
   } catch (err) {

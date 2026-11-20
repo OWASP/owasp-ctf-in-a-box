@@ -114,9 +114,9 @@ describe("getEnabledModuleIds", () => {
 
 describe("isModuleLive", () => {
   it("answers off the stored set", async () => {
-    mocks.getAdminSettings.mockResolvedValue({ enabledModuleIds: ["ai"] });
+    mocks.getAdminSettings.mockResolvedValue({ enabledModuleIds: ["classic"] });
     const m = await load({ SCORE_IMAGE: undefined });
-    expect(await m.isModuleLive("ai")).toBe(true);
+    expect(await m.isModuleLive("classic")).toBe(true);
     expect(await m.isModuleLive("quiz")).toBe(false);
   });
 });

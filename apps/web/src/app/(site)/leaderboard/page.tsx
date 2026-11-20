@@ -13,7 +13,7 @@ import { getLeaderboardSourceMode } from "@/lib/leaderboard/source";
 import { redirectIfNotLaunched } from "@/lib/launch";
 import { getFoldedLeaderboard } from "@/lib/leaderboard/folded";
 import { formatRelativeTime } from "@/lib/relative-time";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import DisplayBoard from "@/components/display-board";
 import { resolvePhase } from "@/components/phase-line";
 import { completedCount } from "@/lib/leaderboard/rank";
@@ -44,12 +44,12 @@ export async function generateMetadata(): Promise<Metadata> {
 // true on every event including a secure-development-only one.
 //
 // The sign-in clause renders only for the visitor it applies to: telling a
-// signed-in contestant to "Sign in with GitHub" reads as broken state
+// signed-in contestant to "Sign in" reads as broken state
 // detection (issue #200, 3.1 — the same fix the hint banner got). The page
 // already loads the session for the YOU-row highlight, so this costs
 // nothing.
 const BASE_DESCRIPTION = "Live contestant rankings from every enabled challenge board.";
-const SIGNED_OUT_CLAUSE = " Sign in with GitHub to highlight your own row and unlock your profile.";
+const SIGNED_OUT_CLAUSE = " Sign in to highlight your own row and unlock your profile.";
 
 /**
  * The public standings page — the interactive board by default, the
@@ -70,13 +70,13 @@ export default async function LeaderboardPage({
   // module series → hint penalties — is identical for every viewer, so it is
   // memoized across requests for 10 s in folded.ts (issue #444), which also
   // owns the stage-order commentary. The one per-viewer input on this page
-  // is the "you" highlight, and <Leaderboard> applies that from viewerLogin.
+  // is the "you" highlight, and <Leaderboard> applies that from viewerId.
   // `data` is shared with every concurrent request: read it, never mutate it
   // — the spreads below build new objects.
   // #464 pre-launch lock, before the board is read: standings (and the
   // projector surface) are module content. Admins get through as a preview.
-  const session = await auth.api.getSession({ headers: await headers() });
-  const launch = await redirectIfNotLaunched((session?.user as { login?: string } | undefined)?.login);
+  const player = await getPlayer(await headers());
+  const launch = await redirectIfNotLaunched(player?.id);
 
   const [data, modules, enabledApps] = await Promise.all([
     getFoldedLeaderboard(),
@@ -117,9 +117,9 @@ export default async function LeaderboardPage({
             points: t.points,
           }))
         : data.entries.slice(0, 10).map((e) => ({
-            key: e.login,
+            key: e.playerId,
             rank: e.rank,
-            name: e.login,
+            name: e.name,
             points: e.points,
             solved: completedCount(e),
           }));
@@ -168,7 +168,7 @@ export default async function LeaderboardPage({
       <PageHeader
         eyebrow="Standings"
         title="Leaderboard"
-        description={session ? BASE_DESCRIPTION : BASE_DESCRIPTION + SIGNED_OUT_CLAUSE}
+        description={player ? BASE_DESCRIPTION : BASE_DESCRIPTION + SIGNED_OUT_CLAUSE}
         logo={
           images.logo ? (
             <HeaderLogo
@@ -198,7 +198,7 @@ export default async function LeaderboardPage({
           between them as the individual/teams view toggle flips. */}
       <Leaderboard
         data={{ ...data, entries }}
-        viewerLogin={session?.user?.login ?? null}
+        viewerId={player?.id ?? null}
         modules={modules}
         enabledApps={enabledApps}
         timeZone={event.timeZone}

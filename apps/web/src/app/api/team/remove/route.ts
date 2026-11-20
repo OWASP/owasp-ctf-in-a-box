@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { removeMember } from "@/lib/team-store";
 
 function statusForError(error: string): number {
@@ -9,11 +9,9 @@ function statusForError(error: string): number {
 }
 
 export async function POST(request: Request) {
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  const login = (session.user as { login?: string }).login;
-  if (!login) return NextResponse.json({ error: "session has no GitHub login" }, { status: 400 });
+  const player = await getPlayer(request.headers);
+  if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const playerId = player.id;
 
   const body = await request.json().catch(() => ({}));
   const slug = typeof body.slug === "string" ? body.slug : "";
@@ -21,7 +19,7 @@ export async function POST(request: Request) {
 
   // `confirm: true` is the captain accepting the after-close warning;
   // only a literal true counts.
-  const result = await removeMember(login, slug, member, { confirmClosed: body.confirm === true });
+  const result = await removeMember(playerId, slug, member, { confirmClosed: body.confirm === true });
   if (!result.ok && result.needsConfirm) {
     return NextResponse.json({ error: result.error, needsConfirm: true }, { status: 409 });
   }

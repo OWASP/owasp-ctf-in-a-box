@@ -28,7 +28,8 @@ const html = await Terms().then(renderToStaticMarkup);
 describe("/terms with no module contributions", () => {
   it("still states a scope, an identity rule and a submission rule", () => {
     expect(html).toContain("This event authorizes no testing of any system.");
-    expect(html).toContain("You need a GitHub account.");
+    expect(html).toContain("You need an account on this site.");
+    expect(html).not.toContain("You need a GitHub account.");
     expect(html).toContain(
       "Submit your own work. Passing off another contestant&#x27;s work as your own is not allowed.",
     );

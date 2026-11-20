@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getPlayer } from "@/lib/player";
 import { logActivity } from "@/lib/activity-log";
+import { notifyFirstBlood } from "@/lib/announce/notify";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { launchApiAccess } from "@/lib/launch";
 import { answerQuestion, QUIZ_ID_RE } from "@/lib/quiz-store";
+import { cooldownResponse } from "@/lib/cooldown-response";
 import { hasTeam } from "@/lib/team-store";
 
 /** Validating against `quiz-store`'s own exported `QUIZ_ID_RE` (rather than
@@ -26,15 +28,15 @@ function isChoiceList(v: unknown): v is string[] {
  * `answerQuestion` is authoritative on the attempt cap, cooldown, and
  * grading (its Lua script re-checks everything atomically) — this route
  * never re-implements or second-guesses that enforcement. It only derives
- * `login` from the session (never the request body) and maps the store's
+ * the player id from the session (never the request body) and maps the store's
  * result to a status code:
  *   - quiz module switched off in /admin -> 403 { error: "unavailable" }
- *   - unauthenticated -> 401
- *   - session with no GitHub login -> 400
+ *   - unauthenticated, or a session user that is not a player -> 401
  *   - event not launched (and not an admin) -> 403 { error: "not-launched" }
  *   - malformed questionId/choices -> 400
  *   - unknown/missing question -> 404
- *   - gate refusal (paused/answered/exhausted/cooldown/unavailable) -> 403
+ *   - cooldown refusal -> 429 { error: "cooldown", retryAt } + Retry-After
+ *   - gate refusal (paused/ended/answered/exhausted/unavailable) -> 403
  *   - grading script failure -> 503
  *   - success -> 200
  *
@@ -51,9 +53,8 @@ export async function POST(request: Request) {
   // Module switch (#495). Switching the quiz off in /admin 404s its board, and
   // this route refuses too, or an answer from a tab opened before the toggle
   // (or a plain curl) would still bank points that reappear on re-enable. It
-  // runs FIRST, before the session is read — the same order as the ai
-  // module's `submitAiFlagAction` (a switched-off module is not a way to
-  // probe a cookie) — and so before `answerQuestion`: a refusal can never follow a
+  // runs FIRST, before the session is read (a switched-off module is not a
+  // way to probe a cookie) — and so before `answerQuestion`: a refusal can never follow a
   // write. An admin preview is refused too: there is no board to preview.
   // `isModuleLive` never throws; on a settings-read failure it answers from
   // this deployment's default module set (fail-open to the default, like
@@ -64,16 +65,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unavailable" }, { status: 403 });
   }
 
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  const login = (session.user as { login?: string }).login;
-  if (!login) return NextResponse.json({ error: "session has no GitHub login" }, { status: 400 });
+  const player = await getPlayer(request.headers);
+  if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const playerId = player.id;
 
   // #464 pre-launch lock. Its own refusal — 403 `not-launched` — never a
   // wrong-answer shape. An admin before launch passes as a PREVIEW, and their
   // answer is graded as a dry run: the same script, writing nothing.
-  const { refused, preview } = await launchApiAccess(login);
+  const { refused, preview } = await launchApiAccess(playerId);
   if (refused) return refused;
 
   // Scoring is per team, and a teamless login's banked points fold into no
@@ -84,7 +83,7 @@ export async function POST(request: Request) {
   // lets the answer through rather than dropping it.
   // A preview (#464) skips the team check: a dry run banks nothing to fold
   // into a team, and organizers usually have none.
-  if (!preview && !(await hasTeam(login))) {
+  if (!preview && !(await hasTeam(playerId))) {
     return NextResponse.json({ error: "no-team" }, { status: 403 });
   }
 
@@ -95,7 +94,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
-  const result = await answerQuestion(login, questionId, choices, { dryRun: preview });
+  const result = await answerQuestion(playerId, questionId, choices, { dryRun: preview });
   if (result.ok) {
     // An admin preview (#464): graded by the same script, nothing recorded —
     // and nothing logged either, so the activity feed never shows a solve
@@ -110,7 +109,12 @@ export async function POST(request: Request) {
     // re-submission banked nothing. The question id, never the choices;
     // logActivity is fail-open, so it cannot fail an answer that already
     // landed.
-    if (!result.already) await logActivity("quiz-solve", login, questionId);
+    if (!result.already) await logActivity("quiz-solve", player, questionId);
+    // First blood (#590): non-blocking, fresh solves only — same contract
+    // as classic/submit's hook.
+    if (!result.already) {
+      void notifyFirstBlood({ module: "quiz", challengeId: questionId, playerId, points: result.points });
+    }
     // `already` (this login had banked this question before — see
     // AnswerResult) rides along so the client can say so, instead of
     // reading the accompanying `points: 0` as an award of nothing.
@@ -125,7 +129,9 @@ export async function POST(request: Request) {
   if (result.reason === "error") {
     return NextResponse.json({ error: "quiz grading failed" }, { status: 503 });
   }
-  // paused | answered | exhausted | cooldown | unavailable
-  const retryAt = "retryAt" in result ? result.retryAt : undefined;
-  return NextResponse.json(retryAt ? { error: result.reason, retryAt } : { error: result.reason }, { status: 403 });
+  if (result.reason === "cooldown") {
+    return cooldownResponse(result.retryAt);
+  }
+  // paused | ended | answered | exhausted | unavailable
+  return NextResponse.json({ error: result.reason }, { status: 403 });
 }

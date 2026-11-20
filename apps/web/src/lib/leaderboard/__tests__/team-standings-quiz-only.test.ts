@@ -140,7 +140,7 @@ describe("withTeamStandings on a quiz-only event", () => {
 
     const out = await pipeline(empty());
 
-    expect(out.entries.map((e) => [e.login, e.team])).toEqual([["Ada", "red"]]);
+    expect(out.entries.map((e) => [e.playerId, e.team])).toEqual([["Ada", "red"]]);
   });
 
   it("keeps the alphabetical order when no team has any module points", async () => {

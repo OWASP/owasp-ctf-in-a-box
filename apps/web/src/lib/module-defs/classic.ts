@@ -1,6 +1,6 @@
 // `classic` module's definition — one entry of the REGISTRY literal in
 // lib/modules.ts, held in its own file so that file stays about the types
-// and the accessors, and a copy edit to one module stops touching all four.
+// and the accessors, and a copy edit to one module stops touching all three.
 //
 // `ModuleDef` comes back as a TYPE import — erased at compile time, so
 // modules.ts -> this file -> modules.ts is not a runtime edge. The URLs the
@@ -58,7 +58,7 @@ export const CLASSIC_DEF: ModuleDef = {
       "Find each flag and submit it for points. Every flag carries its own point value, grading happens the instant you submit, and matching ignores leading or trailing whitespace and — unless a flag is marked case-sensitive on its card — capitalisation too.",
     steps: () => [
       {
-        title: "Sign in with GitHub",
+        title: "Sign in",
         body: "Sign in to claim your row on the leaderboard. Nothing is graded for a signed-out visitor, and signing in is what lets you leave and come back to the board later.",
       },
       {
@@ -79,9 +79,9 @@ export const CLASSIC_DEF: ModuleDef = {
   // fixed method for finding a flag) and, like quiz, is deliberately silent
   // on AI.
   guide: {
-    lede: "New to the board? Here's everything you need to go from a GitHub sign-in to your first solved flag.",
+    lede: "New to the board? Here's everything you need to go from signing in to your first solved flag.",
     metaDescription:
-      "Step-by-step guide to the flag board: sign in with GitHub, work through the flags, and get scored the instant you submit a correct one.",
+      "Step-by-step guide to the flag board: sign in, work through the flags, and get scored the instant you submit a correct one.",
     loop: {
       kicker: "The loop",
       cycle: ["find the flag", "submit it", "it's scored on the spot"],
@@ -89,8 +89,8 @@ export const CLASSIC_DEF: ModuleDef = {
     },
     steps: () => [
       {
-        title: "Sign in with GitHub",
-        body: "Use the sign-in button in the header. Your GitHub login is how the leaderboard and your profile track your progress, and nothing is graded for a signed-out visitor.",
+        title: "Sign in",
+        body: "Use the sign-in button in the header to create an account or sign in. Your account is how the leaderboard and your profile track your progress, and nothing is graded for a signed-out visitor.",
       },
       {
         title: "Join a team, or play solo",
@@ -112,7 +112,7 @@ export const CLASSIC_DEF: ModuleDef = {
     notes: [
       "Every flag carries its own point value, and shows what it's worth before you submit it, plus how many people have already solved it.",
       "There's no cap on attempts. Organizers can set a short cooldown between submissions on the same flag, and the board tells you when it's still counting down.",
-      "Points are credited to the GitHub account you signed in with. A flag found by several teammates counts once for the team, so a team's total can be less than its members' points added together.",
+      "Points are credited to the account you signed in with. A flag found by several teammates counts once for the team, so a team's total can be less than its members' points added together.",
     ],
     scoring:
       "Every flag is worth a fixed number of points, set by whoever wrote it, and that value never changes as more people solve it. Points are awarded the instant a correct flag is submitted — leading or trailing whitespace is ignored, and casing is too unless the flag is marked case-sensitive — so nothing waits on manual review. Your live total is visible on your profile once you're signed in, and on the leaderboard alongside everyone else's.",
@@ -146,7 +146,7 @@ export const CLASSIC_DEF: ModuleDef = {
     prep: [
       {
         q: "What do I need to bring?",
-        a: "A GitHub account and a laptop with whatever tools you're comfortable poking around with. There's no required software beyond what a flag itself calls for.",
+        a: "A laptop with whatever tools you're comfortable poking around with. There's no required software beyond what a flag itself calls for.",
       },
     ],
     playing: [
@@ -164,7 +164,7 @@ export const CLASSIC_DEF: ModuleDef = {
       },
       {
         q: "How is my progress tracked?",
-        a: "Sign in with GitHub to claim your row on the live leaderboard and see how many flags you've solved, and what they were worth, on your profile. Points are credited to the account you signed in with, and nothing is graded for a signed-out visitor.",
+        a: "Sign in to claim your row on the live leaderboard and see how many flags you've solved, and what they were worth, on your profile. Points are credited to the account you signed in with, and nothing is graded for a signed-out visitor.",
       },
       {
         q: "Can I retry a flag I got wrong?",
@@ -178,7 +178,7 @@ export const CLASSIC_DEF: ModuleDef = {
   }),
   terms: () => ({
     eligibility: [
-      "You need a GitHub account. Your GitHub login is your identity for scoring, so submit every flag from the account you sign in with. Points are credited to that account and cannot be moved between accounts afterwards.",
+      "You need an account on this site. Your account is your identity for scoring, so submit every flag from the account you sign in with. Points are credited to that account and cannot be moved between accounts afterwards.",
       "Organizers and anyone who wrote or reviewed the flags may compete for fun but are not eligible for prizes.",
     ],
     scope: [

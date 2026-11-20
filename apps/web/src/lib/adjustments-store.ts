@@ -15,6 +15,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-store";
+import type { AuditActor } from "@/lib/admin-audit-keys";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
 import { ADJUSTMENT_MAX, ADJUSTMENTS_KEY, isTeamSlug } from "@/lib/adjustment-keys";
 
@@ -50,7 +51,7 @@ redis.call('LTRIM', KEYS[3], 0, tonumber(ARGV[4]))
 return 'ok'`;
 
 // KEYS: [1]=ledger [2]=audit list
-// ARGV: [1]=id [2]=actor [3]=at [4]=audit cap index
+// ARGV: [1]=id [2]=actor player id [3]=at [4]=audit cap index [5]=actor name
 // Answers the removed row, or nil when there was none. A row that is not
 // valid JSON is still removed, and recorded as its text.
 // Exported for the live suite only.
@@ -60,13 +61,13 @@ if not row then return nil end
 local t = redis.call('TYPE', KEYS[2])['ok']
 if t ~= 'none' and t ~= 'list' then return 'audit-unwritable' end
 local ok, decoded = pcall(cjson.decode, row)
-local line = cjson.encode({ at = ARGV[3], by = ARGV[2], action = 'adjustment:remove', id = ARGV[1], row = ok and decoded or row })
+local line = cjson.encode({ at = ARGV[3], by = ARGV[2], name = ARGV[5], action = 'adjustment:remove', id = ARGV[1], row = ok and decoded or row })
 redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('LPUSH', KEYS[2], line)
 redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[4]))
 return row`;
 
-export async function addAdjustment(rawSlug: string, points: number, rawReason: string, actor: string): Promise<Adjustment> {
+export async function addAdjustment(rawSlug: string, points: number, rawReason: string, actor: AuditActor): Promise<Adjustment> {
   const slug = rawSlug.trim().toLowerCase();
   if (!isTeamSlug(slug)) throw new AdjustmentValidationError("slug", `'${rawSlug}' is not a team slug`);
   if (!Number.isInteger(points) || points === 0 || Math.abs(points) > ADJUSTMENT_MAX) {
@@ -77,8 +78,10 @@ export async function addAdjustment(rawSlug: string, points: number, rawReason: 
   if (reason.length > ADJUSTMENT_REASON_MAX) {
     throw new AdjustmentValidationError("reason", `the reason must be ${ADJUSTMENT_REASON_MAX} characters or fewer`);
   }
-  const adj: Adjustment = { id: randomUUID(), slug, points, reason, by: actor, at: new Date().toISOString() };
-  const audit = JSON.stringify({ at: adj.at, by: actor, action: "adjustment:add", id: adj.id, slug, points, reason });
+  // The ledger row carries the actor's name for the list to show; the audit
+  // line keys on their player id.
+  const adj: Adjustment = { id: randomUUID(), slug, points, reason, by: actor.name, at: new Date().toISOString() };
+  const audit = JSON.stringify({ at: adj.at, by: actor.id, name: actor.name, action: "adjustment:add", id: adj.id, slug, points, reason });
   const verdict = await upstashEval(
     ADD_SCRIPT,
     [ADJUSTMENTS_KEY, `ctf:team:${slug}`, ADMIN_AUDIT_KEY],
@@ -92,8 +95,12 @@ export async function addAdjustment(rawSlug: string, points: number, rawReason: 
 
 /** Removes one adjustment and answers its row, or `row: null` when the stored
  *  text was not a readable row: it was still removed and audited. */
-export async function removeAdjustment(id: string, actor: string): Promise<{ id: string; row: Adjustment | null }> {
-  const removed = await upstashEval(REMOVE_SCRIPT, [ADJUSTMENTS_KEY, ADMIN_AUDIT_KEY], [id, actor, new Date().toISOString(), String(AUDIT_CAP - 1)]);
+export async function removeAdjustment(id: string, actor: AuditActor): Promise<{ id: string; row: Adjustment | null }> {
+  const removed = await upstashEval(
+    REMOVE_SCRIPT,
+    [ADJUSTMENTS_KEY, ADMIN_AUDIT_KEY],
+    [id, actor.id, new Date().toISOString(), String(AUDIT_CAP - 1), actor.name],
+  );
   if (removed === "audit-unwritable") throw new Error("the admin audit log is not writable; nothing was changed");
   if (typeof removed !== "string") throw new AdjustmentValidationError("id", `No adjustment "${id}"`);
   return { id, row: parseRow(removed) };

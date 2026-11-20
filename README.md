@@ -23,8 +23,9 @@
 
 ## What this is
 
-Everything a security event needs, on one machine you control: GitHub
-sign-in, teams, a live leaderboard, an organizer admin panel, and the
+Everything a security event needs, on one machine you control: player
+accounts (username and password, plus GitHub sign-in if you turn it on),
+teams, a live leaderboard, an organizer admin panel, and the
 scoring behind it. You pick which challenge **modules** run, alone or
 together on one leaderboard:
 
@@ -34,8 +35,6 @@ together on one leaderboard:
 - **Quiz** — single- and multi-select security questions.
 - **Jeopardy** — a board of flag challenges in categories, with optional
   paid hints.
-- **AI** — prompt-injection and guardrail challenges hosted on an external
-  site, scored back on the leaderboard.
 
 It runs from Docker Compose on a laptop, a spare desktop or a small VPS, plus
 one free GitHub org if you run Secure Development. The scoring rubrics for
@@ -74,7 +73,7 @@ cd owasp-ctf-in-a-box
 ```
 
 It builds the stack, seeds a demo leaderboard and prints the URL to open.
-`./scripts/dev-stack score <login> juice-shop 3` lands three more solves
+`./scripts/dev-stack score alice-dev juice-shop 3` lands three more solves
 live; `./scripts/dev-stack down` tears it down.
 
 **Run a real event** with the guided wizard. You also need the
@@ -88,10 +87,14 @@ the event runs Secure Development:
 
 It asks only for what your event needs, writes `.env`, does every step it
 can automate, and walks you through the few that need the GitHub website.
-`--dry-run` previews the steps that change anything, once `.env` has the
-admin logins (and the org, if you run Secure Development). Everything
-else — the event's name, which modules run, which targets — is set at
-runtime in `/admin`, so there is no config file to edit.
+`--dry-run` previews the steps that change anything. Setup prints a one-time
+**admin claim code** once: when the box is up, sign in, open `/admin/claim`
+and enter it to become the first organizer (`./setup/ctf-setup.sh
+admin-code` prints a new one if it is lost). Everything else — the event's
+name, which modules run, which targets — is set at runtime in `/admin`, so
+there is no config file to edit.
+With Secure Development, the five containers idle at about 665 MB, so give
+the event box about 2 GB of memory; without it, scorer and sync do not run.
 
 <p align="center">
   <img alt="The ctf-setup.sh guided wizard: ASCII banner and step-by-step prompts" src="docs/assets/wizard.jpg" width="820">
@@ -99,15 +102,18 @@ runtime in `/admin`, so there is no config file to edit.
 
 **In a cloud instead?** [docs/aws.md](docs/aws.md) (Terraform: ECS Fargate,
 ElastiCache and an ALB) or [docs/fly.md](docs/fly.md) (one Fly machine).
-Every step in detail:
+Fly runs the whole stack, scorer included, so it needs a scorer image
+(`SCORE_IMAGE`) and suits an event that runs Secure Development; a
+Quiz/Jeopardy-only event uses Compose or AWS. Every step in detail:
 [docs/hosting.md](docs/hosting.md#quickstart-zero-to-a-scored-event).
 
 ## The modules
 
 **Secure Development** — a GitHub Action in the contestant's fork runs the
 target's tests against the patch and posts the result on the pull request.
-The box polls for it about every 30 seconds, and the leaderboard cache can
-add up to about 40 more, so a score shows within about 70 seconds.
+The box polls for it about every 30 seconds and the leaderboard recomputes
+every 10, so a score normally shows within about 40 seconds of the score
+comment.
 Six targets, 321 challenges. An unpatched app scores 0, and a correct patch
 earns its points; CI checks both directions.
 
@@ -119,12 +125,7 @@ challenge is marked case-sensitive, with a submission cooldown and optional
 paid hints. Challenges can be hidden or scheduled for later release. Needs no
 GitHub.
 
-**AI** — each contestant gets a personal launch link to the external
-challenge site; a solve reports back through that site's callback or a flag
-typed into the app. Needs no GitHub. The site's side of the contract is in
-[docs/ai-module.md](docs/ai-module.md).
-
-Quiz, Jeopardy and AI content is written in `/admin` or imported as one JSON
+Quiz and Jeopardy content is written in `/admin` or imported as one JSON
 bundle. Around whichever modules you enable, the platform provides:
 
 - **Teams** — self-registration with captains, join codes and `/join/<code>`
@@ -169,7 +170,7 @@ to write new ones, see [docs/scorer.md](docs/scorer.md).
 
 One Docker Compose stack. Caddy terminates TLS in front of the Next.js app,
 and the app reaches Redis only through a REST proxy on a split network, so
-nothing internet-facing can reach Redis directly. Quiz, Jeopardy and AI are
+nothing internet-facing can reach Redis directly. Quiz and Jeopardy are
 graded inside the app.
 
 Secure Development is graded *outside* the box: the contestant's fork runs a
@@ -187,8 +188,12 @@ Components, the score data flow and the security model:
 
 ## Running an event
 
-- **Contestants** sign in with GitHub and form or join a team (a team is
-  required to score), then play whichever modules you enabled.
+- **Contestants** create an account on the box (or sign in with a provider
+  you turned on) and form or join a team (a team is required to score), then play whichever modules you enabled.
+  With Secure Development on, each contestant also links GitHub from their
+  profile: a PR scores for the account its author is linked to, and an
+  unlinked author's score is held until they link, which must be before
+  scoring closes.
 - **Organizers** run everything from `/admin`: the schedule, the freeze,
   registration, content — and when one contestant gets stuck, they fix that
   one contestant instead of resetting the event.
@@ -216,7 +221,7 @@ organizer guide is [docs/operations.md](docs/operations.md).
 
 | Read this when you're… | Document |
 |---|---|
-| Standing the kit up | [docs/hosting.md](docs/hosting.md) — prerequisites, the wizard and every step, the GitHub OAuth app, the `.env` bootstrap |
+| Standing the kit up | [docs/hosting.md](docs/hosting.md) — prerequisites, the wizard and every step, player accounts and sign-in providers, the `.env` bootstrap, upgrading from v1 |
 | Deploying to a cloud | [docs/aws.md](docs/aws.md) (Terraform: ECS Fargate + ElastiCache + ALB) · [docs/fly.md](docs/fly.md) (one Fly machine) |
 | About to open the doors | [docs/security-checklist.md](docs/security-checklist.md) — the one-page pre-event walk |
 | Running the event | [docs/operations.md](docs/operations.md) — teams, the admin panel, the module guides, teardown |
@@ -232,7 +237,11 @@ Rendered at **[owasp.github.io/owasp-ctf-in-a-box](https://owasp.github.io/owasp
 
 Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers the dev
 environment, the CI gates and how to propose a module (start with an issue,
-not a PR); [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) applies. Small,
+not a PR); [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) applies. Before opening
+a PR for an issue, read
+[Claiming an issue](CONTRIBUTING.md#claiming-an-issue). Questions and chat go to
+[the project's channel](https://owasp.slack.com/archives/C0C2RKGSKD5) on the
+OWASP Slack ([join](https://owasp.org/slack/invite)). Small,
 well-specified work is tagged
 [`good first issue`](https://github.com/OWASP/owasp-ctf-in-a-box/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
 Sign off every commit with `git commit -s`

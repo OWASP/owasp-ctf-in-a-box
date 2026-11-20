@@ -6,6 +6,9 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { liveConfigured, liveKey } from "./live-redis";
 
+/** The removing admin's player id; their name rides beside it in ARGV. */
+const ADMIN_ID = "ad000000-0000-4000-8000-000000000001";
+
 vi.mock("server-only", () => ({}));
 
 describe.skipIf(!liveConfigured)("score-adjustment scripts against a live Redis", () => {
@@ -40,13 +43,13 @@ describe.skipIf(!liveConfigured)("score-adjustment scripts against a live Redis"
     expect(r1.result).toBe(row);
     expect(a1.result).toEqual(["add-line"]);
 
-    expect(await upstashEval(store.REMOVE_SCRIPT, [K.ledger, K.audit], ["a1", "admin", "t2", "1"])).toBe(row);
+    expect(await upstashEval(store.REMOVE_SCRIPT, [K.ledger, K.audit], ["a1", ADMIN_ID, "t2", "1", "admin"])).toBe(row);
     const [r2, a2] = await pipeline([["HEXISTS", K.ledger, "a1"], ["LRANGE", K.audit, 0, -1]]);
     expect(r2.result).toBe(0);
     const removal = JSON.parse((a2.result as string[])[0]);
-    expect(removal).toMatchObject({ action: "adjustment:remove", by: "admin", id: "a1", row: { points: -10 } });
+    expect(removal).toMatchObject({ action: "adjustment:remove", by: ADMIN_ID, name: "admin", id: "a1", row: { points: -10 } });
 
-    expect(await upstashEval(store.REMOVE_SCRIPT, [K.ledger, K.audit], ["nope", "admin", "t3", "1"])).toBeNull();
+    expect(await upstashEval(store.REMOVE_SCRIPT, [K.ledger, K.audit], ["nope", ADMIN_ID, "t3", "1", "admin"])).toBeNull();
     const [a3] = await pipeline([["LLEN", K.audit]]);
     expect(a3.result).toBe(2);
   });
@@ -63,7 +66,7 @@ describe.skipIf(!liveConfigured)("score-adjustment scripts against a live Redis"
     expect(n.result).toBe(0);
 
     await pipeline([["HSET", K.ledger, "b2", row]]);
-    expect(await upstashEval(store.REMOVE_SCRIPT, [K.ledger, K.badAudit], ["b2", "admin", "t", "1"])).toBe("audit-unwritable");
+    expect(await upstashEval(store.REMOVE_SCRIPT, [K.ledger, K.badAudit], ["b2", ADMIN_ID, "t", "1", "admin"])).toBe("audit-unwritable");
     const [kept] = await pipeline([["HEXISTS", K.ledger, "b2"]]);
     expect(kept.result).toBe(1);
   });
@@ -73,7 +76,7 @@ describe.skipIf(!liveConfigured)("score-adjustment scripts against a live Redis"
   it("removes an unparseable row and records it as text", async () => {
     const { store, upstashEval, pipeline } = await load();
     await pipeline([["DEL", K.audit], ["HSET", K.ledger, "c1", "{not json"]]);
-    expect(await upstashEval(store.REMOVE_SCRIPT, [K.ledger, K.audit], ["c1", "admin", "t", "1"])).toBe("{not json");
+    expect(await upstashEval(store.REMOVE_SCRIPT, [K.ledger, K.audit], ["c1", ADMIN_ID, "t", "1", "admin"])).toBe("{not json");
     const [gone, line] = await pipeline([["HEXISTS", K.ledger, "c1"], ["LINDEX", K.audit, 0]]);
     expect(gone.result).toBe(0);
     expect(JSON.parse(line.result as string)).toMatchObject({ action: "adjustment:remove", id: "c1", row: "{not json" });

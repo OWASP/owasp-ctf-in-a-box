@@ -47,6 +47,13 @@ describe("/privacy in a quiz-only event", () => {
     expect(findSecureDevLeaks(html)).toEqual([]);
   });
 
+  it("keys everything by the player id, with no held-score exception", () => {
+    const flat = html.replace(/\s+/g, " ");
+    expect(flat).toContain("never against your name or a GitHub login.");
+    expect(flat).not.toContain("held under that GitHub login");
+    expect(flat).not.toContain("apart from a held score");
+  });
+
   it.each(SECURE_DEV_TERMS)("does not leak %j", (term) => {
     expect(normalizeHtml(html)).not.toContain(term);
   });
@@ -71,6 +78,16 @@ describe("/privacy in a quiz-only event", () => {
     expect(rendered).toContain("Your answers");
     expect(rendered).toContain("the choices you submitted");
     expect(rendered).toContain("how many attempts you have spent");
+  });
+
+  it("describes kit-owned accounts, not a cookie-only GitHub sign-in", () => {
+    expect(rendered).toContain("Your account");
+    expect(rendered).toContain("hash of your password");
+    expect(rendered).toContain("placeholder email address");
+    expect(rendered).toContain("the IP address and browser user-agent it came from");
+    expect(rendered).toContain("Want your account deleted? Ask an organizer.");
+    expect(rendered).not.toContain("There is no account database");
+    expect(rendered).not.toContain("keyed to your GitHub login");
   });
 
   it("promises nothing that only the other module has", () => {

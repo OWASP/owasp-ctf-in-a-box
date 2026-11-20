@@ -84,6 +84,12 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 66 — The regular leaderboard shows the event logo and the sponsor strip](#adr-66-the-regular-leaderboard-shows-the-event-logo-and-the-sponsor-strip)
 - [ADR 67 — A Secure Development solve is timed, and judged, by its score comment](#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)
 - [ADR 68 — A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock](#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled-visibility-is-derived-at-read-time-and-enforced-in-every-reader-the-grader-deciding-by-rediss-clock)
+- [ADR 69 — The AI module is retired; AI security challenges run as Jeopardy challenges with flags](#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags)
+- [ADR 70 — Unattributed Secure Development scores are held, not dropped](#adr-70-unattributed-secure-development-scores-are-held-not-dropped)
+- [ADR 71 — The AI module is retired in v2.0.0](#adr-71-the-ai-module-is-retired-in-v200)
+- [ADR 72 — Admins are claimed with a one-time code, not named in `.env`](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)
+- [ADR 73 — Discord announcements are app-scheduled, outbox-delivered, and record-first](#adr-73-discord-announcements-are-app-scheduled-outbox-delivered-and-record-first)
+- [ADR 74 — Players are kit accounts; GitHub is needed only for Secure Development](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
 
@@ -666,7 +672,7 @@ keep the two consistent.
 
 ## ADR 19. Organizer admin panel: runtime override layer
 
-**Status.** Accepted; the v1 read-path limitation noted below was resolved by [ADR 31](#adr-31-one-hint-switch-capability-split-from-policy), and scheduled windows arrived with [ADR 32](#adr-32-scheduled-windows-evaluated-at-read-time-in-three-readers).
+**Status.** Accepted; the v1 read-path limitation noted below was resolved by [ADR 31](#adr-31-one-hint-switch-capability-split-from-policy), and scheduled windows arrived with [ADR 32](#adr-32-scheduled-windows-evaluated-at-read-time-in-three-readers). Amended 2026-11-17: an admin is a player id granted by a claim code ([ADR 72](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)), not a GitHub login, and players are kit accounts ([ADR 74](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development)).
 
 **Context.** Everything up to this point is either build-time config
 (`event.yaml`, decision 12) or a one-shot event of no return (a score
@@ -1843,7 +1849,7 @@ current advice.
 
 ## ADR 38. Counting the poller's silent drops, and refusing to count the routine ones
 
-**Status.** Accepted.
+**Status.** Accepted. Amended 2026-11-13 by [ADR 70](#adr-70-unattributed-secure-development-scores-are-held-not-dropped), which adds the `held` bucket and reads `rejected` as a `4xx` other than `422`.
 
 **Context.** Two scoring bugs were found in one evening by running a single
 real PR end to end — the upserted-comment dedupe collision (ADR-adjacent, see
@@ -1899,6 +1905,8 @@ quiet and any line it does print means something.
 the tick that wrote it and is `HDEL`ed by the next clean tick. A dropped score
 is still missing after the poller recovers, so clearing it on recovery would
 erase the only pointer to the PR a human has to go re-run.
+
+*Amended 2026-11-17 by [#775](https://github.com/OWASP/owasp-ctf-in-a-box/issues/775): the scorer's `422` also carries `refused: "player-deleted"`, a verdict on who the score belongs to rather than when it was posted. It lands in the `refused` bucket, final and logged, not in `rejected` and not as a drop: the player is gone, so there is nothing to re-run. The `503` the scorer answers while that player's scores are on hold (a delete or a GitHub unlink still running) is a `retried`, re-presented next tick, and the retry resolves the author's login again.*
 
 **Consequences.** The counter's value is in staying at zero. It cannot catch a
 *novel* silent path — a future `continue` added without a bucket is invisible
@@ -1963,7 +1971,7 @@ organizer hardening checklist ([#44](https://github.com/OWASP/owasp-ctf-in-a-box
 
 ## ADR 40. CSRF assertion in the proxy, rate limits keyed on the login
 
-**Status.** Accepted.
+**Status.** Accepted. The ADR 53 amendment's `/api/ai/*` exemption is superseded 2026-11-15 by [ADR 71](#adr-71-the-ai-module-is-retired-in-v200): v2.0.0 has no `/api/ai/*` routes, so the proxy carries no AI carve-out and those paths take the origin check like any other. Amended 2026-11-17 by [ADR 74](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development): the per-player rate limits are keyed on the player id.
 
 **Context.** The custom API routes (`/api/admin/*`, `/api/team/*`,
 `/api/hints/reveal`, `/api/quiz/answer`, `/api/classic/submit`) authenticate
@@ -2363,7 +2371,7 @@ one module, no per-module settings, targets as a comma-separated string.
 
 ## ADR 44. Runtime admin grants, with the baked list as the recovery path
 
-**Status.** Superseded 2026-09-11 by [ADR 55](#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml) — there is no baked list any more: the bootstrap set is `ADMIN_LOGINS` in `.env`, read at process start. The decision's substance is unchanged and deliberately preserved: runtime grants stack on top of the bootstrap set, a bootstrap admin can never be revoked from the panel, and `requireAdmin` checks the bootstrap list first without touching Redis and fails closed. Only the cost of changing that set moved, from a rebuild to a restart. Previously: accepted, implementing issue #147.
+**Status.** Superseded 2026-09-11 by [ADR 55](#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml) — there is no baked list any more: the bootstrap set is `ADMIN_LOGINS` in `.env`, read at process start. The decision's substance is unchanged and deliberately preserved: runtime grants stack on top of the bootstrap set, a bootstrap admin can never be revoked from the panel, and `requireAdmin` checks the bootstrap list first without touching Redis and fails closed. Only the cost of changing that set moved, from a rebuild to a restart. Previously: accepted, implementing issue #147. Its `ADMIN_LOGINS` bootstrap set is replaced by claim codes: see [ADR 72](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env).
 
 *Everything below is the decision as it stood, kept for its rationale, and
 every mention of `event.yaml`, of a baked list, and of a rebuild is
@@ -2534,7 +2542,7 @@ pins that the stamp is at least 3.
 
 ## ADR 47. A team is required to score, enforced at the route and signposted at the page
 
-**Status.** Accepted.
+**Status.** Accepted. Amended 2026-11-17 by [ADR 74](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development): records are keyed by the player id, not the GitHub login.
 
 **Context.** The docs said "everyone ends up on a team", and nothing enforced
 it. A contestant could sign in, go straight to `/quiz` or `/flags`, and start
@@ -2620,7 +2628,7 @@ decision about ingest semantics than this one.
 
 ## ADR 48. Per-contestant support actions, and why they refuse some things
 
-**Status.** Accepted.
+**Status.** Accepted. Amended 2026-11-17 by [ADR 74](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development): records are keyed by the player id, not the GitHub login.
 
 **Context.** The only destructive control in the panel was the master reset,
 which wipes the whole event. So the answer to "one contestant is wedged, the
@@ -2718,7 +2726,7 @@ drift apart.
 
 ## ADR 49. `firstTeamAt` records the funnel's conversion moment; `joinedAt` does not
 
-**Status.** Accepted.
+**Status.** Accepted. Amended 2026-11-17 by [ADR 74](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development): records are keyed by the player id, not the GitHub login.
 
 **Context.** The engagement funnel ([#169](https://github.com/OWASP/owasp-ctf-in-a-box/issues/169))
 is *signed in → got on a team → first solve*. Solves and answers already carry
@@ -2760,7 +2768,7 @@ path, which is a bigger decision than this one.
 
 ## ADR 50. Metrics are computed from stored data; forks report nothing
 
-**Status.** Accepted.
+**Status.** Accepted. Amended 2026-11-17 by [ADR 74](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development): records are keyed by the player id, not the GitHub login.
 
 **Context.** Engagement metrics ([#169](https://github.com/OWASP/owasp-ctf-in-a-box/issues/169))
 raised a design question worth settling once: what may a fork tell the box, and
@@ -3008,7 +3016,7 @@ under-disclosure is the wrong direction to be wrong in.
 
 ## ADR 53. ai launch tokens are asymmetric; event signatures stay symmetric
 
-**Status.** Accepted.
+**Status.** Superseded 2026-11-09 by [ADR 69](#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags) — the `ai` module is deprecated and deleted in v2.0.0, taking both signatures with it. Until then this entry still describes every v1.x box. The deletion is recorded 2026-11-15 by [ADR 71](#adr-71-the-ai-module-is-retired-in-v200). The body below is kept as the record of the decision as it stood.
 
 **Context.** An `ai` challenge is hosted outside the box. Two signatures make
 that work: the box mints a per-user **launch token** the contestant carries to
@@ -3223,7 +3231,7 @@ and mounting a CA into the container does nothing.
 
 ## ADR 55. Configuration v2: `.env` bootstrap, `/admin` runtime, no event.yaml
 
-**Status.** Accepted. Supersedes [ADR 10](#adr-10-eventyamls-module-namespace-deliberate-not-dynamic-registration), [ADR 12](#adr-12-build-time-config-generation-over-runtime-config), [ADR 26](#adr-26-compose-profiles-follow-the-enabled-modules), [ADR 44](#adr-44-runtime-admin-grants-with-the-baked-list-as-the-recovery-path) and [ADR 52](#adr-52-modules-are-switched-at-runtime-secure-development-is-configured-at-setup); amends [ADR 13](#adr-13-closed-appid-union-config-selects-a-subset-unknown-values-fail-the-build). Implements issue [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386); [ADR 43](#adr-43-one-url-and-it-lives-in-env-not-eventyaml) is the precedent.
+**Status.** Accepted. Supersedes [ADR 10](#adr-10-eventyamls-module-namespace-deliberate-not-dynamic-registration), [ADR 12](#adr-12-build-time-config-generation-over-runtime-config), [ADR 26](#adr-26-compose-profiles-follow-the-enabled-modules), [ADR 44](#adr-44-runtime-admin-grants-with-the-baked-list-as-the-recovery-path) and [ADR 52](#adr-52-modules-are-switched-at-runtime-secure-development-is-configured-at-setup); amends [ADR 13](#adr-13-closed-appid-union-config-selects-a-subset-unknown-values-fail-the-build). Implements issue [#386](https://github.com/OWASP/owasp-ctf-in-a-box/issues/386); [ADR 43](#adr-43-one-url-and-it-lives-in-env-not-eventyaml) is the precedent. Its `ADMIN_LOGINS` bootstrap set is replaced by claim codes: see [ADR 72](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env).
 
 **Context.** Event configuration lived in three places at once: a committed
 `event.yaml` baked into the `app` image through the `EVENT_CONFIG_B64`
@@ -4161,6 +4169,8 @@ pause log is one short list with one shape.
 
 **Status.** Accepted (#596). Amends [ADR 32](#adr-32-scheduled-windows-evaluated-at-read-time-in-three-readers).
 
+*Amended 2026-11-17 by [#775](https://github.com/OWASP/owasp-ctf-in-a-box/issues/775) and [#740](https://github.com/OWASP/owasp-ctf-in-a-box/issues/740): after the time judging above, the scorer refuses a held or deleted player's score. One script checks the score hold `ctf:score-hold:<player id>` and the account row (`ctf:auth:user`) with the solve write. A hold with the account row still present means a delete or a GitHub unlink of that player is running: `503` `{"error":"player scores on hold"}`, which sync retries, resolving the author's login again. A hold with the row gone means the player is deleted: a final `422` `{"error":"player deleted","refused":"player-deleted"}`. No hold writes as before. The hold is a set of per-operation tokens with no expiry; master reset keeps it. A delete adds its token before its first write and leaves it once the row is gone; a delete that fails removes only its own token while the row exists. An unlink adds its token before it takes the link and removes only its own token when it ends, so a score sync attributed through the link before the take is either written before the hold, where the unlink's solve count sees it, or retried after it against the link as the unlink left it. Sync also sends the login it resolved the player from, and the same script writes only while `ctf:link:github:<login>` still names that player, answering `503` `{"error":"the login no longer links to this player"}` otherwise: a score resolved before an unlink, a delete or delete all accounts but sent after it is retried and resolved again rather than written to the old player. The same script also reads the master-reset epoch `resetAt` from `ctf:admin:settings` at write time and refuses a score timed before it with the final `422` `{"refused":"pre-reset"}`, the refusal the judge gives at read time; a master reset writes the epoch, with its freeze, before it sweeps a solve. So a score judged before a master reset and written after its sweep is refused with nothing written, whether or not it carries a `login` and whatever the links did in between (#791). The app writes the epoch as epoch milliseconds. Any epoch other than the one the score was judged against is a `503` that sync retries, so the score is judged again: that covers a score whose `at`, up to five minutes ahead of the scorer's clock, falls after a reset that landed since its judge. A score judged when the settings read failed carries no epoch, so once any reset has happened its write is a `503` too, retried rather than written unchecked. A score sent without `at` takes its arrival-time freeze verdict and the epoch it hands the write from one settings read, so a reset cannot land between the two. Delete all accounts needs no hold: it is a master reset between a link sweep and an account sweep, so every score judged before it is refused by the epoch, and sync holds a later score whose login no longer links to anyone until that login is linked again. A score sent without a `login`, which sync never does (the dev-stack and acceptance seeds do), is not checked against the account row: one timed after a delete all accounts for a player id that no longer exists still writes.*
+
 ## ADR 68. A Jeopardy challenge can be hidden or scheduled; visibility is derived at read time and enforced in every reader, the grader deciding by Redis's clock
 
 **Context.** Issue #189. A Jeopardy challenge had no visibility state: the
@@ -4248,3 +4258,499 @@ the board shows the challenge on the next read. The reveal script's lock
 keys move from `KEYS[8..]` to `KEYS[9..]`. A future reader of the challenge
 list has to filter, and the source scan says so if it does not.
 
+
+## ADR 69. The AI module is retired; AI security challenges run as Jeopardy challenges with flags
+
+**Status.** Accepted (#728, #730). Its v2.0.0 deletion is carried out 2026-11-15 by [ADR 71](#adr-71-the-ai-module-is-retired-in-v200), which supersedes the v2.0.0 half of the decision below. The link to the integrator's document points at its v1.1.0 copy, the last release that ships it.
+
+**Context.** Issues #728, #730. The `ai` module lists a challenge hosted on
+an external site and scores it inside the box. A flag-mode challenge only
+needs the site to show a flag, which the contestant types into the box. An
+event-mode challenge, the one that reports its own solve, needs a site that
+verifies a per-contestant Ed25519 launch token, POSTs an HMAC-signed event
+with a replay nonce, and keeps one secret key per challenge in step with
+`/admin` ([ADR 53](#adr-53-ai-launch-tokens-are-asymmetric-event-signatures-stay-symmetric),
+[docs/ai-module.md](https://github.com/OWASP/owasp-ctf-in-a-box/blob/v1.1.0/docs/ai-module.md)). That event-mode contract is the hard
+part of an AI event, and flag mode alone is what Jeopardy already does. The
+module is also the largest the kit maintains: about 100 files
+in `apps/web`, its own award script and upstash suite, an acceptance script
+and CI job, and an integrator's document. Meanwhile Jeopardy already has
+what an AI security category needs: categories, paid hints, story locks,
+attachments and scheduled release (ADR 68). A flag already proves a solve.
+
+**Decision.**
+- **v1.1.0 deprecates.** The module keeps working unchanged, with security
+  fixes only. Its admin switch, on Event and on its own panel, says so as
+  its help line and in the enable confirmation, with a link to the Jeopardy
+  guide, from one registry field (`ModuleDef.deprecated`, carried by
+  `module-toggle.ts` and rendered by `module-deprecation.tsx`). The docs mark it
+  deprecated, and the module lists drop it.
+- **v2.0.0 deletes it.** Removal ships with kit-owned accounts (#731), so an
+  organizer takes one breaking upgrade, not two. v2.0.0 starts from a clean
+  Redis and does not read v1 archives, so no AI points, settings or bundles
+  reach a v2 box, and the deletion carries none of them: no read-only fold
+  of old AI totals, no tombstone module id, no import handling. AI results
+  do not carry over at all: the event archive holds content and settings,
+  not contestant progress, and v2.0.0 does not read it anyway. An event that
+  wants its AI results records them from its v1.x box before upgrading, or
+  keeps that box.
+- **AI security categories run as Jeopardy challenges.** The target is
+  hosted anywhere; solving it reveals a flag; the flag goes on the board
+  under its own category, with hints and story locks as usual. The
+  organizer's guide is #727.
+
+This was chosen over keeping the module as a flag-only mode (a second
+Jeopardy with its own store), over moving launch tokens into Jeopardy (it
+keeps the integration that makes AI events hard), and over removing it in
+v1.2.0 (a breaking minor between the deprecation and v2.0.0, plus the work
+of carrying AI points across an in-place upgrade that v2.0.0 then discards).
+
+**Consequences.** Jeopardy sends no launch token, so a challenge site no
+longer gets the contestant's identity from the box (it can still run its own
+sign-in), and it cannot report a solve by itself: a contestant types the
+flag. A shared flag can be
+passed between teams, the exposure every Jeopardy flag already has. On a
+v1.x box nothing changes until the organizer moves to v2.0.0. Deleting the
+module removes its routes, admin panel, award script, upstash suite,
+`acceptance-ai-only.sh` and its CI job, and this ADR then supersedes ADR 53
+outright.
+
+## ADR 70. Unattributed Secure Development scores are held, not dropped
+
+**Status.** Accepted (#741). Amends [ADR 38](#adr-38-counting-the-pollers-silent-drops-and-refusing-to-count-the-routine-ones).
+
+**Context.** Kit-owned accounts (#731) make a GitHub link optional: a
+player signs in with any provider and links GitHub only to play Secure
+Development. A PR whose author has not linked yet used to be dropped
+(`unlinked`), which loses the points of a player who links an hour into the
+event. Two further gaps showed up in review. The scorer keeps a solve's
+first time, so the order in which sync posts two scores for the same
+solve decides which comment time sticks. ADR 38's `rejected` row reads
+"Scorer returned `4xx`", which since ADR 67 means a `4xx` other than `422`:
+the `422` is `refused`.
+
+**Decision.**
+- **An unattributed score is held, not dropped.** It is stored under
+  `ctf:sd:held:*` and counted in ADR 38's taxonomy as a new bucket, `held`:
+  waiting on the player, not lost. Each tick, before the comment pass, sync
+  releases the held scores of authors who linked before `scoringEndsAt` (or
+  of any linked author when the event has no end), oldest first, at their
+  original comment time, so ADR 67's rules judge them as they would have
+  judged the comment. A link made at or after the close does not release:
+  the admin list shows the score as `unclaimed`. The close is the current
+  `scoringEndsAt`, so an organizer who moves the end past the link lets the
+  score release; that is the organizer's call, and no other path attributes
+  an unclaimed score.
+- **A held score waits for its target.** One whose target the organizer has
+  turned off stays held until the target is back, as an unread comment on
+  that repo would.
+- **Order is kept per author and target.** While an older score for the same
+  author and target is still held, the comment pass holds a newer one behind
+  it instead of posting it. A comment that fails within a tick holds back
+  the same author's later comments in that repo, unread, until it has gone
+  through.
+- **ADR 38's `rejected` is a `4xx` other than `422`.** A `422` is `refused`,
+  as ADR 67 has it; organizers must not read a routine window or freeze
+  refusal as a lost score.
+- **Held scores outlive a failed delete.** `deleteUser` clears the player's
+  held scores only after their `ctf:user:<id>` record is gone, by one script
+  that deletes the hash before the author index: sync's cursor is past
+  those comments, so for a player who stays they are the only copy.
+
+This was chosen over dropping unlinked scores (a late link loses points),
+and over attributing an unclaimed score by hand (no path may give a score to
+an account that did not link in time).
+
+**Consequences.** The admin Secure Development tab lists held and unclaimed
+scores. A master reset clears `ctf:sd:held:*` and keeps links. A score sync
+read before an organizer deletes the player can still reach the scorer after
+the delete and restore a cleared solve, through the comment pass (as before
+this ADR) or a held release; that race is #775.
+
+## ADR 71. The AI module is retired in v2.0.0
+
+**Status.** Accepted (#729). Supersedes [ADR 53](#adr-53-ai-launch-tokens-are-asymmetric-event-signatures-stay-symmetric) outright and the v2.0.0 half of [ADR 69](#adr-69-the-ai-module-is-retired-ai-security-challenges-run-as-jeopardy-challenges-with-flags); supersedes the `/api/ai/*` amendment to [ADR 40](#adr-40-csrf-assertion-in-the-proxy-rate-limits-keyed-on-the-login).
+
+**Context.** ADR 69 deprecated the `ai` module in v1.1.0 and scheduled its
+deletion for v2.0.0, alongside kit-owned accounts (#731). v2.0.0 is a clean
+break: it refuses a Redis that holds v1 data and does not read v1 archives.
+Both refusals ship with #743, before v2.0.0 is cut; until it lands the
+importer still parses archive versions 1–3. The archive half of this ADR
+holds either way: the importer refuses any archive that carries an `ai`
+section (`event-io.ts`), so no AI challenges, settings or keys arrive by
+import. With #743, no AI points arrive from an old Redis either, and nothing
+in v2.0.0 has to read, fold or migrate them.
+
+**Decision.** v2.0.0 deletes the module as a plain deletion:
+- **Code.** The `/ai` and `/ai/[id]` pages, every `/api/ai/*` route
+  (`submit`, `event`, `state`, `launch-key`), the `/api/admin/ai` routes and
+  the AI admin panel, the `ai-*` libraries (store, keys, I/O, launch tokens,
+  HTTP helpers), the award Lua script and its upstash suite all go. The
+  module registry holds three modules (`secure-development`, `quiz`,
+  `classic`), and `ai` is not a `ModuleId`.
+- **Everything that listed it.** The master reset, the per-contestant reset
+  and delete, the demo seed and clear, the event archive's export and import,
+  hints, metrics, the leaderboard's module overlays, the profile, the board's
+  item lists, the activity log's types, the admin settings (`aiCooldownSec`)
+  and the rate-limit budgets drop their AI branch. `src/proxy.ts` carries no
+  `/api/ai/*` exemption, so the CSRF origin check covers every `/api` path but
+  `/api/auth/*` and the two body-size carve-outs.
+- **Gates and docs.** `scripts/acceptance-ai-only.sh`, its `ai-only` CI job
+  and the `ai` area of `scripts/ci-changes.sh` go, as do
+  `docs/ai-module.md` and its two diagrams. The public `/api` surface in
+  [docs/reviewing.md](reviewing.md) invariant 11 is seven routes, without
+  `GET /api/ai/launch-key`.
+- **No compatibility layer.** No read-only fold of old AI totals, no
+  tombstone module id, no import of an archive's `ai` section (the
+  importer refuses one rather than dropping it), and no reset of
+  `ctf:ai:*` keys: a v2 box never holds them.
+
+This was chosen over keeping the module's keys in the master reset "just in
+case" (dead code for data v2 refuses to start on) and over keeping a
+tombstone `ai` id so an old archive's `enabledModuleIds` would parse (v2 does
+not read v1 archives).
+
+**Consequences.** An organizer running AI security challenges on v2 runs them
+as Jeopardy challenges with flags (ADR 69, the Jeopardy organizer guide in
+[docs/operations.md](operations.md)). A challenge site that verified launch
+tokens or posted signed solve events has nothing to call on a v2 box. An
+event that wants its AI results keeps or records its v1.x box before
+upgrading. The registry's `deprecated` field and its admin rendering stay as
+the mechanism for retiring a module; no module sets it today.
+
+## ADR 72. Admins are claimed with a one-time code, not named in `.env`
+
+**Status.** Accepted (#738); amended 2026-11-16: when a rotated code stops working, under **Recovery** below. Replaces the `ADMIN_LOGINS` bootstrap set of [ADR 44](#adr-44-runtime-admin-grants-with-the-baked-list-as-the-recovery-path) and [ADR 55](#adr-55-configuration-v2-env-bootstrap-admin-runtime-no-eventyaml).
+
+**Context.** `ADMIN_LOGINS` named GitHub logins. v2 accounts are kit
+accounts keyed by a player id (#731), GitHub is optional unless Secure
+Development is on, and usernames are chosen by whoever signs up first on an
+open sign-up page. None of those can name an organizer in `.env` before the
+event exists.
+
+**Decision.**
+- **An admin is a kit player id in `ctf:admin:grants`**, a Redis set and the
+  only roster. A GitHub login, linked or not, grants nothing, and
+  `ADMIN_LOGINS` is not read anywhere.
+- **The first grant comes from a one-time claim code.** Provisioning
+  generates 128 random bits, shows them once as 32 hex in eight groups of
+  four, and writes only the lowercase hex SHA-256 of the normalized code as
+  `ADMIN_CLAIM_CODE_HASH`. A signed-in player enters the code at
+  `/admin/claim`. Input is normalized (lowercase, hyphens and whitespace
+  dropped) and must be exactly 32 hex. The hash is unsalted: the code has 128
+  bits of entropy, which a slow KDF would not add to. Provisioning
+  generates it: `ctf-setup.sh secrets` on a Compose box, `deploy.sh init`
+  on Fly, and `deploy.sh` on AWS, which keeps it as an SSM SecureString.
+  Each prints the code once.
+- **Admins issue more codes.** An issued code is stored as
+  `ctf:admin:code:<sha256>` for 15 minutes and works once.
+- **Claim, issue and revoke are atomic Lua scripts**, each writing one audit
+  line. The claim refuses an existing admin without consuming anything. The
+  bootstrap path matches only the current env hash and records it in
+  `ctf:admin:claim:spent`; the issued path reads and deletes the code key in
+  the same script, so two racing claims grant once. An issued code counts
+  only while its issuer still holds a grant, and issuing needs a grant at
+  the moment the script runs. Each code also carries its issuer's grant
+  generation (`ctf:admin:grant-gen`, a hash of player id to counter), read
+  by the issue script and advanced by the revoke script; the claim refuses a
+  code whose generation is not the issuer's current one. Revoking an admin
+  therefore voids every code they issued for good, even if they are granted
+  again before the codes expire, so a removal sticks.
+- **Brute force is bounded per player.** `/api/me/admin/claim` needs a
+  signed-in kit player and charges five attempts per 15 minutes per player,
+  failing closed. There is no global bucket, because anyone could spend it
+  and lock the organizer out of the recovery claim. Every refusal returns the
+  same body.
+- **Revoke stays, by player id, and refuses the last usable grant.** The
+  revoke script removes a grant only if another grant belongs to an account
+  that still exists (a field in the auth store's user rows hash), counted in
+  the same script as the removal: a grant whose account is gone opens
+  nothing, so it does not count. There is no grant-by-name path: a code is
+  the only way in.
+- **Audit lines carry a code id, never a code.** `admin:grant` names the
+  grantee, the path (`bootstrap` or `code`), the first eight hex of the hash
+  and, for an issued code, its issuer; `admin:code-issue` and `admin:revoke`
+  follow the same rule. No line carries a GitHub login, a code or a full
+  hash.
+- **Fail directions.** The admin check denies on a Redis error, as before.
+  The claim answers 503 on one and never grants. The Forbidden wall's
+  "nobody has claimed this box" notice reads the grant count best-effort and
+  shows nothing when the read fails.
+
+**Recovery.** Rotating the hash (`ctf-setup.sh admin-code` on a Compose box,
+`deploy.sh --new-admin-code` on Fly or AWS) makes a new bootstrap code, and the old one stops working at
+once because only the current env hash is compared. The bootstrap code works
+whether or not admins exist: the lock-out case includes an admin who still
+holds a grant but cannot sign in, and v2.0 has no email recovery. Rotating
+needs `.env` or deploy access, which already means full control of the box.
+
+*Amended 2026-11-16 by [#738](https://github.com/OWASP/owasp-ctf-in-a-box/issues/738): "at
+once" above is wrong. The app compares the hash in its own environment, so
+the old code stops working only when the running app has the new hash, and
+that depends on the deployment: on Compose when the app container is
+recreated (a plain restart keeps the old environment); on Fly when the
+deploy completes; on AWS once the rollout's old tasks have drained. Until
+then the old code still claims, and a failed deploy or rollout leaves it
+valid until that is recovered.*
+
+**Consequences.** `/admin` now needs Redis to decide who is an admin; every
+admin path already needed it for its data. No admin is beyond revocation,
+so the last-admin guard is what keeps the panel reachable. Master reset keeps
+`ctf:admin:*`, so a reset never locks the organizers out (and never zeroes a
+grant generation, which would revive a revoked admin's codes), and the event
+archive carries none of it. Grants written by v1 under `ctf:admin:admins` are
+not read. Deleting an account must also remove its grant (#740).
+
+**Alternatives rejected.** The first account to sign in becomes admin: a
+race on a public URL. Admins named by username in `.env`: usernames are
+self-chosen at open sign-up, so the name can be taken first. A slow password
+hash for the code: there is no low entropy for it to protect.
+
+## ADR 73. Discord announcements are app-scheduled, outbox-delivered, and record-first
+
+**Status.** Accepted (#590, #639).
+
+**Context.** Issue #590. Event organizers run their community on Discord:
+first bloods, the event's own launch/pause/resume edges and time-remaining
+checks all want to land in a channel as they happen. The kit had no
+outbound announcement surface at all — `eventDiscord` on the landing page is
+an invite link, and push ingest was removed in v0.6 (ADR 56), so the box has
+no inbound scoring surface to hang a webhook on either. The obvious
+alternatives each fail somewhere: a Discord bot (another credential, another
+process, another thing to keep in step with the event state), an external
+scheduler (the box already runs a server; a cron sidecar is one more
+container to deploy and clock-sync), and piggybacking on the solve routes
+alone (first blood yes, but the lifecycle edges and the time marks have no
+request to piggyback on, and a restart between solve and post would lose the
+announcement). The scope is deliberately five kinds — `first-blood`,
+`launch`, `pause`, `resume` and organizer-set `milestone` time checks, all
+of them event facts the box already observes. Per-challenge releases,
+leaderboard moves, registration close and daily digests were considered and
+cut before this shipped (maintainer direction on #590): each of them is a
+fact the box would have to go observe and claim on every tick, which is the
+work an event without the feature must never pay for.
+
+**Decision.** An in-app announcer, configured at `/admin` → Event:
+
+- **Configuration is runtime, and apart from the settings hash.** The
+  webhook URL lives in `ctf:admin:discord:webhook`, its own key, and every
+  other field (the per-type switches and the mark list) in
+  `ctf:admin:discord`. Neither is a build argument (ADR 55's lesson); both
+  survive the master reset like the event images, because a webhook the
+  organizer set up is something they set, not event data. The URL is
+  validated to a Discord `/api/webhooks/<id>/<token>` on https
+  (`discord.com`, `discordapp.com`, `ptb.discord.com`, `canary.discord.com`)
+  before it is stored — both the SSRF boundary (no organizer-supplied host
+  ever gets a POST from the box) and the "that is not a webhook" sanity
+  check — is never returned by any API (the public shape carries a
+  `webhookConfigured` boolean), never logged, and never audited by value
+  (only "set"/"cleared"). Everything defaults OFF: a configured webhook
+  turns nothing on by itself.
+
+- **Scheduling is an observation loop in the app** (started from
+  `instrumentation.ts`, nodejs runtime, unref'd, fire-and-forget), not a
+  cron and not the request path. Each tick reads its own configuration
+  FIRST, and a box with no webhook or with every switch off ends the tick
+  there: one pipeline carrying three reads (the config hash, the webhook URL
+  and its generation), no settings read, no state write, no outbox sweep —
+  the default state of an event that never opted in. While the box stays in
+  that state the loop backs off from its 30-second active interval to a
+  much longer one (one config pipeline per backoff period per process),
+  and an armed tick restores the normal interval — an idle box must not hammer
+  Redis from every process, and a config read that FAILS keeps the current
+  interval rather than masquerading as "all off"; the boot default is the
+  ACTIVE interval, so a first read that fails does not push a configured
+  box onto the five-minute backoff. The config is re-read every tick, so an
+  `/admin` change takes effect on the next pass with no restart, and the
+  config and webhook save endpoints nudge the loop to run that pass
+  immediately: enabling announcements shortly before launch records the
+  pre-launch baseline, so the launch is announced rather than swallowed by
+  a first observation that seeds an already-launched box silently. The
+  observation itself is a plain read of what the event IS —
+  launched, paused, where the remaining time stands — compared against what
+  was last observed, stored under `ctf:announce:*`; the loop uses only
+  connection-free pipeline reads, because a React `cache()` that awaits
+  Next's `connection()` would throw outside a request scope. A passed
+  scoring window is its own observed state (`closed`), never a pause: the
+  channel is never told "paused — submits are on hold until it resumes" at
+  the event's end, where nothing will resume. Remaining-time marks post
+  only while the event is launched and unpaused — a close time with no
+  scoring start (ADR 59) or a manual freeze never announces "time
+  remaining".
+
+- **Dedup is record-first, and the claims are atomic.** First blood is
+  trigger-driven (the submit routes call a non-blocking `notifyFirstBlood`
+  after a fresh solve): the awarding Lua script writes the true first solver
+  to `ctf:announce:first` atomically with the solve, and only that player's
+  notification proceeds. The announcement claim on
+  `ctf:announce:first-announced` is checked and written in the same Lua
+  script that enqueues the post, so replicas, retries and races produce one
+  post, and a box with the feature off does not claim past the immediate
+  post-solve notification window (a solve banked while off can only be
+  announced if the switch flips in the round trip before its notifier reads the
+  config) — enabling later cannot replay history. Lifecycle edges advance through one tiny Lua
+  compare-and-swap (read pack and its revision, swap-if-expected, bump a seq
+  id and the revision): the revision matters because a pause/resume cycle
+  restores the same pack string, so the pack alone cannot fence a delayed
+  observer; exactly one replica announces each edge, and the loser's stale
+  read simply does not match.
+  That pass runs only while launch or pause is switched on; with both off
+  the stored observation freezes, so an opted-out box does no state work,
+  and the first observation a box ever makes (fresh boot, post-reset) seeds
+  silently — nothing that predates the observation is announced. A freeze
+  that spans the scoring window's close and an extension of that window is
+  one announced pause: reopening while still frozen is not a new edge.
+  Remaining-
+  time marks are `HSETNX` claims on `<closeInstant>:<markMs>` (keyed by the
+  scoring-close instant, so moving Scoring closes re-arms the marks for the
+  new window); on the tick that first sees marks crossed, ALL of them are
+  claimed in one Lua script and at most ONE post — the current time left —
+  goes out, so a restart, a duplicate tick or a mid-event enable can never
+  burst a backlog of "1h left" / "15m left" checks.
+
+- **Delivery is a leased Redis outbox, at-least-once.** Every announcement
+  is written to `ctf:announce:outbox` and delivered by a coalescing flush
+  (250 ms) or the ticker's retry pass: `SET NX PX` lease per id so two
+  replicas or a retry and a live flush can never both deliver, ≤10 embeds
+  per POST (Discord's batch limit), a 5s timeout, and three attempts before
+  an entry is parked as `failed`. At-least-once is the chosen direction —
+  a POST that succeeded but whose `sent` write was lost will be retried,
+  because a rare duplicate announcement beats a silent drop — and the lease
+  bounds that window to a crashed owner's lease expiry. The kind switch is
+  re-checked atomically in the claim script: turning a type off stops every
+  unclaimed pending post immediately, without draining them; a post already
+  claimed by a sender may still reach Discord.
+
+- **Counters, fences and reconciliation close concurrent configuration races.**
+  Every outbox entry carries the webhook generation and kind epoch it was
+  produced under. Clearing a webhook or turning a switch off advances those
+  counters atomically, and enqueue scripts, outbox claim and the lifecycle
+  CAS all refuse stale counters so a producer cannot borrow a newly re-enabled
+  state it did not observe. The master reset increments the webhook generation
+  twice: once before the wipe (failing closed against concurrent enqueues) and
+  a second time inside `RESET_SCRIPT` after the wipe, closing the race where a
+  ticker reads the bumped generation but the old event settings before the
+  script clears them. A Discord 429 response parks both delivery sweeps on a
+  shared `max()` cooldown without spending an attempt. When a cleared webhook
+  is re-armed, the route reconciles the stored lifecycle observation with current
+  event state first, so a closed or past edge is never replayed against the
+  fresh URL.
+
+- **Failure isolation is total on the background path.** State readers
+  fail toward no-announcement (an unavailable Redis means no post); the
+  config reader is the deliberate exception and THROWS on a failed read —
+  per-command `{ error }` included — because a NOAUTH or a blip read as
+  "all off" would silently disable a configured announcer, so each caller
+  applies its own direction instead (the ticker skips the tick and keeps
+  its cadence, the solve hook posts nothing, the /admin GET answers 503).
+  Background delivery failures — the enqueue, the flush, the retry pass,
+  the ticker's own ticks — are logged through the label-only error helpers
+  and swallowed; the solve routes call the notifier fire-and-forget, so a
+  Discord outage can never fail a solve that already banked; and
+  instrumentation starts the ticker in a try/catch so a boot that cannot
+  load the announcer still serves the event. Admin configuration saves are
+  the deliberate opposite: a config write that fails THROWS and its
+  endpoint answers 503, so an organizer is told their change did not land
+  instead of being left to believe it did.
+
+- **Secrecy is structural, not conventional.** Message builders are pure
+  and accept only public metadata (a title, a category, points, a team
+  name, a link) — there is no field a flag, an answer or a locked story
+  step's internals could ride in on. Every message sets
+  `allowed_mentions: { parse: [] }` so Discord resolves no mentions at all,
+  and the text escape additionally neutralises `@everyone`/`@here` and raw
+  user/role/channel syntax in rendered text, backslash-escapes Markdown
+  (so a team named `[Claim your prize](…)` cannot become a clickable
+  phishing link under the event's authority) and splits `https://` so
+  Discord autolinks nothing out of untrusted text. A classic challenge
+  still locked behind its story step is never announced: the notifier
+  checks visibility first — the same unlock computation the board makes
+  from the no-solve view (ADR 60) — withholding the ENTIRE post (title,
+  points and the bare id the board also redacts) when the step is locked,
+  or when the story line it needs cannot be read at all, and spends its
+  claim only when an eligible post is enqueued. The admin "Send test" and the per-type
+  previews are built by the same builders the live announcer uses, so a
+  preview demonstrates the live message format — the same embeds, mention
+  suppression and escaping — on sample data, not the real content of any
+  future post.
+
+**Consequences.** Announcements are an organizer opt-in with no new
+credential to manage beyond the webhook itself, and no new process to
+deploy — and the opt-in is cheap to leave half-done: the switches are
+independent, and a webhook with nothing enabled costs one pipeline of
+three reads per tick. The `ctf:announce:*` state is wiped by the master reset (so a fresh
+run starts silent: the lifecycle pack re-seeds without replaying, and a
+fresh first blood is claimable again) while the webhook setup survives with
+the other organizer-set things. The pause/schedule contract is NOT
+re-implemented: the ticker reads the same `ctf:admin:settings` fields
+through the app's own `schedule-window.ts`, so the three-reader rule holds.
+No unauthenticated route joins the surface: all four routes under
+`/api/admin/announcements*` — the config, webhook, test and preview
+endpoints — require `requireAdmin` before they touch the store. What this
+does not cover: the cut kinds above (they stay cut until there is a proven
+organizer need that justifies their per-tick observation cost), per-
+contestant DMs (needs a bot, not a webhook), richer widgets (buttons,
+threads), and announcing Secure Development's per-PR scores — the poller
+already has its own cadence and the scorer owns that story.
+
+## ADR 74. Players are kit accounts; GitHub is needed only for Secure Development
+
+**Status.** Accepted (#731, built in #736–#744). Amended 2026-11-17 (#798): GitHub is the one OAuth provider; Google and Discord were dropped before release. Amends [ADR 19](#adr-19-organizer-admin-panel-runtime-override-layer), [ADR 40](#adr-40-csrf-assertion-in-the-proxy-rate-limits-keyed-on-the-login), [ADR 47](#adr-47-a-team-is-required-to-score-enforced-at-the-route-and-signposted-at-the-page), [ADR 48](#adr-48-per-contestant-support-actions-and-why-they-refuse-some-things), [ADR 49](#adr-49-firstteamat-records-the-funnels-conversion-moment-joinedat-does-not) and [ADR 50](#adr-50-metrics-are-computed-from-stored-data-forks-report-nothing): wherever they key a record on, or identify a player by, a GitHub login, read the player id. Admin access is [ADR 72](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env).
+
+**Context.** Through v1 a player was a GitHub login. Every event needed a
+GitHub OAuth app, even one that ran only Quiz and Jeopardy, and a GitHub
+outage stopped sign-in for the whole box. Solves, teams, hints, metrics and
+admin access were all keyed on the login, so a renamed GitHub account was a
+different player and a login was the only handle an organizer had.
+
+**Decision.**
+- **The kit owns the accounts.** better-auth runs on a Redis user store
+  (`ctf:auth:*`, behind srh like everything else): users, password hashes,
+  provider accounts and sessions. There is no new service and no SQL
+  database. Username and password sign-up is always available; usernames are
+  unique case-insensitively, and sign-up is rate-limited per address.
+- **GitHub is the one OAuth provider, and the organizer's choice.** GitHub
+  sign-in appears once both its keys are in `.env`, and has an on/off switch
+  in the `/admin` Event tab (absent means on) that gates both the start and
+  the completion of a sign-in. Keys never go to Redis or an archive. No email
+  is stored from GitHub: every account gets a placeholder email. GitHub
+  contributes its `login`, and an account created by a GitHub sign-in starts
+  with the GitHub name and avatar.
+- **GitHub is required only for Secure Development.** With SD on, a player
+  links GitHub from their profile (or signs in with it), and sync credits a
+  PR to the player who linked its author's login. One GitHub account links to
+  one player. A score from an author nobody has linked is held
+  ([ADR 70](#adr-70-unattributed-secure-development-scores-are-held-not-dropped)).
+  With SD off, GitHub appears only as a sign-in button the organizer chose.
+- **Every record is keyed by the player id**, the UUID better-auth assigns.
+  The GitHub login is an attribute used to attribute PRs. Names shown
+  anywhere come from the username at display time.
+- **Organizers manage accounts in the Support tab.** A password reset is a
+  single-use code, valid 15 minutes, that the organizer hands over and the
+  player redeems at `/reset`; the organizer never sees or sets a password, and
+  the reset signs the player out everywhere. An organizer can rename a
+  player, unlink a GitHub link that has not scored, and delete an account.
+  A delete releases the player's GitHub link and blocks that login from
+  linking again until the next master reset, so a new account cannot take
+  over points a PR re-scores. **Delete all accounts** in the Event tab hands
+  the box to a new community; it deletes every account and admin grant, and
+  the next admin claims with a rotated code.
+- **A master reset keeps accounts**, admin grants and GitHub links, and wipes
+  the event: solves, teams, hints, progress, held scores and the re-link
+  blocklist. The event archive carries no account data.
+- **v1 is a clean break.** There is no migration of v1 accounts or progress:
+  an upgrade is export the event archive, then master reset.
+
+**Consequences.** A Quiz or Jeopardy event needs no GitHub OAuth app at all.
+Redis now holds credentials, so every auth write checks per-command errors
+and fails closed, multi-key writes are Lua scripts with live
+`*.upstash.test.ts` suites, and account data stays out of logs and archives.
+v2.0 has no email, so a forgotten password costs an organizer a reset code.
+A v1 box's progress does not carry over.
+
+**Alternatives rejected.** Keep GitHub as the identity and add other
+providers beside it: every record would still need a login, and a player
+without GitHub would have none. A SQL database for accounts: a new stateful
+service on every deployment target, for data Redis already holds. Migrating
+v1 progress to player ids: a v1 login maps to no v2 account until that
+person signs up, so the join is a guess.

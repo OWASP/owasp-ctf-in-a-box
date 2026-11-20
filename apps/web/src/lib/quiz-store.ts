@@ -10,6 +10,7 @@ import { QUIZ_BUNDLE_VERSION, type QuizBundle, type QuizBundleQuestion } from "@
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { readLastAt } from "@/lib/last-at";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
+import { ANNOUNCE_FIRST_KEY } from "@/lib/announce/keys";
 import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 import {
   QUIZ_QUESTIONS_KEY as QUESTIONS_KEY,
@@ -33,7 +34,7 @@ import {
  * key constants/`canonicalizeChoices` (via quiz-keys.ts) rather than going
  * through these functions: `seedDemoData()` HSETs the questions/key/answers/
  * aggregate/award-time hashes directly when seeding demo data, and the master
- * reset's `scanDelByPrefix()` SCAN+DELs the per-login answers/attempts hashes,
+ * reset's `scanDelByPrefix()` SCAN+DELs the per-player answers/attempts hashes,
  * the two aggregate hashes and `ctf:quiz:lastAt` (never the questions/key hashes — those are
  * organizer content the reset keeps). See docs/architecture.md's "Quiz data
  * flow" for the full picture.
@@ -50,12 +51,12 @@ import {
  *                                latest award, written by GRADE_SCRIPT with
  *                                the totals — the leaderboard's
  *                                "whoever got there first" tiebreak
- *   ctf:quiz:answers:<login>    hash, id -> JSON {choices, points, at} —
+ *   ctf:quiz:answers:<playerId>    hash, id -> JSON {choices, points, at} —
  *                                records ONLY correct answers. Points are
  *                                captured at answer time, so a later
  *                                re-pricing of a question never rewrites
  *                                history.
- *   ctf:quiz:attempts:<login>   hash, id -> JSON {attempts, firstAt, lastAt, lastAtMs}
+ *   ctf:quiz:attempts:<playerId>   hash, id -> JSON {attempts, firstAt, lastAt, lastAtMs}
  *                                `firstAt` is the FIRST submission's time,
  *                                carried forward across rewrites; absent on
  *                                rows written before it existed.
@@ -101,7 +102,7 @@ import {
 // than as local consts here — see quiz-keys.ts's header comment for why.
 // POINTS_KEY/ANSWERED_KEY are running totals, and LAST_AT_KEY the latest
 // award time, updated atomically by the grading script alongside the
-// per-login answer row — the same
+// per-player answer row — the same
 // `ctf:hints:spent` trick, so a leaderboard overlay costs one HGETALL each
 // regardless of board size.
 
@@ -386,7 +387,7 @@ export async function importBundle(bundle: QuizBundle): Promise<QuizImportSummar
   const [idsRes] = await upstashPipeline([["HKEYS", QUESTIONS_KEY]]);
   // The membership read must have succeeded before anything is written: a
   // failed HKEYS would otherwise read as "no questions yet" and report every
-  // row `created`. Same guard as classic's and ai's.
+  // row `created`. Same guard as classic's.
   if (idsRes.error) throw new Error(`Upstash read failed before import: ${idsRes.error}`);
   const existingIds = new Set(Array.isArray(idsRes.result) ? (idsRes.result as string[]) : []);
 
@@ -444,7 +445,7 @@ export async function exportBundle(): Promise<QuizBundle> {
  *  retires the question from the quiz (contestants stop seeing it, and it
  *  cannot be answered — GRADE_SCRIPT's step 1 returns `missing`
  *  without the key), but it deliberately does NOT touch contestant history.
- *  `ctf:quiz:answers:<login>` / `ctf:quiz:attempts:<login>` rows for the
+ *  `ctf:quiz:answers:<playerId>` / `ctf:quiz:attempts:<playerId>` rows for the
  *  deleted id stay put, and the two aggregate counters
  *  (`ctf:quiz:points`/`ctf:quiz:answered`) are not decremented — so points
  *  already banked for this question REMAIN on the leaderboard. Clearing
@@ -452,7 +453,7 @@ export async function exportBundle(): Promise<QuizBundle> {
  *  which wipes exactly those hashes across every login at once.
  *
  *  That's a deliberate contract, not an oversight: cascading a delete across
- *  every per-login hash plus aggregate decrements is a fan-out destructive
+ *  every per-player hash plus aggregate decrements is a fan-out destructive
  *  write with no atomic story and no undo, and retiring a question is a far
  *  more common need than un-awarding points for it. Because the aggregates
  *  outlive the question, a login can hold more answers than the question
@@ -529,7 +530,7 @@ export async function getViewerQuiz(login: string): Promise<ViewerQuiz> {
 /** One login's (or one team's) quiz aggregate, as consumed by the leaderboard
  *  overlay (`leaderboard/module-contributions.ts`). */
 /** `itemIds` is present only on the TEAM path, whose fold already dedupes by
- *  item id — the aggregate per-login path has running counters with no memory
+ *  item id — the aggregate per-player path has running counters with no memory
  *  of which items produced them. Where it is present a caller can union it
  *  with the live catalogue for a denominator that survives an organizer
  *  deleting a solved item; where it is absent the caller clamps. */
@@ -538,7 +539,7 @@ export type QuizTotal = { points: number; answered: number; lastAt: string | nul
 /** Per-login quiz totals for every login that has answered at least one
  *  question correctly — three `HGETALL`s in one pipeline (`ctf:quiz:points`,
  *  `ctf:quiz:answered`, `ctf:quiz:lastAt`), maintained atomically by
- *  GRADE_SCRIPT alongside the per-login answer row (see the header comment
+ *  GRADE_SCRIPT alongside the per-player answer row (see the header comment
  *  and GRADE_SCRIPT's own comment, step 6). The cost does not grow with the
  *  board, mirroring `getHintPenalties` in hint-store.ts.
  *
@@ -574,11 +575,11 @@ export async function getQuizTotals(): Promise<Map<string, QuizTotal>> {
  *  A TEAM's quiz total is the UNION of questions its members answered
  *  correctly (spec D6), never the sum of member aggregates — summing would
  *  double count any question two teammates both answered, which is exactly
- *  the double-count bug the per-login aggregate counters exist to avoid at
+ *  the double-count bug the per-player aggregate counters exist to avoid at
  *  the individual level. The aggregates can't serve a team: they're running
  *  totals with no memory of WHICH questions contributed to them, so there is
  *  no way to dedupe from them. Instead this reads each member's
- *  `ctf:quiz:answers:<login>` hash directly and dedupes by question id
+ *  `ctf:quiz:answers:<playerId>` hash directly and dedupes by question id
  *  (`foldTeamAnswers`), keeping the EARLIEST correct answer's stored points
  *  for any question two or more members both hold (a later re-answer by a
  *  teammate — or a since-changed question price recorded on someone else's
@@ -767,7 +768,7 @@ async function readSettingsFailOpen(): Promise<ResolvedAdminSettings | null> {
 //
 //   1. HGET the secret answer key for this question. Missing -> {'missing'}:
 //      there is nothing to grade (the caller passed a bad/deleted id).
-//   2. HEXISTS on the per-login answers hash for this question, BEFORE any
+//   2. HEXISTS on the per-player answers hash for this question, BEFORE any
 //      write. A hit means `login` already banked a correct answer here (a
 //      race that slipped past the gate's own read) -> {'already'}, with
 //      nothing else touched.
@@ -818,7 +819,7 @@ local nowMs = tonumber(ARGV[7])
 local dry = ARGV[8] == '1'
 
 -- The shared attempt-row read (#504 M13) — attempts, lastAtMs and firstAt —
--- declared here as ATTEMPT_ROW_LUA, so classic's and ai's scripts read the
+-- declared here as ATTEMPT_ROW_LUA, so classic's script reads the
 -- same three fields out of the same row shape.
 ${ATTEMPT_ROW_LUA}
 
@@ -857,6 +858,9 @@ local prevAt = redis.call('HGET', KEYS[7], ARGV[4])
 if not prevAt or not string.match(prevAt, '^%d%d%d%d%-%d%d%-%d%dT') or prevAt < ARGV[3] then
   redis.call('HSET', KEYS[7], ARGV[4], ARGV[3])
 end
+-- Name the first SOLVER in the same atomic award that banks the answer, so
+-- the announcer never has to race its own claim for the first-blood post.
+redis.call('HSETNX', KEYS[#KEYS], ARGV[#ARGV], cjson.encode({playerId = ARGV[4], at = ARGV[3]}))
 return {'correct', tostring(points)}`;
 
 export type AnswerResult =
@@ -935,9 +939,9 @@ export async function answerQuestion(
   try {
     verdict = await upstashEval(
       GRADE_SCRIPT,
-      [attemptsKey(login), answersKey(login), KEY_KEY, QUESTIONS_KEY, POINTS_KEY, ANSWERED_KEY, LAST_AT_KEY],
+      [attemptsKey(login), answersKey(login), KEY_KEY, QUESTIONS_KEY, POINTS_KEY, ANSWERED_KEY, LAST_AT_KEY, ANNOUNCE_FIRST_KEY],
       // ARGV[8]: dry run — grade, write nothing (admin preview).
-      [questionId, submitted, nowIso, login, maxAttempts, cooldownMs, now.getTime(), dryRun ? "1" : "0"],
+      [questionId, submitted, nowIso, login, maxAttempts, cooldownMs, now.getTime(), dryRun ? "1" : "0", `quiz:${questionId}`],
     );
   } catch (err) {
     console.error("Quiz grading failed:", errorLabel(err));

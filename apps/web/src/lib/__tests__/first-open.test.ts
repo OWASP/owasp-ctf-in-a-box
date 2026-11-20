@@ -18,11 +18,8 @@ describe("recordFirstOpen", () => {
   it("writes the time once per login and challenge, under the module's key", async () => {
     m.upstashPipeline.mockResolvedValue([{ result: 1 }]);
     await recordFirstOpen("classic", "Alice", "web-1");
-    await recordFirstOpen("ai", "Alice", "jail-1");
     const [[classic]] = m.upstashPipeline.mock.calls[0];
-    const [[ai]] = m.upstashPipeline.mock.calls[1];
     expect(classic.slice(0, 3)).toEqual(["HSETNX", "ctf:classic:opened:Alice", "web-1"]);
-    expect(ai.slice(0, 3)).toEqual(["HSETNX", "ctf:ai:opened:Alice", "jail-1"]);
     expect(Number.isNaN(Date.parse(classic[3]))).toBe(false);
   });
 

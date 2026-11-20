@@ -1,7 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { createMemoryStore, createRedisStore, solvesKey } from "../src/store.js";
+import {
+  AUTH_USER_ROWS_KEY,
+  RECORD_SOLVES_SCRIPT,
+  createMemoryStore,
+  createRedisStore,
+  scoreHoldKey,
+  solvesKey,
+} from "../src/store.js";
 
 const T0 = "2026-08-14T10:00:00.000Z";
 const T1 = "2026-08-14T11:00:00.000Z";
@@ -17,33 +24,136 @@ test("memory store keeps first-solve timestamps; replays no-op", async () => {
   assert.deepEqual(await store.getSolves("juice-shop"), {}); // targets isolated
 });
 
-test("redis store: HSETNX command arrays via SRH pipeline, bearer token", async (t) => {
+test("redis store: one EVAL of the solve script via SRH pipeline, bearer token", async (t) => {
   const calls = [];
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {
     calls.push({ url: String(url), opts });
     const commands = JSON.parse(opts.body);
-    return new Response(JSON.stringify(commands.map(() => ({ result: 1 }))), { status: 200 });
+    return new Response(JSON.stringify(commands.map(() => ({ result: "ok" }))), { status: 200 });
   };
   t.after(() => {
     globalThis.fetch = realFetch;
   });
 
   const store = createRedisStore({ url: "http://srh:80/", token: "redis-token" });
-  await store.recordSolves("dvwa", "octocat", ["sqli-low", "xss-dom"], T0);
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low", "xss-dom"], T0), "ok");
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "http://srh:80/pipeline");
   assert.equal(calls[0].opts.method, "POST");
   assert.equal(calls[0].opts.headers.authorization, "Bearer redis-token");
-  // Monotonic writes: HSETNX only — a replay must never touch the timestamp.
   assert.deepEqual(JSON.parse(calls[0].opts.body), [
-    ["HSETNX", "ctf:solves:dvwa", "octocat:sqli-low", T0],
-    ["HSETNX", "ctf:solves:dvwa", "octocat:xss-dom", T0],
+    [
+      "EVAL",
+      RECORD_SOLVES_SCRIPT,
+      5,
+      "ctf:solves:dvwa",
+      "ctf:score-hold:octocat",
+      "ctf:auth:user",
+      "ctf:link:github:",
+      "ctf:admin:settings",
+      "octocat",
+      T0,
+      "",
+      String(Date.parse(T0)),
+      "",
+      "sqli-low",
+      "xss-dom",
+    ],
   ]);
 
-  await store.recordSolves("dvwa", "octocat", [], T1);
+  // With the login sync resolved the player from: its link key, lowercased.
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0, "OctoCat"), "ok");
+  const [withLogin] = JSON.parse(calls[1].opts.body);
+  assert.deepEqual(withLogin.slice(0, 8), [
+    "EVAL",
+    RECORD_SOLVES_SCRIPT,
+    5,
+    "ctf:solves:dvwa",
+    "ctf:score-hold:octocat",
+    "ctf:auth:user",
+    "ctf:link:github:octocat",
+    "ctf:admin:settings",
+  ]);
+  assert.deepEqual(withLogin.slice(8), ["octocat", T0, "octocat", String(Date.parse(T0)), "", "sqli-low"]);
+  calls.length = 1;
+
+  assert.equal(await store.recordSolves("dvwa", "octocat", [], T1), "ok");
   assert.equal(calls.length, 1); // nothing to write, no round-trip
+});
+
+test("redis store: recordSolves passes the script's refusal verdicts through", async () => {
+  for (const verdict of ["pending", "deleted", "unlinked", "pre-reset", "stale"]) {
+    const store = createRedisStore({
+      url: "http://srh:80",
+      token: "redis-token",
+      fetchImpl: async () => new Response(JSON.stringify([{ result: verdict }]), { status: 200 }),
+    });
+    assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0), verdict);
+  }
+});
+
+test("redis store: a script error or an unknown verdict throws, never a verdict", async () => {
+  const replying = (body) =>
+    createRedisStore({
+      url: "http://srh:80",
+      token: "redis-token",
+      fetchImpl: async () => new Response(JSON.stringify(body), { status: 200 }),
+    });
+  await assert.rejects(
+    replying([{ error: "ERR Error running script" }]).recordSolves("dvwa", "octocat", ["sqli-low"], T0),
+    /upstash: ERR Error running script/,
+  );
+  await assert.rejects(
+    replying([{ result: 1 }]).recordSolves("dvwa", "octocat", ["sqli-low"], T0),
+    /recordSolves: unexpected/,
+  );
+});
+
+test("score-hold keys match the app's: ctf:score-hold:<id> and the ctf:auth:user rows hash", () => {
+  assert.equal(scoreHoldKey("octocat"), "ctf:score-hold:octocat");
+  // apps/web auth-store/keys.ts rowsKey(AUTH_PREFIX, "user"); the app pins the same literal.
+  assert.equal(AUTH_USER_ROWS_KEY, "ctf:auth:user");
+});
+
+test("memory store: with a login, the write lands only while that login links to the player", async () => {
+  const store = createMemoryStore();
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0, "octo"), "unlinked");
+  store.links.set("octo", "hubot");
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0, "octo"), "unlinked");
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+  store.links.set("octo", "octocat");
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0, "Octo"), "ok");
+  assert.deepEqual(await store.getSolves("dvwa"), { "octocat:sqli-low": T0 });
+});
+
+test("memory store: a score hold refuses the write — pending while the row exists, deleted after", async () => {
+  const store = createMemoryStore();
+  store.holds.add("octocat");
+  store.users.add("octocat");
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0), "pending");
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+  store.users.delete("octocat");
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0), "deleted");
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+  assert.equal(await store.recordSolves("dvwa", "hubot", ["sqli-low"], T0), "ok");
+  assert.deepEqual(await store.getSolves("dvwa"), { "hubot:sqli-low": T0 });
+});
+
+test("memory store: a score timed before the current reset epoch is pre-reset, whatever the hold and link, and one judged against another epoch is stale", async () => {
+  const store = createMemoryStore();
+  store.__setPolicy({ resetAt: String(Date.parse(T1)) });
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0), "pre-reset");
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0, "octo"), "pre-reset");
+  assert.deepEqual(await store.getSolves("dvwa"), {});
+  // At or after the epoch, the write lands only when judged against it.
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T1), "stale");
+  assert.equal(await store.recordSolves("dvwa", "octocat", ["sqli-low"], T1, "", String(Date.parse(T1))), "ok");
+  // A non-numeric epoch is honoured only as the value the judge read.
+  store.__setPolicy({ resetAt: "2026-08-14T10:30:00Z" });
+  assert.equal(await store.recordSolves("dvwa", "hubot", ["sqli-low"], T1, "", "older"), "stale");
+  assert.equal(await store.recordSolves("dvwa", "hubot", ["sqli-low"], T1, "", "2026-08-14T10:30:00Z"), "ok");
 });
 
 test("redis store: HGETALL parses the flat field/value array", async (t) => {

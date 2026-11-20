@@ -14,6 +14,13 @@ These are the authoritative commands — they match what CI runs in
 (`.nvmrc` pins it, so `nvm use` picks it up); run
 the suites on 22 — a sync/scorer suite was green on Node 25 and red on 22 in
 CI (#256, an unref'd `AbortSignal.timeout` timer).
+`apps/web/package.json` says the same thing as a range, `engines.node:
+"^22.12.0"` (vitest 5's floor on the 22 line), on purpose: `.nvmrc` and CI's
+`node-version: 22` resolve to the latest 22.x on each run and Dependabot
+refreshes the image digest weekly, so an exact pin there would be stale after
+the first refresh and nothing would move it. The package range, `.nvmrc` and
+CI target the 22 line and take its latest patch; the container stays on its
+digest-pinned patch until the weekly Dependabot refresh merges.
 
 **sync** (the score poller):
 
@@ -64,12 +71,11 @@ Between the two, CI asserts `apps/web/.next/server/app/index.html` does
 (resolved through a build-time-unreachable Redis read) freezes at build time.
 Check it after any build you run here.
 
-**quiz-only / classic-only / ai-only** (single-module compose bring-ups):
+**quiz-only / classic-only** (single-module compose bring-ups):
 
 ```sh
 ./scripts/acceptance-quiz-only.sh
 ./scripts/acceptance-classic-only.sh
-./scripts/acceptance-ai-only.sh
 ```
 
 **shell / setup** (provisioning and automation scripts):
@@ -172,10 +178,15 @@ invariants this repo has been burned by; a warning from one is a prompt to
 look, not a formality.
 
 Two more workflows run on every PR (#483). `changelog.yml` fails a PR that
-changes `apps/`, `sync/`, `scorer/`, `setup/` or `deploy/` without touching
-`CHANGELOG.md` (test-only and `.md` paths are exempt; the rules are in
+changes `apps/`, `sync/`, `scorer/`, `setup/` or `deploy/` without adding a
+changelog fragment, a new `changelog.d/<issue>-<slug>.md` holding the entry
+(test-only and `.md` paths are exempt; the rules are in
 `scripts/check-changelog.sh`, run locally as
-`scripts/check-changelog.sh origin/main HEAD`). The `no-changelog` label
+`scripts/check-changelog.sh origin/main HEAD`). Never put a new entry in
+`CHANGELOG.md` itself: one shared `## Unreleased` block makes every open PR
+conflict with every merge, and an edit there does not satisfy the check.
+`changelog.d/README.md` has the format; `scripts/changelog-assemble.mjs` folds
+the fragments into `CHANGELOG.md` at release. The `no-changelog` label
 skips it, and Dependabot PRs are skipped. `labeler.yml` applies labels by
 path from `.github/labeler.yml`. It runs on `pull_request_target` so it can
 label fork PRs, which is safe only because it never checks out or runs PR
@@ -292,8 +303,13 @@ suggestions.
   no image takes a config build-arg, so bring the box up as `docker compose
   --profile secdev --profile app up -d --build` (drop `--profile secdev` on an
   event with no `SCORE_IMAGE`). Three `.env` keys are read at RUNTIME and
-  nothing falls back to a baked default: `ADMIN_LOGINS` (empty 403s everyone at `/admin` —
-  fail-closed, `bootstrap-env.ts`), `GITHUB_ORG` (empty means no fork links
+  nothing falls back to a baked default: `ADMIN_CLAIM_CODE_HASH` (the SHA-256
+  of the one-time admin claim code, never the code; empty or malformed means
+  nobody can claim the first seat at `/admin/claim` with a bootstrap code —
+  fail-closed, `bootstrap-env.ts`, ADR 72; an admin is a player id in
+  `ctf:admin:grants`, and nothing reads `ADMIN_LOGINS`. `ctf-setup.sh secrets`
+  writes the hash and `admin-code` rotates it; Fly and AWS rotate it with
+  `deploy.sh --new-admin-code`), `GITHUB_ORG` (empty means no fork links
   on `/challenges`, and `sync` refuses to start at all, logging
   `ctf-sync: GITHUB_ORG is not set`), and **`SCORE_IMAGE`, which is how a box
   says whether it runs Secure Development** — non-empty means the scorer and
@@ -364,12 +380,25 @@ suggestions.
   "none yet" and wrote that emptiness back over the box's list (#261). Check
   `error` and throw so the caller's fail direction applies and says so. The
   `sync` and `scorer` clients throw for you (#256); the app's does not.
-- **Logins join case-insensitively, everywhere.** The scorer records the PR
-  author's spelling, the app stores the session's, and GitHub logins are
-  unique only case-insensitively — so every login join lowercases both sides
-  (`module-contributions`, `team-standings`, `hint-penalties`, `admin-auth`).
-  Two verbatim joins made one contestant's hints free and showed a scoring
-  teammate at 0 pts (#216).
+- **Player records are keyed by the player id, never the GitHub login.** The
+  id is the lowercase UUID v4 better-auth assigns (`ctf:auth:`); solves,
+  teams, hints, quiz/classic/AI state, the activity log and metrics all key on
+  it, and names are resolved from the auth store at display time. The GitHub
+  login exists only to link a PR to a player: the app writes
+  `ctf:link:github:<lowercased login>` (player id) and
+  `ctf:link:user:<id>` (login) when a player signs in with GitHub or, with
+  Secure Development on, links GitHub from their profile (one GitHub account
+  per kit account; a player cannot unlink, and an organizer can unlink only
+  a link that has not scored), sync resolves the score marker's `author`
+  through the first, and an unlinked author's score is held
+  (`ctf:sd:held:*`) until they link; only a link made before scoring closes
+  releases it, though the release itself may land after the close. GitHub
+  logins are unique only
+  case-insensitively, so the link key lowercases both sides. Admin-ness is
+  the player id too, never a login. Never key a record on a
+  login, and never join across the two keyings (#216 was a verbatim login
+  join that made hints free; #742 removed the class). Sync needs Redis for
+  the link lookup and refuses to start without it.
 - **Diagrams are hand-authored animated SVGs sharing one style.** Every one
   lives in `docs/assets/diagrams/<name>.svg` and is embedded with a plain
   `<img>` — never a `mermaid` code fence, which cannot animate and cannot be
@@ -444,12 +473,11 @@ suggestions.
 - [`docs/scorer.md`](docs/scorer.md) — the scorer engine: serve + judge
   modes, both rubric grammars, authoring and building rubrics.
 - [`docs/hosting.md`](docs/hosting.md) — standing the kit up: prerequisites,
-  how scores reach the box, OAuth app, the `.env` bootstrap.
+  how scores reach the box, player accounts and sign-in providers, the `.env`
+  bootstrap, upgrading from v1.
 - [`docs/operations.md`](docs/operations.md) — running the event once it is
   up: admin panel and runtime overrides, teams, the event archive, per-module
   runbooks, pre-event verification, dev-stack, the pre-launch lock.
-- [`docs/ai-module.md`](docs/ai-module.md) — the `ai` module's contract with
-  the external challenge site: launch tokens, solve reporting, errors, keys.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — symptom-ordered
   runbook for a misbehaving stack: the `REDIS_PASSWORD` refusal, `/admin`
   403s from a config-less build, `fetch failed` between services.

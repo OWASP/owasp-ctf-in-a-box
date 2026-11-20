@@ -32,21 +32,27 @@ vi.mock("@/lib/enabled-modules", () => ({ isModuleLive }));
 // Whether this viewer is an admin looking at a hidden challenge: its own
 // suite (classic-visibility.test.ts) pins the answer; here, what the route
 // does with it.
-const adminView = vi.hoisted(() => ({ adminSeesHidden: vi.fn<(login: string, id: string) => Promise<boolean>>(async () => false) }));
+const adminView = vi.hoisted(() => ({ adminSeesHidden: vi.fn<(playerId: string, id: string) => Promise<boolean>>(async () => false) }));
 vi.mock("@/lib/classic-visibility", () => adminView);
 // Admins are the only callers whose body is read before the team check.
-const adminAuth = vi.hoisted(() => ({ isAdminLogin: vi.fn<(login: string | undefined) => Promise<boolean>>(async () => false) }));
+const adminAuth = vi.hoisted(() => ({ isAdminPlayer: vi.fn<(playerId: string | undefined) => Promise<boolean>>(async () => false) }));
 vi.mock("@/lib/admin-auth", () => adminAuth);
+// The first-blood hook (#590): asserted below, and mocked so no test can
+// reach the real announcer (Redis + Discord).
+const announceNotify = vi.hoisted(() => ({ notifyFirstBlood: vi.fn(async () => {}) }));
+vi.mock("@/lib/announce/notify", () => announceNotify);
 
 import { POST } from "@/app/api/classic/submit/route";
 
 const req = (body?: unknown) =>
   new Request("http://x/api/classic/submit", { method: "POST", body: JSON.stringify(body ?? {}) });
 
-const SESSION = { user: { login: "alice" } };
+const ALICE_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+const IDS: Record<string, string> = { alice: ALICE_ID, boss: "3e2b7c6f-4a5d-4f8e-b192-adbecf203152" };
+const SESSION = { user: { id: ALICE_ID, login: "alice" } };
 
 function session(login: string) {
-  getSession.mockResolvedValue({ user: { login } });
+  getSession.mockResolvedValue({ user: { id: IDS[login], login } });
 }
 
 function noSession() {
@@ -64,14 +70,16 @@ beforeEach(() => {
   hasTeam.mockReset();
   getSession.mockResolvedValue(SESSION);
   requireLaunchedApi.mockResolvedValue(null);
-  launchApiAccess.mockImplementation(async (login: string) => ({ refused: await requireLaunchedApi(login), preview: false }));
+  launchApiAccess.mockImplementation(async (playerId: string) => ({ refused: await requireLaunchedApi(playerId), preview: false }));
   hasTeam.mockResolvedValue(true);
   isModuleLive.mockReset();
   isModuleLive.mockResolvedValue(true);
-  adminAuth.isAdminLogin.mockReset();
-  adminAuth.isAdminLogin.mockResolvedValue(false);
+  adminAuth.isAdminPlayer.mockReset();
+  adminAuth.isAdminPlayer.mockResolvedValue(false);
   adminView.adminSeesHidden.mockClear();
   activityLog.logActivity.mockClear();
+  announceNotify.notifyFirstBlood.mockReset();
+  announceNotify.notifyFirstBlood.mockResolvedValue(undefined);
 });
 
 describe("POST /api/classic/submit", () => {
@@ -117,10 +125,10 @@ describe("POST /api/classic/submit", () => {
     expect(submitFlag).not.toHaveBeenCalled();
   });
 
-  it("400s a session with no GitHub login, without touching the store", async () => {
-    getSession.mockResolvedValue({ user: {} });
+  it("401s a session whose user id is not a player id, without touching the store", async () => {
+    getSession.mockResolvedValue({ user: { id: "alice", login: "alice" } });
     const res = await POST(req({ challengeId: "c-1", flag: "x" }));
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(401);
     expect(submitFlag).not.toHaveBeenCalled();
   });
 
@@ -142,9 +150,16 @@ describe("POST /api/classic/submit", () => {
     storeReturns({ ok: true, correct: true, points: 50 });
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(200);
-    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: false });
-    // The lock is asked about THIS session's login (an admin passes as preview).
-    expect(requireLaunchedApi).toHaveBeenCalledWith("alice");
+    expect(submitFlag).toHaveBeenCalledWith(ALICE_ID, "c-1", "CTF{x}", { dryRun: false });
+    // The lock is asked about THIS session's GitHub login: admin preview is
+    // decided on it (an admin passes as preview).
+    expect(requireLaunchedApi).toHaveBeenCalledWith(ALICE_ID);
+    // The activity line names the player by id, with their name at the time.
+    expect(activityLog.logActivity).toHaveBeenCalledWith(
+      "classic-solve",
+      expect.objectContaining({ id: ALICE_ID, name: "alice" }),
+      "c-1",
+    );
   });
 
   // --- the team requirement (issue #153) ------------------------------------
@@ -175,7 +190,7 @@ describe("POST /api/classic/submit", () => {
     hasTeam.mockResolvedValue(false);
     session("alice");
     await POST(req({ challengeId: "c-1", flag: "x", login: "mallory" }));
-    expect(hasTeam).toHaveBeenCalledWith("alice");
+    expect(hasTeam).toHaveBeenCalledWith(ALICE_ID);
   });
 
   it("checks the launch lock BEFORE the team, so a pre-launch caller is told that first", async () => {
@@ -190,7 +205,7 @@ describe("POST /api/classic/submit", () => {
     session("alice");
     storeReturns({ ok: true, correct: false });
     await POST(req({ challengeId: "c-1", flag: "x", login: "mallory" }));
-    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "x", { dryRun: false });
+    expect(submitFlag).toHaveBeenCalledWith(ALICE_ID, "c-1", "x", { dryRun: false });
   });
 
   it("400s a malformed challenge id and 404s an unknown one", async () => {
@@ -251,12 +266,20 @@ describe("POST /api/classic/submit", () => {
     },
   );
 
-  it("403s a gate refusal and carries retryAt through", async () => {
-    session("alice");
-    storeReturns({ ok: false, reason: "cooldown", retryAt: "2026-08-19T10:00:00.000Z" });
-    const res = await POST(req({ challengeId: "c-1", flag: "x" }));
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: "cooldown", retryAt: "2026-08-19T10:00:00.000Z" });
+  it("429s a cooldown refusal with Retry-After header and carries retryAt through", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-19T09:59:18.800Z"));
+    try {
+      session("alice");
+      const retryAt = "2026-08-19T10:00:00.000Z";
+      storeReturns({ ok: false, reason: "cooldown", retryAt });
+      const res = await POST(req({ challengeId: "c-1", flag: "x" }));
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("42");
+      expect(await res.json()).toEqual({ error: "cooldown", retryAt });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("503s when the grading script itself fails", async () => {
@@ -274,7 +297,7 @@ describe("POST /api/classic/submit admin preview (#464)", () => {
     storeReturns({ ok: true, correct: true, points: 50, dryRun: true });
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(200);
-    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: true });
+    expect(submitFlag).toHaveBeenCalledWith(ALICE_ID, "c-1", "CTF{x}", { dryRun: true });
   });
 
   it("never asks for a dry run once launched", async () => {
@@ -282,7 +305,7 @@ describe("POST /api/classic/submit admin preview (#464)", () => {
     launchApiAccess.mockResolvedValueOnce({ refused: null, preview: false });
     storeReturns({ ok: true, correct: true, points: 50 });
     await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
-    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: false });
+    expect(submitFlag).toHaveBeenCalledWith(ALICE_ID, "c-1", "CTF{x}", { dryRun: false });
   });
 });
 
@@ -306,7 +329,7 @@ describe("a teamless admin preview (#464)", () => {
     storeReturns({ ok: true, correct: true, points: 50, dryRun: true });
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(200);
-    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: true });
+    expect(submitFlag).toHaveBeenCalledWith(ALICE_ID, "c-1", "CTF{x}", { dryRun: true });
   });
 });
 
@@ -337,14 +360,14 @@ describe("an admin on a hidden challenge after launch", () => {
 
   it("is graded as a dry run, even without a team", async () => {
     session("boss");
-    adminAuth.isAdminLogin.mockResolvedValue(true);
+    adminAuth.isAdminPlayer.mockResolvedValue(true);
     hasTeam.mockResolvedValue(false);
     adminView.adminSeesHidden.mockResolvedValueOnce(true);
     storeReturns({ ok: true, correct: true, points: 50, dryRun: true });
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
     expect(res.status).toBe(200);
-    expect(adminView.adminSeesHidden).toHaveBeenLastCalledWith("boss", "c-1");
-    expect(submitFlag).toHaveBeenCalledWith("boss", "c-1", "CTF{x}", { dryRun: true });
+    expect(adminView.adminSeesHidden).toHaveBeenLastCalledWith(IDS.boss, "c-1");
+    expect(submitFlag).toHaveBeenCalledWith(IDS.boss, "c-1", "CTF{x}", { dryRun: true });
     expect((await res.json()).dryRun).toBe(true);
   });
 
@@ -353,7 +376,54 @@ describe("an admin on a hidden challenge after launch", () => {
     adminView.adminSeesHidden.mockResolvedValueOnce(false);
     storeReturns({ ok: false, reason: "invalid" });
     const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
-    expect(submitFlag).toHaveBeenCalledWith("alice", "c-1", "CTF{x}", { dryRun: false });
+    expect(submitFlag).toHaveBeenCalledWith(ALICE_ID, "c-1", "CTF{x}", { dryRun: false });
     expect(res.status).toBe(404);
+  });
+});
+
+// First blood (#590): the hook fires for a FRESH solve only, carries the
+// SESSION's login, and must never be able to fail the solve that already
+// banked its points (non-blocking by contract).
+describe("the first-blood hook (#590)", () => {
+  it("announces a fresh solve with the session's login, module and id", async () => {
+    session("alice");
+    storeReturns({ ok: true, correct: true, points: 50 });
+    await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(announceNotify.notifyFirstBlood).toHaveBeenCalledTimes(1);
+    expect(announceNotify.notifyFirstBlood).toHaveBeenCalledWith({ module: "classic", challengeId: "c-1", playerId: ALICE_ID, points: 50 });
+  });
+
+  it("does NOT announce an idempotent re-submission (it banked nothing)", async () => {
+    session("alice");
+    storeReturns({ ok: true, correct: true, points: 0, already: true });
+    await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(announceNotify.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("does NOT announce a dry run (an admin preview is not a solve)", async () => {
+    session("boss");
+    adminAuth.isAdminPlayer.mockResolvedValue(true);
+    adminView.adminSeesHidden.mockResolvedValueOnce(true);
+    storeReturns({ ok: true, correct: true, points: 50, dryRun: true });
+    await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(announceNotify.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("does NOT announce a wrong flag or a gate refusal", async () => {
+    session("alice");
+    storeReturns({ ok: true, correct: false });
+    await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    storeReturns({ ok: false, reason: "paused" });
+    await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(announceNotify.notifyFirstBlood).not.toHaveBeenCalled();
+  });
+
+  it("the hook never blocks the response — a notify that never settles still yields 200", async () => {
+    session("alice");
+    storeReturns({ ok: true, correct: true, points: 50 });
+    announceNotify.notifyFirstBlood.mockReturnValue(new Promise<never>(() => {}));
+    const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ correct: true, points: 50 });
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-// The list-plus-editor state every module admin panel (quiz, classic, ai)
+// The list-plus-editor state every module admin panel (quiz, classic)
 // runs on, once. Each panel used to hold the same dozen useStates — the rows,
 // the category list, the list-error line, the loaded flag that gates the
 // inventory report, the open editor with its pending/error pair, the delete

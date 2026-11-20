@@ -32,7 +32,7 @@ const CAPS = { apps: true, teams: false, challenges: true } as const;
 
 const entry: LeaderboardEntry = {
   rank: 1,
-  login: "alice",
+  playerId: "alice", name: "alice", image: null,
   team: null,
   points: 100,
   patched: 3,

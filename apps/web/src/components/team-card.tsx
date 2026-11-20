@@ -7,6 +7,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { displayNameOf } from "@/lib/display-name";
 import type { TeamInfo } from "@/lib/team-store";
 
 type TeamActionResponse = { error?: string; code?: string; needsConfirm?: boolean };
@@ -114,12 +115,47 @@ const PAIRED_ACTION_CLASS =
   "transition-colors hover:border-[#2563eb]/60 hover:bg-white/[0.06] hover:text-white " +
   "disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-transparent disabled:text-zinc-500";
 
+/** The label each member shows under on the roster, the remove confirmation
+ *  and the transfer selector: their display name, with a short id suffix when
+ *  another member shows the same label (ignoring case), so a captain can tell
+ *  who they are removing or handing the team to. A suffix can itself collide
+ *  with another member's plain name, so a member whose label still collides is
+ *  suffixed too, and a suffixed one lengthens its id prefix, until every label
+ *  is distinct. Ids are unique, so this ends at the latest on full ids. */
+export function rosterLabels(members: readonly string[], memberNames: Readonly<Record<string, string>>): Map<string, string> {
+  const base = new Map(members.map((m) => [m, memberNames[m] ?? displayNameOf({ id: m })]));
+  const prefix = new Map<string, number>();
+  const labelOf = (m: string) => {
+    const n = prefix.get(m);
+    return n === undefined ? base.get(m)! : `${base.get(m)!} (${m.slice(0, n)})`;
+  };
+  const maxLen = Math.max(0, ...members.map((m) => m.length));
+  for (let step = 0; step <= maxLen; step++) {
+    const groups = new Map<string, string[]>();
+    for (const m of base.keys()) {
+      const key = labelOf(m).toLowerCase();
+      groups.set(key, [...(groups.get(key) ?? []), m]);
+    }
+    const clashing = [...groups.values()].filter((g) => g.length > 1);
+    if (clashing.length === 0) break;
+    for (const group of clashing) {
+      const plain = group.filter((m) => !prefix.has(m));
+      // A name sharing a label with a suffixed member yields to it; only when
+      // every clash is between plain names do they all take a suffix.
+      const toChange = plain.length > 0 && plain.length < group.length ? plain : group;
+      for (const m of toChange) prefix.set(m, prefix.has(m) ? Math.min(prefix.get(m)! + 4, m.length) : Math.min(8, m.length));
+    }
+  }
+  return new Map(members.map((m) => [m, labelOf(m)]));
+}
+
 export default function TeamCard({
   team,
   writesEnabled,
   maxMembers,
   isCaptain,
   captain,
+  memberNames = {},
   joinCode,
   registrationOpen = true,
   secureDevEnabled = false,
@@ -130,9 +166,12 @@ export default function TeamCard({
   /** True when the signed-in viewer is this team's captain. Always false
    *  outside live mode — there's no captain concept for the mock cookie. */
   isCaptain: boolean;
-  /** The team's captain login, when known (live mode only). Used to keep the
-   *  captain out of "remove"/"transfer to" target lists. */
+  /** The team's captain player id, when known (live mode only). Used to keep
+   *  the captain out of "remove"/"transfer to" target lists. */
   captain: string | null;
+  /** Display name per member player id. A member missing from it shows the
+   *  id fallback; the ids themselves are what the team routes take. */
+  memberNames?: Record<string, string>;
   /** The team's current join code, when known (live mode only). Shown so any
    *  member — captain included — can share it to recruit teammates. */
   joinCode: string | null;
@@ -190,6 +229,8 @@ export default function TeamCard({
   const displayCode = latestCode ?? joinCode;
   const [copied, setCopied] = useState(false);
   const otherMembers = (team?.members ?? []).filter((member) => member !== captain);
+  const labels = rosterLabels(team?.members ?? [], memberNames);
+  const nameOf = (member: string) => labels.get(member) ?? memberNames[member] ?? displayNameOf({ id: member });
 
   return (
     <div className="ds-card rounded-lg border border-white/[0.06] bg-[#16162a] p-5">
@@ -256,15 +297,15 @@ export default function TeamCard({
                     key={member}
                     className="flex items-center gap-1.5 rounded-full border border-white/10 bg-[#12121e] px-2.5 py-1 font-mono text-xs text-zinc-300"
                   >
-                    {member}
+                    <bdi>{nameOf(member)}</bdi>
                     {member === captain && <span className="text-[10px] uppercase text-[#d4a017]">captain</span>}
                     {isCaptain && member !== captain && (
                       <button
                         type="button"
                         disabled={pending}
-                        onClick={() => exit("/remove", { slug: team.slug, member }, `Remove ${member} anyway`)}
+                        onClick={() => exit("/remove", { slug: team.slug, member }, `Remove ${nameOf(member)} anyway`)}
                         className="text-[#e53e3e] hover:text-white disabled:opacity-50"
-                        aria-label={`Remove ${member}`}
+                        aria-label={`Remove ${nameOf(member)}`}
                       >
                         ×
                       </button>
@@ -309,7 +350,7 @@ export default function TeamCard({
                     <option value="">Transfer captain to…</option>
                     {otherMembers.map((member) => (
                       <option key={member} value={member}>
-                        {member}
+                        {nameOf(member)}
                       </option>
                     ))}
                   </select>

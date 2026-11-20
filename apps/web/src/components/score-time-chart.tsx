@@ -58,8 +58,8 @@ function formatTimeTick(ms: number, zone: string): string {
   return formatInZone(ms, zone, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-/** Series-agnostic input to the shared chart core: a player's login or a
- *  team's name/slug, either way just a labeled, keyed point history. */
+/** Series-agnostic input to the shared chart core: a player's id and name or
+ *  a team's slug and name, either way just a labeled, keyed point history. */
 type ChartSeries = { key: string; label: string; points: SeriesPoint[] };
 
 type PlottedLine = {
@@ -455,7 +455,7 @@ export default function ScoreTimeChart({
   // send series at all — hide entirely rather than show a broken/empty chart.
   if (!series || series.length === 0) return null;
   return renderChart(
-    series.map((s) => ({ key: s.login, label: s.login, points: s.points })),
+    series.map((s) => ({ key: s.playerId, label: s.name, points: s.points })),
     "contestant",
     note,
     timeZone,

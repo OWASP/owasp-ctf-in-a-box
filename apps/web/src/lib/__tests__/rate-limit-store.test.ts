@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval }));
 
-import { RATE_LIMITS, consumeRateLimit } from "@/lib/rate-limit-store";
+import { RATE_LIMITS, consumeRateLimit, rateLimitKeysFor } from "@/lib/rate-limit-store";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -76,6 +76,22 @@ describe("consumeRateLimit", () => {
   it("allows rather than throwing on an unexpected reply shape", async () => {
     mocks.upstashEval.mockResolvedValueOnce(null);
     expect(await consumeRateLimit("b", "alice", 10, 600)).toEqual({ allowed: true });
+  });
+
+  // The admin claim's budget is the opt-in exception: an unmetered guess at a
+  // claim code is what the limiter exists to stop, so it refuses on doubt.
+  it("refuses for 60 s on a Redis error or an unexpected reply when failClosed is set", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mocks.upstashEval.mockRejectedValueOnce(new Error("redis down"));
+      expect(await consumeRateLimit("b", "alice", 5, 900, { failClosed: true })).toEqual({ allowed: false, retryAfterSeconds: 60 });
+      mocks.upstashEval.mockResolvedValueOnce(null);
+      expect(await consumeRateLimit("b", "alice", 5, 900, { failClosed: true })).toEqual({ allowed: false, retryAfterSeconds: 60 });
+      mocks.upstashEval.mockRejectedValueOnce(new Error("redis down"));
+      expect(await consumeRateLimit("b", "alice", 5, 900)).toEqual({ allowed: true });
+    } finally {
+      err.mockRestore();
+    }
   });
 });
 
@@ -160,7 +176,26 @@ describe("the configured budgets", () => {
     expect(RATE_LIMITS.teamJoin.limit).toBeGreaterThanOrEqual(5);
   });
 
+  it("caps admin claim attempts at 5 per 15 minutes per player", () => {
+    expect(RATE_LIMITS.adminClaim).toEqual({ bucket: "admin-claim", limit: 5, windowSeconds: 900 });
+  });
+
   it("uses distinct buckets so one route cannot exhaust the other's budget", () => {
     expect(RATE_LIMITS.teamJoin.bucket).not.toBe(RATE_LIMITS.hintReveal.bucket);
+  });
+});
+
+describe("rateLimitKeysFor", () => {
+  // Every bucket keyed on the player id, and only those: the admin delete
+  // clears exactly this list. The address-keyed auth buckets are not a
+  // player's.
+  it("lists the per-player buckets and no address-keyed one", () => {
+    expect(rateLimitKeysFor("Alice")).toEqual([
+      "ctf:rl:team-join:alice",
+      "ctf:rl:hint-reveal:alice",
+      "ctf:rl:admin-claim:alice",
+      "ctf:rl:username-pick:alice",
+      "ctf:rl:set-password:alice",
+    ]);
   });
 });

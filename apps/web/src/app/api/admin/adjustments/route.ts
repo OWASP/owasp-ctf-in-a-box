@@ -7,6 +7,7 @@ import {
   listAdjustments,
   removeAdjustment,
 } from "@/lib/adjustments-store";
+import { auditActor } from "@/lib/admin-audit-keys";
 
 /**
  * Organizer score adjustments (issue #591): a signed points change for a team,
@@ -49,7 +50,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "slug and reason must be strings, points a number" }, { status: 400 });
   }
   try {
-    return NextResponse.json(await addAdjustment(body.slug, body.points, body.reason, gate.login));
+    return NextResponse.json(await addAdjustment(body.slug, body.points, body.reason, auditActor(gate.player)));
   } catch (err) {
     return fail(err, "add");
   }
@@ -66,7 +67,7 @@ export async function DELETE(request: Request) {
   }
   if (typeof body.id !== "string") return NextResponse.json({ error: "id must be a string" }, { status: 400 });
   try {
-    return NextResponse.json(await removeAdjustment(body.id, gate.login));
+    return NextResponse.json(await removeAdjustment(body.id, auditActor(gate.player)));
   } catch (err) {
     return fail(err, "remove");
   }

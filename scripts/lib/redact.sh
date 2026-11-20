@@ -22,7 +22,11 @@
 #        *_KEY  *APIKEY*  *API_KEY*  *CREDENTIAL*
 #        *AUTH  (BASIC_AUTH, PROXY_AUTH — a suffix only, so BETTER_AUTH_URL,
 #                which is a public URL, stays readable)
-#   2. URL userinfo anywhere in an argument is masked: `scheme://user:pass@host`
+#        *_HASH (ADMIN_CLAIM_CODE_HASH: the hash of a one-time code is kept
+#                out of logs like the code itself)
+#   2. The argument after `--value` (an `aws ssm put-parameter` value, which
+#      is the SecureString itself) is replaced the same way.
+#   3. URL userinfo anywhere in an argument is masked: `scheme://user:pass@host`
 #      becomes `scheme://***@host`, whatever the variable is called, because a
 #      URL that carries credentials is a secret even under a harmless name.
 #
@@ -50,7 +54,7 @@ redact_arg() {
     upper="$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')"
     case "$upper" in
     *SECRET* | *TOKEN* | *PASSWORD* | *PASSWD* | *PRIVATE_KEY* | \
-      *CONNECTION_STRING* | *_KEY | *APIKEY* | *API_KEY* | *CREDENTIAL* | *AUTH)
+      *CONNECTION_STRING* | *_KEY | *APIKEY* | *API_KEY* | *CREDENTIAL* | *AUTH | *_HASH)
       printf '%s=<redacted>' "$name"
       return 0
       ;;
@@ -62,9 +66,14 @@ redact_arg() {
 
 # redact_args <arg>... — every argument, space-joined on one line.
 redact_args() {
-  local out="" arg
+  local out="" arg prev=""
   for arg in "$@"; do
-    out="$out $(redact_arg "$arg")"
+    if [ "$prev" = "--value" ]; then
+      out="$out <redacted>"
+    else
+      out="$out $(redact_arg "$arg")"
+    fi
+    prev="$arg"
   done
   printf '%s\n' "${out# }"
 }

@@ -1,8 +1,7 @@
 "use client";
 
-// The quiz/classic/ai Show-N item lists for an EXPANDED leaderboard row —
-// which questions a contestant answered, which flags a team has solved,
-// which ai challenges are done. Per-item data isn't in the board payload
+// The quiz/classic Show-N item lists for an EXPANDED leaderboard row —
+// which questions a contestant answered, which flags a team has solved. Per-item data isn't in the board payload
 // (embedding it for every row would bloat a no-store page nobody has
 // expanded), so this fetches from /api/board/items on mount — i.e. on
 // expand — and renders the same ModuleItemList the profile blocks use.
@@ -15,13 +14,12 @@ import ModuleItemList, { type ModuleItem } from "@/components/module-item-list";
 type ItemsResponse = {
   quiz: ModuleItem[] | null;
   classic: ModuleItem[] | null;
-  ai: ModuleItem[] | null;
-  /** How many story steps hidden from the viewer the queried logins solved —
+  /** How many story steps hidden from the viewer the queried players solved —
    *  one count, nothing per position (ADR 60). */
   classicHiddenSolved?: number;
 };
 
-/** The route unions at most 8 logins per request (its anti-scrape cap), but
+/** The route unions at most 8 players per request (its anti-scrape cap), but
  *  an organizer can raise the team size well past that — chunk the roster
  *  and union the responses client-side so a big team's lists don't silently
  *  400 away. */
@@ -41,7 +39,7 @@ function mergeItems(parts: (ModuleItem[] | null)[]): ModuleItem[] | null {
   return [...merged.values()];
 }
 
-/** A roster over the route's 8-login cap arrives in chunks, each counting the
+/** A roster over the route's 8-player cap arrives in chunks, each counting the
  *  hidden steps its own members hold. A step held in two chunks would count
  *  twice if summed, so the largest chunk count is used: a floor that never
  *  over-claims. */
@@ -73,15 +71,16 @@ export function hiddenSummary(
 }
 
 export default function BoardItemLists({
-  logins,
+  players,
   classicPoints,
 }: {
-  logins: string[];
+  /** Player ids: one for a contestant row, the roster for a team row. */
+  players: string[];
   /** The row's gross Jeopardy points, for the hidden-steps total. */
   classicPoints?: number;
 }) {
   const [data, setData] = useState<ItemsResponse | null>(null);
-  const key = logins.join(",");
+  const key = players.join(",");
 
   useEffect(() => {
     if (!key) return;
@@ -91,7 +90,7 @@ export default function BoardItemLists({
     for (let i = 0; i < all.length; i += CHUNK) chunks.push(all.slice(i, i + CHUNK));
     Promise.all(
       chunks.map((chunk) =>
-        fetch(`/api/board/items?logins=${encodeURIComponent(chunk.join(","))}`)
+        fetch(`/api/board/items?players=${encodeURIComponent(chunk.join(","))}`)
           .then((res) => (res.ok ? res.json() : null))
           .catch(() => null),
       ),
@@ -102,7 +101,6 @@ export default function BoardItemLists({
       setData({
         quiz: mergeItems(ok.map((p) => p.quiz)),
         classic: mergeItems(ok.map((p) => p.classic)),
-        ai: mergeItems(ok.map((p) => p.ai)),
         classicHiddenSolved: mergeHiddenSolved(ok.map((p) => p.classicHiddenSolved)),
       });
     });
@@ -114,8 +112,7 @@ export default function BoardItemLists({
   if (!data) return null;
   const quiz = data.quiz ?? [];
   const classic = data.classic ?? [];
-  const ai = data.ai ?? [];
-  if (quiz.length === 0 && classic.length === 0 && ai.length === 0) return null;
+  if (quiz.length === 0 && classic.length === 0) return null;
 
   return (
     <div className="mt-3 flex flex-col gap-2">
@@ -129,9 +126,6 @@ export default function BoardItemLists({
           doneLabel="Solved"
           note={hiddenSummary(data.classicHiddenSolved ?? 0, classic, classicPoints)}
         />
-      )}
-      {ai.length > 0 && (
-        <ModuleItemList items={ai} noun={ai.length === 1 ? "challenge" : "challenges"} doneLabel="Solved" />
       )}
     </div>
   );

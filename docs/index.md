@@ -25,23 +25,19 @@ module contributed, and its per-target breakdown.</sup>
 OWASP CTF in a Box is a control plane, not a single game. It gives an event its
 shared spine — a GitHub org, team registration, a live leaderboard, an
 organizer admin panel, and the scoring pipeline that feeds it — and **modules**
-plug challenge content into that spine. Four modules ship today — **OWASP
-Secure Development**, **Quiz**, **Jeopardy** and **AI** — and any
-subset can
-run alone or together; the box is built to host further modules on the same
+plug challenge content into that spine. Three modules ship — **OWASP
+Secure Development**, **Quiz** and **Jeopardy** — and any subset can run alone or together; the box is built to host further modules on the same
 spine. The [module contract](modules.md) is the boundary between platform and
 module.
 
 The **Secure Development** module teaches defence rather than attack: a
 contestant forks a deliberately vulnerable app, finds the flaw, **patches** it,
 and opens a pull request. The pipeline scores the patch and the score lands
-on a **team** leaderboard. **Quiz**, **Jeopardy** and **AI** need none of that
+on a **team** leaderboard. **Quiz** and **Jeopardy** need none of that
 machinery — no forks, no GitHub org, no scoring pipeline. They are graded
 inside the app, so an event running only those boots with a single compose
 profile. Their organizer guides are
-[Quiz](operations.md#quiz), [Jeopardy](operations.md#jeopardy) and
-[AI](operations.md#ai) — AI additionally has its own external integrator
-contract, [ai-module.md](ai-module.md).
+[Quiz](operations.md#quiz) and [Jeopardy](operations.md#jeopardy).
 
 Until now, running one meant standing up Vercel, Upstash, Lambda and DynamoDB,
 holding the cloud bill, and having access to a private scoring image. This kit
@@ -61,7 +57,7 @@ scoring code to write.
 | **Organizer admin panel** | `/admin`, allowlisted: freeze the leaderboard, schedule scoring and registration windows, toggle hints, set the team cap and score cooldown, grant admin to others, author each module's content, reset between rehearsals. |
 | **Live-event support** | Act on one contestant or one team without wiping the event: reset progress, delete a contestant, take over a captainless team. Every action audited with actor and target. |
 | **Engagement metrics** | Participation funnel, solves over time, per-challenge difficulty and hint usage — folded out of data the box already stores, with no telemetry from contestants' forks. |
-| **Scoring pipeline** | GitHub-Actions-fed poll transport, one audited score writer — for modules graded outside the app. Quiz, Jeopardy and AI bank points directly and never touch it. |
+| **Scoring pipeline** | GitHub-Actions-fed poll transport, one audited score writer — for modules graded outside the app. Quiz and Jeopardy bank points directly and never touch it. |
 | **Zero inbound surface** | Scores arrive by outbound polling, so nothing has to reach your box from the internet. |
 | **One box, no cloud** | Docker Compose plus one free GitHub org. Nothing billed, nothing phones home. |
 
@@ -141,9 +137,9 @@ stock upstream image and fails if anything scores above zero
 
 ## Quickstart
 
-The full, canonical sequence — tooling check, scorer image, the four `.env`
-bootstrap keys, the sync GitHub App, the sign-in OAuth app, org provisioning,
-and bringing the box up — lives in
+The full, canonical sequence — tooling check, the four `.env` bootstrap keys
+and bringing the box up, plus, for Secure Development only, the scorer image,
+the sync GitHub App, the GitHub OAuth app and org provisioning — lives in
 [Hosting → Quickstart: zero to a scored event](hosting.md#quickstart-zero-to-a-scored-event).
 
 Scores reach the box by outbound polling, and that is the only transport there
@@ -174,8 +170,9 @@ in one place.</sup>
 
 ## Organizer admin panel
 
-Anyone named in `.env`'s `ADMIN_LOGINS` can sign in and reach `/admin` — and
-from there **grant admin to anyone else**, without a restart. The panel is
+An organizer claims `/admin` with the one-time **admin claim code** setup
+prints (sign in, open `/admin/claim`, enter it), and from the Admins tab
+**issues codes to make anyone else an admin**, without a restart. The panel is
 tabbed: **Overview**, **Event** (identity, freeze, registration, the
 scoring and registration schedules, players per team, demo seed, master
 reset), **Hints**, **Admins**, **Sponsors**, **Support**, **Activity**,
@@ -213,7 +210,8 @@ Pick the doc for what you're doing right now:
 **Standing the kit up**
 
 - [Hosting](hosting.md) — the guided wizard, prerequisites, how scores reach
-  the box, the GitHub OAuth app, and the `.env` bootstrap.
+  the box, player accounts and sign-in providers, the `.env` bootstrap, and
+  upgrading from v1.
 - [Deploy on AWS](aws.md) — single-shot Terraform deploy onto ECS Fargate with
   ElastiCache behind an ALB (`apply` up, `destroy` down).
 - [Deploy on fly.io](fly.md) — the whole stack as one Fly machine, running the
@@ -227,8 +225,8 @@ Pick the doc for what you're doing right now:
 
 - [Operations](operations.md) — teams, the admin panel, live-event support,
   verifying the kit, the local dev-stack, and teardown. It also carries the
-  three app-side modules' organizer guides: [Quiz](operations.md#quiz),
-  [Jeopardy](operations.md#jeopardy) and [AI](operations.md#ai).
+  two app-side modules' organizer guides: [Quiz](operations.md#quiz) and
+  [Jeopardy](operations.md#jeopardy).
 - [Troubleshooting](troubleshooting.md) — the mid-event runbook: symptom,
   diagnosis, fix.
 
@@ -237,8 +235,6 @@ Pick the doc for what you're doing right now:
 - [Architecture](architecture.md) — what runs where, how a score gets from a
   contestant's PR to the leaderboard.
 - [Module contract](modules.md) — what a CTF vertical must satisfy to plug in.
-- [AI module](ai-module.md) — the external integrator's contract for the `ai`
-  module: launch tokens, verifying them, and reporting a solve back.
 - [Scorer](scorer.md) — both rubric grammars, building your own scorer image,
   and wiring the self-contained scoring workflow.
 - [Decisions](decisions.md) — numbered ADRs for why the kit is built the way

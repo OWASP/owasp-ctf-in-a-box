@@ -64,17 +64,19 @@ describe("/how-to-play in a quiz-only event", () => {
 
   it("renders the quiz's own guide instead", () => {
     expect(html).toContain(
-      "New to the quiz? Here&#x27;s everything you need to go from a GitHub sign-in to your first scored answer.",
+      "New to the quiz? Here&#x27;s everything you need to go from signing in to your first scored answer.",
     );
     expect(html).toContain("read the question");
     for (const title of [
-      "Sign in with GitHub",
+      "Sign in",
       "Open the question set",
       "Answer the question",
       "Get scored on submit",
     ]) {
       expect(html).toContain(title);
     }
+    expect(html).toContain("Use the sign-in button in the header to create an account or sign in.");
+    expect(html).not.toContain("Sign in with GitHub");
     expect(html).toContain("Take the quiz");
     expect(html).toContain('href="/quiz"');
   });
@@ -92,7 +94,7 @@ describe("/how-to-play in a quiz-only event", () => {
 
   it("describes the page with the quiz's meta description", () => {
     expect(metadata.description).toBe(
-      "Step-by-step guide to the quiz: sign in with GitHub, work through the questions, and get scored the moment you submit an answer.",
+      "Step-by-step guide to the quiz: sign in, work through the questions, and get scored the moment you submit an answer.",
     );
   });
 });

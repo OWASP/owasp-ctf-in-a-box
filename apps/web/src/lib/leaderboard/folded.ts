@@ -3,6 +3,7 @@ import { getLeaderboardSource } from "./source";
 import { withModuleContributions } from "./module-contributions";
 import { withTeamStandings } from "./team-standings";
 import { withModuleSeries } from "./module-series";
+import { withPlayerNames } from "./names";
 import { withHintPenalties } from "./hint-penalties";
 import { withScoreAdjustments } from "./score-adjustments";
 import { foldGeneration } from "./fold-cache";
@@ -14,18 +15,16 @@ import type { LeaderboardData } from "./types";
  * WHY. The fold — source → module contributions → team standings → module
  * series → hint penalties — costs roughly 500 Redis commands and a scorer
  * round-trip at 200 contestants (`readModuleEvents` alone is one HGETALL per
- * login per live module), then the page renders 200 rows. It used to run on
+ * player per live module), then the page renders 200 rows. It used to run on
  * EVERY page view, per viewer, although its result is identical for every
  * viewer: the only per-session input is the "you" highlight, which the client
- * applies from `viewerLogin`. The load test (#439) measured 2.7 req/s served
+ * applies from `viewerId`. The load test (#439) measured 2.7 req/s served
  * against 10 demanded after the payload fix (#443), with ~370 ms of CPU per
  * request. Six folds a minute instead of six hundred is the difference.
  *
- * TTL. Ten seconds — under the display board's own 30 s refresh and under the
- * scorer fetch's 30 s `revalidate`, so no viewer sees data older than the
- * board could already show them. A contestant's own quiz/flag solve appears
- * here within 10 s rather than on the next request; /profile and the module
- * pages read their own data and are unaffected.
+ * TTL. Ten seconds, under the display board's own 30 s refresh. The scorer
+ * fetch bypasses Next.js's fetch cache, so this memo is the only application-level
+ * cache in front of the scorer read.
  *
  * FAIL OPEN, NEVER CACHE A FAILURE. A fold that throws is not stored: the
  * caller sees the error exactly as before, and the next request retries. A
@@ -52,7 +51,7 @@ type Clock = () => number;
 // the fold itself). withModuleContributions attributes (and, for the app-side
 // modules, adds) each contestant row's gross per-module points, and
 // withTeamStandings folds rows into teams — it is the ONE stage that adds
-// quiz, classic and ai points to a team; the first stage only stamps a source
+// quiz and classic points to a team; the first stage only stamps a source
 // team's secure-development block (running both on the source's teams counted
 // those modules twice, issue #520). withHintPenalties then nets the final
 // all-module total exactly once, and withScoreAdjustments applies the
@@ -77,10 +76,10 @@ type Clock = () => number;
  *  request/render latency on a live box: the load test's autocannon
  *  percentiles are whole-request numbers, and this line is the fold's share
  *  of them (issue #446). */
-const defaultFold: Fold = async ({ fresh = false } = {}) => {
+const defaultFold: Fold = async () => {
   const started = Date.now();
   const data = await (await getLeaderboardSource())
-    .getLeaderboard({ fresh })
+    .getLeaderboard()
     .then(withModuleContributions)
     .then(withTeamStandings)
     .then(withHintPenalties)
@@ -89,7 +88,10 @@ const defaultFold: Fold = async ({ fresh = false } = {}) => {
     .then(withScoreAdjustments)
     // Chart only the final ranked rows; both overlays above can move a row
     // across the top-ten boundary.
-    .then(withModuleSeries);
+    .then(withModuleSeries)
+    // Names last, once every stage that adds an entry or a line has run: one
+    // profile read for the whole board.
+    .then(withPlayerNames);
   console.info(
     `leaderboard fold: ${Date.now() - started}ms ` +
       `(entries=${data.entries.length} teams=${data.teams.length} ` +

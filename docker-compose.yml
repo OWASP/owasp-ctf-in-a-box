@@ -27,8 +27,8 @@ services:
     environment:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
       BETTER_AUTH_URL: ${EVENT_URL:-http://localhost}
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       LEADERBOARD_SOURCE: lambda          # plain-HTTP adapter; reads the local scorer
       LEADERBOARD_API_URL: http://scorer:4000
       UPSTASH_REDIS_REST_URL: http://srh:80
@@ -38,10 +38,10 @@ services:
       # issue #386): a runtime read, not a build arg, so it must be passed
       # through here or setting it in .env does nothing.
       GITHUB_ORG: ${GITHUB_ORG:-}
-      # The /admin allowlist, comma-separated logins (config v2, issue #386):
-      # a runtime read too. Empty or unset refuses every login at /admin —
-      # see apps/web/src/lib/bootstrap-env.ts.
-      ADMIN_LOGINS: ${ADMIN_LOGINS:-}
+      # The SHA-256 of the one-time admin claim code (ADR 72), never the code
+      # itself. Empty means nobody can claim the first admin seat at
+      # /admin/claim — see apps/web/src/lib/bootstrap-env.ts.
+      ADMIN_CLAIM_CODE_HASH: ${ADMIN_CLAIM_CODE_HASH:-}
       # Runtime flag, not a build arg: non-empty means this deployment runs
       # Secure Development (the scorer and sync containers exist), and that is
       # the ONLY module enabled before an organizer switches others on in
@@ -221,16 +221,15 @@ services:
       SCORER_TOKEN: ${SCORER_TOKEN}
       SCORER_URL: http://scorer:4000
       # Same srh proxy as app/scorer above — lets sync read the organizer's
-      # pause flag (ctf:admin:settings) and publish its heartbeat
-      # (ctf:sync:status). Without this, sync's redis client stays null and
-      # the admin-panel freeze never reaches the poller.
+      # pause flag (ctf:admin:settings), resolve a PR author's GitHub login to
+      # a player (ctf:link:github:*) and publish its heartbeat
+      # (ctf:sync:status). Sync refuses to start without it.
       UPSTASH_REDIS_REST_URL: http://srh:80
       UPSTASH_REDIS_REST_TOKEN: ${SRH_TOKEN}
       # The poller's LEGACY state file. The cursor itself lives in Redis
       # (ctf:sync:state, through srh above); this file is read once, to carry
       # an older box's cursor into Redis, then renamed state.json.migrated.
-      # It is the store only when sync has no Redis client. The volume stays
-      # so that migration has something to read. Same reasoning as redis's
+      # The volume stays so that migration has something to read. Same reasoning as redis's
       # REDIS_DIR above: the default is exactly what compose has always used,
       # and .env.fly moves it
       # to /data/sync/state.json so both services fit the single volume a Fly

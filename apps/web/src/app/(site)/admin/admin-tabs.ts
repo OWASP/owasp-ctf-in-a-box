@@ -16,7 +16,7 @@
 // and the call succeeds. Nothing but a real request could see it.
 //
 // So the rules live here and admin-controls.tsx re-exports them for its client
-// callers — the same shape `team-limits.ts` and `admin-admins.ts` already use,
+// callers — the same shape `team-limits.ts` and `admin-grants.ts` already use,
 // for the same reason: what a module imports is part of its contract. Keep this
 // file dependency-free and free of `"use client"`; importing anything that
 // carries the marker would put it back on the client side of the boundary.

@@ -85,12 +85,12 @@ for (const { name, pages, order } of [
       { slug: "alpha", name: "Alpha", points: [{ t: T0, score: 6 }, { t: T1, score: 12 }, { t: T2, score: 18 }] },
       { slug: "beta", name: "Beta", points: [{ t: T0, score: 4 }, { t: T1, score: 7 }] },
     ]);
-    assert.deepEqual(board.entries.map(({ rank, author, points }) => ({ rank, author, points })), [
-      { rank: 1, author: "alice", points: 12 },
-      { rank: 2, author: "bob", points: 12 },
-      { rank: 3, author: "carol", points: 7 },
+    assert.deepEqual(board.entries.map(({ rank, player, points }) => ({ rank, player, points })), [
+      { rank: 1, player: "alice", points: 12 },
+      { rank: 2, player: "bob", points: 12 },
+      { rank: 3, player: "carol", points: 7 },
     ]);
-    assert.deepEqual(board.series.map(({ login, points }) => [login, points.at(-1).score]), [
+    assert.deepEqual(board.series.map(({ player, points }) => [player, points.at(-1).score]), [
       ["alice", 12], ["bob", 12], ["carol", 7],
     ]);
     assert.deepEqual(commands.filter(([command]) => command === "SCAN").map(([, cursor]) => cursor), pages.length === 2 ? ["0", "7"] : ["0"]);

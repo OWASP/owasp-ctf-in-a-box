@@ -10,15 +10,13 @@ import ProgressRow, { MODULE_UNIT, MODULE_VERB, moduleUnit, moduleVerb } from "@
 const target = { label: "Juice Shop", done: 1, total: 38, unit: "patched", earned: 2, max: 141 };
 
 describe("module vocabulary", () => {
-  it("gives each module its own unit word — classic and ai are not both 'solved'", () => {
+  it("gives each module its own unit word", () => {
     expect(MODULE_UNIT["secure-development"]).toBe("patched");
     expect(MODULE_UNIT.quiz).toBe("answered");
     expect(MODULE_UNIT.classic).toBe("solved");
-    expect(MODULE_UNIT.ai).toBe("cleared");
-    // The team card read "3 solved · 3 solved" for classic and ai; with
-    // classic's verb as "flags" the two are no longer the same sentence.
+    // Classic's verb is "flags", so a member summary never reads
+    // "3 solved · 3 solved".
     expect(MODULE_VERB.classic).toBe("flags");
-    expect(MODULE_VERB.ai).toBe("cleared");
   });
 
   it("falls back to 'solved' for a module neither map names, rather than throwing", () => {
@@ -35,7 +33,7 @@ describe("ProgressRow", () => {
   });
 
   it("shows a score with no ceiling as the earned figure alone — never '8 / 0 pts'", () => {
-    // A team's quiz/classic/ai block carries points but no maximum, and the
+    // A team's quiz/classic block carries points but no maximum, and the
     // profile's secure-development header used to arrive this way too.
     const html = renderToStaticMarkup(
       <ProgressRow label="Secure Development" done={6} total={321} unit="patched" earned={8} max={0} />,

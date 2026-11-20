@@ -19,6 +19,8 @@ cd "$(dirname "$0")/../.."
 . scripts/lib/dotenv.sh
 # shellcheck source=scripts/lib/redact.sh
 . scripts/lib/redact.sh
+# shellcheck source=scripts/lib/claim-code.sh
+. scripts/lib/claim-code.sh
 
 FLY_DIR=deploy/fly
 CONFIG_TOML="$FLY_DIR/fly.toml"
@@ -30,25 +32,28 @@ CMD="deploy"
 REGION_ARG=""
 REFRESH=""
 SKIP_BUILD=""
+NEW_ADMIN_CODE=""
 
 usage() {
   cat <<'EOF'
 usage: deploy/fly/deploy.sh [init] [--dry-run] [--env-file .env.fly]
                             [--from .env] [--region gru] [--skip-build]
+                            [--new-admin-code]
 
   init --refresh
           Re-copy the values that must match an EXTERNAL system (GitHub
-          OAuth, the sync App, the scorer image, the fork org and its admin
-          allowlist) from --from into the env file, overwriting what is
-          there, then tops up anything still missing (SRH_TOKEN, the region,
+          OAuth, the sync App, the scorer image and the fork org) from
+          --from into the env file, overwriting what is there, then tops up anything still missing (SRH_TOKEN, the region,
           REDIS_PASSWORD, the single-volume knobs) exactly as a plain init
           would. Run this after rotating anything. Fly-specific values
           (EVENT_URL, FLY_REGION, SRH_TOKEN, REDIS_PASSWORD) are left alone
-          — they belong to this deployment.
+          — they belong to this deployment, and so does
+          ADMIN_CLAIM_CODE_HASH, which is never copied.
 
   init    Prepare an env file for Fly: copies --from (default .env), rewrites
-          EVENT_URL to the app's Fly hostname, and fills in SRH_TOKEN and
-          REDIS_PASSWORD if they are absent. Touches nothing on Fly and needs
+          EVENT_URL to the app's Fly hostname, and fills in SRH_TOKEN,
+          REDIS_PASSWORD and this deployment's own admin claim code (printed
+          once; only its hash is written) if they are absent. Touches nothing on Fly and needs
           no CLI. Asks which Fly region to run in, or takes --region. Safe to
           re-run — it tops up an existing file rather than overwriting it, and
           tightens it to mode 600.
@@ -68,6 +73,10 @@ usage: deploy/fly/deploy.sh [init] [--dry-run] [--env-file .env.fly]
   secret or a runtime setting changed — it turns a multi-minute rebuild into
   a redeploy. NOT safe after changing SCORE_IMAGE: the mirror step is skipped
   too, so the machine keeps the scorer image already in the registry.
+--new-admin-code (deploy only) writes a new ADMIN_CLAIM_CODE_HASH to the env
+  file and prints its code once, then deploys so the app reads it. The
+  lock-out recovery path (ADR 72): the new code works whether or not admins
+  exist, and the old one stops working. Combine with --skip-build.
 --dry-run prints every fly command it would run and makes NONE of them.
   Secret VALUES are redacted from that output.
 EOF
@@ -82,10 +91,17 @@ while [ $# -gt 0 ]; do
     --refresh) REFRESH=1; shift ;;
     --env-file) ENV_FILE="$2"; shift 2 ;;
     --skip-build) SKIP_BUILD=1; shift ;;
+    --new-admin-code) NEW_ADMIN_CODE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 1 ;;
   esac
 done
+
+if [ "$CMD" = "init" ] && [ -n "$NEW_ADMIN_CODE" ]; then
+  echo "--new-admin-code rotates a deployed box's code; init already writes one when the env file has none." >&2
+  echo "Run: ./deploy/fly/deploy.sh --skip-build --new-admin-code" >&2
+  exit 2
+fi
 
 # Every fly invocation goes through this, so --dry-run cannot leak a real call.
 #
@@ -167,8 +183,8 @@ count_key_lines() {
 # what lets it name the offender instead of printing a diff.
 READ_KEYS="EVENT_URL BETTER_AUTH_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET
 SCORER_TOKEN SRH_TOKEN REDIS_PASSWORD SCORE_IMAGE GITHUB_ORG
-ADMIN_LOGINS GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY GITHUB_APP_INSTALLATION_ID
-FLY_REGION FLY_AUTO_STOP REDIS_DIR STATE_PATH"
+ADMIN_CLAIM_CODE_HASH GITHUB_APP_ID GITHUB_APP_PRIVATE_KEY GITHUB_APP_INSTALLATION_ID
+FLY_REGION FLY_AUTO_STOP FLY_VM_SIZE FLY_VM_MEMORY REDIS_DIR STATE_PATH"
 
 # Both env files this script reads, checked once, here, in its own shell. A
 # value the shared reader refuses (an unterminated quote, interpolation, an
@@ -208,63 +224,53 @@ require() {
   fi
 }
 
-# A non-empty ADMIN_LOGINS is not an admin roster. The app parses this string
-# with `parseAdminLogins` (apps/web/src/lib/admin-logins.ts): split on commas,
-# trim, lowercase, and DROP every entry that is not shaped like a GitHub
-# login. So `,`, `" , "` and `alice@example.com` all reach the app as the
-# empty set, `isAdminLogin` fails closed on it, and /admin 403s everyone —
-# including whoever just deployed, whose only fix is another deploy. This
-# mirrors that parser so the refusal happens here instead.
-#
-# The mirrored rule, from LOGIN_RE: 1-39 characters, alphanumeric with single
-# internal hyphens, never leading or trailing. Written as POSIX ERE because
-# the JS original uses a lookahead for "a hyphen must be followed by an
-# alphanumeric", which `([-][A-Za-z0-9]|[A-Za-z0-9])*` says without one.
-ADMIN_LOGIN_ERE='^[A-Za-z0-9]([-][A-Za-z0-9]|[A-Za-z0-9])*$'
-
-require_admin_logins() {
-  local rest="$1" entry valid=0 invalid=0 blank=0
-
-  while [ -n "$rest" ]; do
-    case "$rest" in
-    *,*)
-      entry="${rest%%,*}"
-      rest="${rest#*,}"
-      ;;
-    *)
-      entry="$rest"
-      rest=""
-      ;;
-    esac
-    entry="${entry#"${entry%%[![:space:]]*}"}"
-    entry="${entry%"${entry##*[![:space:]]}"}"
-    if [ -z "$entry" ]; then
-      blank=$((blank + 1))
-    elif [ "${#entry}" -le 39 ] && printf '%s' "$entry" | grep -qE "$ADMIN_LOGIN_ERE"; then
-      valid=$((valid + 1))
-    else
-      invalid=$((invalid + 1))
+# write_claim_code — generate a code, put only its hash in $ENV_FILE (replacing
+# any line already there), and print the code once. Called only off --dry-run.
+write_claim_code() {
+  local code hash tmp url rc recover
+  code="$(claim_code_new)" || exit 1
+  hash="$(claim_code_hash "$code")" || exit 1
+  tmp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")" || exit 1
+  chmod 600 "$tmp" || { rm -f "$tmp"; exit 1; }
+  # grep exits 1 when it selects no line (a file holding only this key), which
+  # is fine; 2 is a read error, and a partial copy must never replace the file.
+  if grep -vE "$(key_line_ere ADMIN_CLAIM_CODE_HASH)" "$ENV_FILE" > "$tmp"; then :; else
+    rc=$?
+    if [ "$rc" -ne 1 ]; then
+      rm -f "$tmp"
+      echo "FAIL: could not read $ENV_FILE to replace ADMIN_CLAIM_CODE_HASH — nothing changed." >&2
+      exit 1
     fi
-  done
-
-  [ "$valid" -gt 0 ] && return 0
-
-  # Never echo the entries themselves: a typo'd roster can hold an email
-  # address or a pasted secret. Name the SHAPE and the count instead, the way
-  # countInvalidAdminLogins does.
-  echo "FAIL: ADMIN_LOGINS in $ENV_FILE parses to no admin at all." >&2
-  if [ "$invalid" -gt 0 ]; then
-    echo "      $invalid entries present (counting the one-entry case), none of them" >&2
-    echo "      shaped like a GitHub login: 1-39 characters, alphanumeric with" >&2
-    echo "      single internal hyphens, never leading or trailing." >&2
-  elif [ "$blank" -gt 0 ]; then
-    # Nothing valid and nothing invalid: every entry trimmed away to nothing,
-    # so the value is commas and whitespace (`,`, `" , "`) and no login.
-    echo "      The value is separators and whitespace only ($blank empty entries)." >&2
   fi
-  echo "      Set at least one GitHub login: ADMIN_LOGINS=your-login" >&2
-  echo "      The app drops unparseable entries, so this would deploy an" >&2
-  echo "      event whose /admin forbids everyone, you included." >&2
+  printf 'ADMIN_CLAIM_CODE_HASH=%s\n' "$hash" >> "$tmp" || { rm -f "$tmp"; exit 1; }
+  mv "$tmp" "$ENV_FILE" || { rm -f "$tmp"; exit 1; }
+  chmod 600 "$ENV_FILE"
+  url="$(env_value EVENT_URL)"
+  # The recovery command names this env file when it is not the default: the
+  # default one is another deployment's, or none at all.
+  recover="./deploy/fly/deploy.sh --skip-build --new-admin-code"
+  if [ "$ENV_FILE" != ".env.fly" ]; then
+    recover="$recover --env-file $(printf '%q' "$ENV_FILE")"
+  fi
+  claim_code_announce "$code" "${url:-https://$APP.fly.dev}" "$recover"
+}
+
+# Refuse an unusable claim-code hash, naming the key and never the value: a
+# value pasted where the hash belongs is usually the code itself.
+require_claim_hash() {
+  local v="$1"
+  claim_code_is_hash "$v" && return 0
+  if [ -z "$v" ]; then
+    echo "FAIL: ADMIN_CLAIM_CODE_HASH is empty in $ENV_FILE — nobody could claim /admin with a bootstrap code." >&2
+    echo "      Run: ./deploy/fly/deploy.sh init --env-file $ENV_FILE (writes one if absent)" >&2
+    echo "       or: ./deploy/fly/deploy.sh --new-admin-code --env-file $ENV_FILE" >&2
+  elif claim_code_normalize "$v" >/dev/null; then
+    echo "FAIL: ADMIN_CLAIM_CODE_HASH in $ENV_FILE looks like the code itself, not its hash." >&2
+    echo "      Run: ./deploy/fly/deploy.sh --new-admin-code --env-file $ENV_FILE" >&2
+  else
+    echo "FAIL: ADMIN_CLAIM_CODE_HASH in $ENV_FILE is not a 64-hex SHA-256." >&2
+    echo "      Run: ./deploy/fly/deploy.sh --new-admin-code --env-file $ENV_FILE" >&2
+  fi
   exit 1
 }
 
@@ -301,7 +307,10 @@ if [ "$CMD" = "init" ]; then
         echo "# Fly deployment env, generated by deploy/fly/deploy.sh init."
         echo "# Separate from $FROM_ENV on purpose: a compose stack and a Fly"
         echo "# deployment need different EVENT_URLs, and one file cannot hold both."
-        grep -vE "^(EVENT_URL|UPSTASH_REDIS_REST_URL|UPSTASH_REDIS_REST_TOKEN)=" "$FROM_ENV"
+        # Never the admin claim hash: this deployment gets its own code below.
+        grep -vE "^(EVENT_URL|UPSTASH_REDIS_REST_URL|UPSTASH_REDIS_REST_TOKEN)=" "$FROM_ENV" |
+          grep -vE "$(key_line_ere ADMIN_CLAIM_CODE_HASH)" |
+          grep -vE "$(key_line_ere ADMIN_LOGINS)"
         echo "EVENT_URL=https://$APP.fly.dev"
       } > "$ENV_FILE"
       chmod 600 "$ENV_FILE"
@@ -326,9 +335,9 @@ if [ "$CMD" = "init" ]; then
   #
   # The split is by OWNERSHIP, not convenience. These values must match an
   # external system (GitHub's OAuth app, GitHub's sync App, the registry) or
-  # the identity of the event's target org and its admins, so a stale copy is
-  # always wrong and refreshing is always right. EVENT_URL, FLY_REGION,
-  # SRH_TOKEN and REDIS_PASSWORD belong to THIS deployment and must never be
+  # the identity of the event's target org, so a stale copy is always wrong
+  # and refreshing is always right. EVENT_URL, FLY_REGION, SRH_TOKEN,
+  # REDIS_PASSWORD and ADMIN_CLAIM_CODE_HASH belong to THIS deployment and must never be
   # pulled from a compose stack's file — sharing them is how two environments
   # end up fighting over one datastore.
   #
@@ -354,8 +363,7 @@ if [ "$CMD" = "init" ]; then
     #
     # For every other key an explicitly blank source is far more likely to be
     # "not filled in yet" than "deliberately unset", and obeying it would be
-    # destructive on a live box: clearing ADMIN_LOGINS locks every organizer
-    # out of /admin, clearing GITHUB_ORG stops sync from starting, clearing
+    # destructive on a live box: clearing GITHUB_ORG stops sync from starting, clearing
     # SCORE_IMAGE disables Secure Development. Those keep the destination
     # value and say so.
     #
@@ -367,7 +375,7 @@ if [ "$CMD" = "init" ]; then
     # unpin — and the docs promise only an explicit blank assignment clears.
     for key in GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET GITHUB_APP_ID \
                GITHUB_APP_PRIVATE_KEY GITHUB_APP_INSTALLATION_ID SCORE_IMAGE \
-               GITHUB_ORG ADMIN_LOGINS; do
+               GITHUB_ORG; do
       src="$(dotenv_file_value "$FROM_ENV" "$key")"
       cur="$(env_value "$key")"
       if [ "$(count_key_lines "$FROM_ENV" "$key")" -eq 0 ]; then
@@ -405,11 +413,10 @@ if [ "$CMD" = "init" ]; then
       # The awk rewrite alone only ever replaces: with no line to match, it
       # copies the file through untouched and the loop would still print
       # "$key updated" — a lie on exactly the file that needs the most help.
-      # A `.env.fly` written before config v2 has no GITHUB_ORG and no
-      # ADMIN_LOGINS at all, so without the append below `--refresh` would
-      # claim to carry them over and carry nothing: the deploy would run with
-      # an empty admin allowlist (nobody can open /admin) and a sync that
-      # refuses to start.
+      # A `.env.fly` written before config v2 has no GITHUB_ORG at all, so
+      # without the append below `--refresh` would claim to carry it over and
+      # carry nothing: the deploy would run with a sync that refuses to
+      # start.
       if grep -qE "$(key_line_ere "$key")" "$ENV_FILE"; then
         # Rewritten in place with awk rather than sed -i, because these values
         # contain / and + (base64) and would need escaping in a sed pattern.
@@ -536,6 +543,18 @@ if [ "$CMD" = "init" ]; then
     echo "DRY-RUN: would generate REDIS_PASSWORD"
   fi
 
+  # This deployment's own admin claim code (ADR 72): never copied from
+  # $FROM_ENV, so one code cannot claim two boxes. Generated when the file has
+  # no usable hash; `--new-admin-code` on a deploy is the rotation.
+  if claim_code_is_hash "$(env_value ADMIN_CLAIM_CODE_HASH)"; then
+    echo "   ADMIN_CLAIM_CODE_HASH already set"
+  elif [ -z "$DRY_RUN" ]; then
+    write_claim_code
+    echo "   generated ADMIN_CLAIM_CODE_HASH"
+  else
+    echo "DRY-RUN: would generate ADMIN_CLAIM_CODE_HASH and print its code once"
+  fi
+
   # ---- the single-volume layout ------------------------------------------
   #
   # A Fly machine permits exactly ONE volume ("invalid config.mounts, only 1
@@ -659,21 +678,32 @@ esac
 # Every one of these is fatal-if-empty, and each is named individually by
 # `require` so the message points at the one key that is missing.
 #
-# GITHUB_ORG and ADMIN_LOGINS join the sweep below as runtime reads
-# (config v2): nothing bakes them, and neither fails loudly on its own.
-# An empty ADMIN_LOGINS deploys an event whose /admin forbids EVERYONE,
-# including the operator who just deployed it; an empty GITHUB_ORG leaves sync
-# exiting at start-up on a machine whose other four containers look healthy.
+# GITHUB_ORG joins the sweep below as a runtime read (config v2): nothing
+# bakes it, and it does not fail loudly on its own — an empty GITHUB_ORG
+# leaves sync exiting at start-up on a machine whose other four containers
+# look healthy.
 # Poll is the score transport everywhere (#377, ADR 56) and this module has
 # always been poll-only, so sync always runs here and the org is never
 # optional.
+# GITHUB_CLIENT_ID/SECRET stay required because Fly always runs Secure
+# Development (SCORE_IMAGE is required below).
 for name in BETTER_AUTH_SECRET GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET SCORER_TOKEN \
-            GITHUB_ORG ADMIN_LOGINS; do
+            GITHUB_ORG; do
   require "$name" "$(env_value "$name")"
 done
 
-# Non-empty is not the same as usable: see require_admin_logins above.
-require_admin_logins "$(env_value ADMIN_LOGINS)"
+# The admin claim code (ADR 72). Without --new-admin-code the hash in the file
+# must already be usable. With it, the rotation itself waits until every
+# preflight refusal below has passed (see the block after SCORE_IMAGE), so a
+# refused deploy never leaves a new code the box does not know.
+if [ -z "$NEW_ADMIN_CODE" ]; then
+  require_claim_hash "$(env_value ADMIN_CLAIM_CODE_HASH)"
+fi
+if [ "$(count_key_lines "$ENV_FILE" ADMIN_LOGINS)" -gt 0 ]; then
+  echo "WARNING: ADMIN_LOGINS is ignored — admins are kit accounts that claimed a" >&2
+  echo "         code at /admin/claim. Delete the line from $ENV_FILE." >&2
+  echo >&2
+fi
 
 # ---------------------------------------------------------------------------
 # CREDENTIAL DRIFT: does $ENV_FILE still agree with $FROM_ENV?
@@ -701,8 +731,7 @@ require_admin_logins "$(env_value ADMIN_LOGINS)"
 # the closing summary, so it cannot scroll away behind the build log.
 # ---------------------------------------------------------------------------
 DRIFT_KEYS="GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET GITHUB_APP_ID
-GITHUB_APP_PRIVATE_KEY GITHUB_APP_INSTALLATION_ID SCORE_IMAGE GITHUB_ORG
-ADMIN_LOGINS"
+GITHUB_APP_PRIVATE_KEY GITHUB_APP_INSTALLATION_ID SCORE_IMAGE GITHUB_ORG"
 DRIFTED=""
 
 # A missing --from is not an error: the file is the compose stack's, and a
@@ -720,8 +749,8 @@ warn_credential_drift() {
   echo "WARNING: $ENV_FILE and $FROM_ENV disagree on:$DRIFTED" >&2
   echo "         (Key names only — no value is printed, ever.)" >&2
   echo "         These are the keys that must match an EXTERNAL system: the" >&2
-  echo "         OAuth app, the sync App, the scorer image, the fork org and" >&2
-  echo "         its admin allowlist. A stale copy deploys the PREVIOUS" >&2
+  echo "         OAuth app, the sync App, the scorer image and the fork org." >&2
+  echo "         A stale copy deploys the PREVIOUS" >&2
   echo "         event's identity, and says nothing: sign-in bounces with" >&2
   echo "         ?error=application_suspended and sync logs a GitHub 401" >&2
   echo "         minting installation token on every poll (#381)." >&2
@@ -757,6 +786,19 @@ REGION="$(env_value FLY_REGION)"
 # The image the FORKS already pull to judge PRs — same one, not a rebuild.
 SCORE_IMAGE="$(env_value SCORE_IMAGE)"
 require SCORE_IMAGE "$SCORE_IMAGE"
+
+# --new-admin-code: rotate now, after the last preflight refusal and before
+# the first Fly step, so the rendered compose file carries the new hash.
+if [ -n "$NEW_ADMIN_CODE" ]; then
+  if [ -n "$DRY_RUN" ]; then
+    echo "DRY-RUN: would write a new ADMIN_CLAIM_CODE_HASH to $ENV_FILE and print its code once"
+  else
+    write_claim_code
+    echo "   The new code is live once this deploy finishes. If the deploy fails, the"
+    echo "   box keeps the old one until $ENV_FILE is deployed: re-run without --new-admin-code."
+    require_claim_hash "$(env_value ADMIN_CLAIM_CODE_HASH)"
+  fi
+fi
 
 # Everything lives in one machine, so every address is loopback. srh's Redis
 # client is IPv4-only, which is precisely why 127.0.0.1 — and not a Fly
@@ -864,7 +906,7 @@ make_volume ctf_data
 # format error, after a successful-looking deploy.
 #
 # --skip-build never risks a stale config: the app bakes nothing but the
-# health-check build stamp (config v2) — GITHUB_ORG, ADMIN_LOGINS and
+# health-check build stamp (config v2) — GITHUB_ORG, ADMIN_CLAIM_CODE_HASH and
 # everything else are runtime reads that flow through the rendered compose
 # file below, on every deploy, with or without --skip-build.
 #
@@ -1017,7 +1059,12 @@ echo "== 3/5 rendering $RENDERED from docker-compose.yml"
 if [ -n "$DRY_RUN" ] && [ ! -f "$ENV_FILE" ]; then
   echo "DRY-RUN: would render $RENDERED (no $ENV_FILE to render from)"
 else
-  "$FLY_DIR/render-compose.sh" --env-file "$ENV_FILE" --out "$RENDERED" \
+  # Compose lets the shell environment win over --env-file, so an
+  # ADMIN_CLAIM_CODE_HASH exported in this shell would replace the file's
+  # validated (and possibly just rotated) hash in the render, and the code
+  # printed for the file could not claim. The renderer gets the file's value.
+  render_claim_hash="$(env_value ADMIN_CLAIM_CODE_HASH)" || exit 1
+  ADMIN_CLAIM_CODE_HASH="$render_claim_hash" "$FLY_DIR/render-compose.sh" --env-file "$ENV_FILE" --out "$RENDERED" \
     --app-image "$APP_IMAGE" --sync-image "$SYNC_IMAGE" --scorer-image "$SCORER_IMAGE"
 fi
 
@@ -1035,7 +1082,7 @@ cleanup_rendered() {
   # The autostop config is a derived copy of fly.toml and holds nothing
   # sensitive, but it goes too: leaving it behind invites someone to edit the
   # copy and wonder why their change never deploys.
-  rm -f "$FLY_DIR/.fly.autostop.toml"
+  rm -f "$FLY_DIR/.fly.autostop.toml" "$FLY_DIR/.fly.vm.toml"
 }
 trap cleanup_rendered EXIT INT TERM
 
@@ -1074,6 +1121,118 @@ fly_run secrets set --detach --app "$APP" \
   "REDISCLI_AUTH=$REDIS_PASSWORD"
 
 # ---------------------------------------------------------------------------
+# FLY_VM_SIZE / FLY_VM_MEMORY — the machine size, per deployment.
+#
+# fly.toml carries the minimum (shared-cpu-1x, 1 GB): right between events,
+# too small for one — the pre-event load check wants machine memory under 80 %
+# at 10 req/s, and the idle stack alone is ~65 % of 1 GB. A `fly scale vm` by
+# hand is undone by the next deploy, so a hotfix shipped mid-event would
+# silently shrink the machine. Set here, the event size survives every deploy
+# until someone changes the env file.
+#
+# Rendered into a temporary copy of fly.toml's [[vm]] block, not passed as
+# `fly deploy --vm-*` flags: fly.toml's [[vm]] can take precedence over them,
+# and a flag it outranks would look honoured and change nothing. Same
+# reasoning, and same never-edit-fly.toml rule, as FLY_AUTO_STOP below.
+#
+#   FLY_VM_SIZE    a Fly preset, e.g. shared-cpu-2x (empty: fly.toml's)
+#   FLY_VM_MEMORY  megabytes, at least 1024 (empty: fly.toml's)
+# ---------------------------------------------------------------------------
+DEPLOY_TOML="$CONFIG_TOML"
+VM_SIZE="$(env_value FLY_VM_SIZE)"
+VM_MEMORY="$(env_value FLY_VM_MEMORY)"
+# Fly's presets (`fly platform vm-sizes`) and the memory range each takes:
+# 256 to 2048 MB per shared CPU, 2048 to 8192 MB per performance CPU. Listed
+# here rather than asked of flyctl because --dry-run makes no fly calls. With
+# no preset the machine keeps fly.toml's one shared CPU, so 2048 MB at most.
+# Fly allocates shared memory in 256 MB steps and performance memory in
+# 1024 MB steps; any other value is refused mid-deploy.
+PRESET_MIN_MB=0
+PRESET_MAX_MB=2048
+PRESET_STEP_MB=256
+if [ -n "$VM_SIZE" ]; then
+  case "$VM_SIZE" in
+    shared-cpu-[12468]x)
+      n="${VM_SIZE#shared-cpu-}"; n="${n%x}"
+      PRESET_MIN_MB=$(( n * 256 )); PRESET_MAX_MB=$(( n * 2048 )) ;;
+    performance-[12468]x|performance-1[0246]x)
+      n="${VM_SIZE#performance-}"; n="${n%x}"
+      PRESET_MIN_MB=$(( n * 2048 )); PRESET_MAX_MB=$(( n * 8192 ))
+      PRESET_STEP_MB=1024 ;;
+    *)
+      echo "FAIL: FLY_VM_SIZE=$VM_SIZE is not a Fly machine preset." >&2
+      echo "      Use shared-cpu-1x/2x/4x/6x/8x or performance-1x/2x/4x/.../16x" >&2
+      echo "      (\`fly platform vm-sizes\` lists them)." >&2
+      exit 1 ;;
+  esac
+fi
+if [ -n "$VM_MEMORY" ]; then
+  # Digits only, no leading zero (shell arithmetic would read 02000 as octal
+  # 1024), and at most six of them: Fly's largest machine is 131072 MB, and
+  # a longer string would overflow the arithmetic below.
+  case "$VM_MEMORY" in
+    *[!0-9]*|0*|???????*)
+      echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is not a whole number of megabytes" >&2
+      echo "      (digits only, no leading zero, e.g. 2048)." >&2
+      exit 1 ;;
+  esac
+  if [ "$VM_MEMORY" -lt 1024 ]; then
+    echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is below 1024. The five containers hold" >&2
+    echo "      about 665 MB idle; less than 1 GB leaves them nothing to grow into." >&2
+    exit 1
+  fi
+  if [ "$VM_MEMORY" -lt "$PRESET_MIN_MB" ]; then
+    echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is below $VM_SIZE's minimum of $PRESET_MIN_MB MB." >&2
+    exit 1
+  fi
+  if [ "$VM_MEMORY" -gt "$PRESET_MAX_MB" ]; then
+    size_label="${VM_SIZE:-shared-cpu-1x}"
+    echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is above $size_label's maximum of $PRESET_MAX_MB MB." >&2
+    echo "      Pick a larger FLY_VM_SIZE as well." >&2
+    exit 1
+  fi
+  if [ $(( VM_MEMORY % PRESET_STEP_MB )) -ne 0 ]; then
+    echo "FAIL: FLY_VM_MEMORY=$VM_MEMORY is not a multiple of $PRESET_STEP_MB MB," >&2
+    echo "      the step Fly allocates ${VM_SIZE:-shared-cpu-1x} memory in." >&2
+    exit 1
+  fi
+elif [ "$PRESET_MIN_MB" -gt 1024 ]; then
+  # A preset alone would keep fly.toml's 1 GB, below what the preset takes —
+  # a config Fly refuses mid-deploy. Raise it to the preset's own minimum.
+  VM_MEMORY="$PRESET_MIN_MB"
+fi
+if [ -n "$VM_SIZE$VM_MEMORY" ]; then
+  # A preset replaces cpu_kind/cpus outright (keeping both would let the
+  # explicit cpus line contradict the preset); memory replaces memory.
+  DEPLOY_TOML="$FLY_DIR/.fly.vm.toml"
+  awk -v size="$VM_SIZE" -v mem="$VM_MEMORY" '
+    /^\[\[vm\]\]/ { invm = 1; print; if (size != "") print "  size = \"" size "\""; next }
+    /^\[/          { invm = 0 }
+    invm && size != "" && /^ *(cpu_kind|cpus|size) *=/ { next }
+    invm && mem != "" && /^ *memory *=/ { print "  memory = \"" mem "mb\""; next }
+    { print }
+  ' "$CONFIG_TOML" > "$DEPLOY_TOML"
+  # Fail loudly rather than deploy a config where the substitution missed: a
+  # reshaped [[vm]] block would otherwise ship the minimum to an event.
+  if { [ -n "$VM_SIZE" ] && ! grep -qF "size = \"$VM_SIZE\"" "$DEPLOY_TOML"; } ||
+     { [ -n "$VM_MEMORY" ] && ! grep -qF "memory = \"${VM_MEMORY}mb\"" "$DEPLOY_TOML"; }; then
+    echo "FAIL: could not set the machine size in $CONFIG_TOML's [[vm]] block." >&2
+    rm -f "$DEPLOY_TOML"
+    exit 1
+  fi
+  echo "   machine size from $ENV_FILE:"
+  sed -n '/^\[\[vm\]\]/,/^\[/p' "$DEPLOY_TOML" | grep -E '^ *(size|memory|cpu_kind|cpus) *=' | sed 's/^/     /'
+else
+  echo
+  echo "NOTE: machine size is fly.toml's minimum (shared-cpu-1x, 1 GB) — fine" >&2
+  echo "      between events, too small for one. Before an event set, in $ENV_FILE:" >&2
+  echo "        FLY_VM_SIZE=shared-cpu-2x" >&2
+  echo "        FLY_VM_MEMORY=2048" >&2
+  echo "      and redeploy; remove them after the event to drop back." >&2
+  echo
+fi
+
+# ---------------------------------------------------------------------------
 # FLY_AUTO_STOP — let the machine stop when idle. OFF unless asked for.
 #
 # There is no `fly deploy` flag for this: `auto_stop_machines` lives in
@@ -1090,7 +1249,6 @@ fly_run secrets set --detach --app "$APP" \
 # min_machines_running must drop to 0 alongside it, or Fly keeps one machine up
 # and the setting does nothing — a silent no-op that looks like it worked.
 # ---------------------------------------------------------------------------
-DEPLOY_TOML="$CONFIG_TOML"
 AUTO_STOP="$(env_value FLY_AUTO_STOP)"
 [ -n "$AUTO_STOP" ] || AUTO_STOP="off"
 case "$AUTO_STOP" in
@@ -1104,11 +1262,13 @@ case "$AUTO_STOP" in
     echo "         wakes the machine. Fine between events, wrong during one." >&2
     echo "         Set FLY_AUTO_STOP=off in $ENV_FILE before the event starts." >&2
     echo
+    AUTOSTOP_SRC="$DEPLOY_TOML"
     DEPLOY_TOML="$FLY_DIR/.fly.autostop.toml"
     if [ -z "$DRY_RUN" ]; then
+      # From the current copy, so a machine size set above is kept.
       sed -e "s/^  auto_stop_machines = false/  auto_stop_machines = \"$AUTO_STOP\"/" \
           -e "s/^  min_machines_running = 1/  min_machines_running = 0/" \
-          "$CONFIG_TOML" > "$DEPLOY_TOML"
+          "$AUTOSTOP_SRC" > "$DEPLOY_TOML"
       # Fail loudly rather than deploying a config where the substitution
       # silently missed — a renamed key here would just quietly keep the
       # machine running forever while the operator believed otherwise.
@@ -1160,10 +1320,9 @@ cat <<EOF
        fly logs --app $APP
        fly ssh console --app $APP -C "redis-cli PING"
 
-  3. Open $EVENT_URL, sign in, and check /admin loads for a login listed in
-     ADMIN_LOGINS in $ENV_FILE. A 403 there almost always means that login is
-     missing (or misspelled — logins join case-insensitively, but the list
-     itself must still contain it) — fix $ENV_FILE and redeploy.
+  3. Open $EVENT_URL/admin/claim, sign in, and enter the admin claim code
+     (printed once when $ENV_FILE got its hash). Lost it, or locked out?
+       ./deploy/fly/deploy.sh --skip-build --new-admin-code --env-file $ENV_FILE
 
   Custom domain instead of *.fly.dev:
        fly certs add <domain> --app $APP

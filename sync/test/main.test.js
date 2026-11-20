@@ -107,32 +107,26 @@ test("a valid config proceeds: state, redis, then the poll loop", async () => {
   assert.deepEqual(calls.exit, []);
 });
 
-// With no admin override readable at all (no Redis client), tick() falls
-// back to polling every target — worth telling the organizer at boot rather
-// than leaving it to be inferred from the poll logs.
-test("warns once at boot when there is no Redis client, and still starts the poll loop", async () => {
+// Without Redis there is no link table to attribute a PR author to a player,
+// so the poller refuses to start rather than drop every score.
+test("refuses to start without a Redis client", async () => {
   const cfg = { org: "o", statePath: "/s", pollIntervalMs: 1000 };
   const logErrLines = [];
-  const tickCalls = [];
+  const exits = [];
   await assert.rejects(
     () =>
       main({
         load: () => cfg,
         log: () => {},
         logErr: (m) => logErrLines.push(m),
-        readState: () => ({ repos: {} }),
         makeRedisImpl: () => null,
-        runTick: async (c, state, opts) => {
-          tickCalls.push(opts);
-          return state;
-        },
-        writeState: () => {},
-        sleep: () => {
+        exit: (code) => {
+          exits.push(code);
           throw STOP;
         },
       }),
     (err) => err === STOP,
   );
-  assert.equal(tickCalls[0].redis, null);
-  assert.deepEqual(logErrLines, ["ctf-sync: polling o every 1000ms", "ctf-sync: no Redis client — polling all six targets"]);
+  assert.deepEqual(exits, [1]);
+  assert.deepEqual(logErrLines, ["ctf-sync: Secure Development needs Redis to attribute PRs to players"]);
 });

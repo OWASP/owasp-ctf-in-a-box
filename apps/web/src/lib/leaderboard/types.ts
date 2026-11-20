@@ -54,14 +54,10 @@ type QuizDetail = { kind: "quiz"; answered: number; total: number; points: numbe
  *  `locked` is the number of live story steps still locked for this team
  *  (zero when classic has no stories or all steps unlocked). */
 type ClassicDetail = { kind: "classic"; solved: number; total: number; points: number; locked: number };
-/** ai's detail block: prompt-injection challenges solved out of the
- *  challenges on offer. Same shape and same clamp discipline as
- *  `ClassicDetail` — see `aiModule` in module-contributions.ts. */
-type AiDetail = { kind: "ai"; solved: number; total: number; points: number };
 /** Discriminated on `kind` — narrow on it rather than casting; each module
  *  contributes its own detail shape and a new module means a new branch, not
  *  a wider inferred type. */
-export type ModuleDetail = SecureDevelopmentDetail | QuizDetail | ClassicDetail | AiDetail;
+export type ModuleDetail = SecureDevelopmentDetail | QuizDetail | ClassicDetail;
 
 export type ModuleProgress = {
   /** This module's contribution to the row's total points. */
@@ -76,8 +72,13 @@ export type ModuleProgress = {
 
 export type LeaderboardEntry = {
   rank: number;
-  /** GitHub login — the row key (the scorer records the PR author's login). */
-  login: string;
+  /** Kit player id — the row key. */
+  playerId: string;
+  /** Display name, resolved from the player's profile by the fold's naming
+   *  stage (names.ts); the id fallback when the player has no profile. */
+  name: string;
+  /** Profile image URL, or null when the player has none. */
+  image: string | null;
   /** Team slug, or null for solo contestants. */
   team: string | null;
   points: number;
@@ -108,9 +109,11 @@ export type TeamStanding = {
   rank: number;
   slug: string;
   name: string;
-  /** GitHub login of the team's captain. */
+  /** Player id of the team's captain. */
   captain: string;
   points: number;
+  /** Player ids. Names come from the board's entries, which carry one row per
+   *  member (team-standings.ts). */
   members: string[];
   /** ISO time of the team's most recent Secure Development solve, from the
    *  scorer: half of the team's points tie-break once the app-side modules'
@@ -137,7 +140,7 @@ export type TeamStanding = {
   /** Per-module breakdown, mirroring `LeaderboardEntry.modules`. The
    *  `secure-development` block is stamped by `withModuleContributions`, and
    *  only on sources that already provide deduped teams (scorer, mock or lambda); the
-   *  quiz, classic and ai blocks — and the points they add — come from
+   *  quiz and classic blocks — and the points they add — come from
    *  `withTeamStandings`, once, for every team row on the board, including
    *  the membership-only rows it synthesises (issue #520). */
   modules?: Partial<Record<ModuleId, ModuleProgress>>;
@@ -161,7 +164,7 @@ export type SeriesPoint = { t: string; score: number };
 
 /** A single player's cumulative-score history, ascending by time — the last
  *  point's score equals that player's current leaderboard score. */
-export type PlayerSeries = { login: string; points: SeriesPoint[] };
+export type PlayerSeries = { playerId: string; name: string; image: string | null; points: SeriesPoint[] };
 
 export type LeaderboardData = {
   entries: LeaderboardEntry[];
@@ -194,7 +197,7 @@ export type LeaderboardData = {
 };
 
 export type UserProfile = {
-  login: string;
+  playerId: string;
   team: string | null;
   teamName: string | null;
   points: number;

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
+import { auditActor } from "@/lib/admin-audit-keys";
 import { errorLabel } from "@/lib/error-label";
 import {
   OpsValidationError,
@@ -12,8 +13,8 @@ import {
 /**
  * Per-team support operations (issue #168).
  *
- *   POST   {slug, action:"remove-member"|"transfer-captain", login}
- *   POST   {slug, action:"add-member", login, overrideCap?}  add or move a
+ *   POST   {slug, action:"remove-member"|"transfer-captain", id}
+ *   POST   {slug, action:"add-member", id, overrideCap?}  add or move a
  *          player, whatever the registration state
  *   DELETE {slug}   disband
  *
@@ -23,7 +24,7 @@ import {
  * whose captain has vanished cannot rename, remove a member, regenerate its
  * code, or disband, and nothing else can rescue it.
  *
- * Unlike the contestant routes, the acting login is NOT the subject — an
+ * Unlike the contestant routes, the acting admin is NOT the subject — an
  * organizer acts on a team they are not a member of. The store's scripts still
  * verify the team exists and the target is a member in the same atomic step as
  * the write, so an admin override is not the one path that races with a
@@ -52,14 +53,14 @@ export async function POST(request: Request) {
   const gate = await requireAdmin(request.headers);
   if (!gate.ok) return NextResponse.json({ error: "forbidden" }, { status: gate.status });
 
-  let body: { slug?: unknown; login?: unknown; action?: unknown; overrideCap?: unknown };
+  let body: { slug?: unknown; id?: unknown; action?: unknown; overrideCap?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
-  if (typeof body.slug !== "string" || typeof body.login !== "string") {
-    return NextResponse.json({ error: "slug and login must be strings" }, { status: 400 });
+  if (typeof body.slug !== "string" || typeof body.id !== "string") {
+    return NextResponse.json({ error: "slug and id must be strings" }, { status: 400 });
   }
 
   // Narrow BEFORE the try, so `action` is the union from here down rather than
@@ -70,14 +71,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unknown action" }, { status: 400 });
   }
 
-  const { slug, login } = body;
+  const { slug, id } = body;
+  const actor = auditActor(gate.player);
   try {
     const result =
       action === "remove-member"
-        ? await forceRemoveFromTeam(slug, login, gate.login)
+        ? await forceRemoveFromTeam(slug, id, actor)
         : action === "transfer-captain"
-          ? await forceTransferCaptain(slug, login, gate.login)
-          : await forceAddToTeam(slug, login, gate.login, { overrideCap: body.overrideCap === true });
+          ? await forceTransferCaptain(slug, id, actor)
+          : await forceAddToTeam(slug, id, actor, { overrideCap: body.overrideCap === true });
     return NextResponse.json(result);
   } catch (err) {
     return fail(err, action);
@@ -99,7 +101,7 @@ export async function DELETE(request: Request) {
   }
 
   try {
-    return NextResponse.json(await forceDisbandTeam(body.slug, gate.login));
+    return NextResponse.json(await forceDisbandTeam(body.slug, auditActor(gate.player)));
   } catch (err) {
     return fail(err, "disband");
   }

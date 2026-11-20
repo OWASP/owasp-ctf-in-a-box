@@ -12,6 +12,7 @@ import {
   type Choice,
   type Question,
 } from "@/lib/quiz-store";
+import { auditActor } from "@/lib/admin-audit-keys";
 
 /**
  * Organizer authoring surface for the quiz module: list (GET), create-or-
@@ -197,7 +198,7 @@ export async function POST(request: Request) {
       return errorResponse(err);
     }
 
-    await writeAdminAudit(gate.login, "quiz-import", { created: summary.created, updated: summary.updated });
+    await writeAdminAudit(auditActor(gate.player), "quiz-import", { created: summary.created, updated: summary.updated });
     return NextResponse.json(summary);
   }
 
@@ -213,7 +214,7 @@ export async function POST(request: Request) {
     return errorResponse(err);
   }
 
-  await writeAdminAudit(gate.login, "quiz-upsert", { questionId: q.id });
+  await writeAdminAudit(auditActor(gate.player), "quiz-upsert", { questionId: q.id });
   // Echoes the STORED correct set (deduped and sorted by `upsertQuestion`),
   // not the raw payload, so the authoring client's list matches what a
   // subsequent GET would return rather than drifting from it.
@@ -234,6 +235,6 @@ export async function DELETE(request: Request) {
     return errorResponse(err);
   }
 
-  await writeAdminAudit(gate.login, "quiz-delete", { questionId: id });
+  await writeAdminAudit(auditActor(gate.player), "quiz-delete", { questionId: id });
   return NextResponse.json({ ok: true });
 }

@@ -27,8 +27,8 @@ function hash(...items: [string, number, string][]) {
   return { result: items.flatMap(([id, points, at]) => [id, JSON.stringify({ points, at })]) };
 }
 
-function entry(login: string, points: number): LeaderboardEntry {
-  return { rank: 0, login, team: null, points, patched: 0, failed: 0, total: 0, apps: {}, updatedAt: null };
+function entry(playerId: string, points: number): LeaderboardEntry {
+  return { rank: 0, playerId, name: playerId, image: null, team: null, points, patched: 0, failed: 0, total: 0, apps: {}, updatedAt: null };
 }
 
 function team(slug: string, members: string[]): TeamStanding {
@@ -68,7 +68,7 @@ describe("withModuleSeries", () => {
     const base = data({
       series: [
         {
-          login: "ada",
+          playerId: "ada", name: "ada", image: null,
           points: [
             { t: "2026-01-01T09:00:00.000Z", score: 5 },
             { t: "2026-01-01T11:00:00.000Z", score: 8 },
@@ -105,12 +105,12 @@ describe("withModuleSeries", () => {
     ]);
   });
 
-  // A module's solves hash is keyed on the login exactly as the session spelled
-  // it (`ctf:classic:solves:ChrisZoc`); only the JOIN between logins is
-  // case-insensitive. Reading the hash under a lowercased login finds nothing,
+  // A module's solves hash is keyed on the player id exactly as the session spelled
+  // it (`ctf:classic:solves:ChrisZoc`); only the JOIN between player ids is
+  // case-insensitive. Reading the hash under a lowercased player id finds nothing,
   // and a mixed-case contestant's line loses every app-side point. The mock
   // answers only the exact key the store writes, so a lowercased read is empty.
-  it("reads a mixed-case login's hashes under the spelling the store wrote", async () => {
+  it("reads a mixed-case player id's hashes under the spelling the store wrote", async () => {
     mocks.getEnabledModuleIds.mockResolvedValue(new Set(["secure-development", "classic"]));
     const stored = new Map([["ctf:classic:solves:ChrisZoc", hash(["flag-1", 50, "2026-10-07T12:20:00.000Z"])]]);
     mocks.upstashPipeline.mockImplementation(async (commands: string[][]) =>
@@ -119,7 +119,7 @@ describe("withModuleSeries", () => {
     const base = data({
       entries: [entry("ChrisZoc", 62)],
       teams: [team("oxguardians", ["ChrisZoc", "stsewd"])],
-      series: [{ login: "ChrisZoc", points: [{ t: "2026-10-07T12:30:00.000Z", score: 12 }] }],
+      series: [{ playerId: "ChrisZoc", name: "ChrisZoc", image: null, points: [{ t: "2026-10-07T12:30:00.000Z", score: 12 }] }],
       teamSeries: [{ slug: "oxguardians", name: "Oxguardians", points: [{ t: "2026-10-07T12:30:00.000Z", score: 12 }] }],
       capabilities: { apps: true, teams: true, challenges: false },
     });
@@ -128,7 +128,7 @@ describe("withModuleSeries", () => {
       { t: "2026-10-07T12:20:00.000Z", score: 50 },
       { t: "2026-10-07T12:30:00.000Z", score: 62 },
     ];
-    expect(result.series?.find((s) => s.login === "ChrisZoc")?.points).toEqual(expected);
+    expect(result.series?.find((s) => s.playerId === "ChrisZoc")?.points).toEqual(expected);
     expect(result.teamSeries?.[0].points).toEqual(expected);
   });
 
@@ -174,7 +174,7 @@ describe("withModuleSeries", () => {
     // upstashPipeline does not throw on a per-command failure — it returns the
     // error positionally, and reading `.result` past it would invent a zero.
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH" }]);
-    const base = data({ series: [{ login: "ada", points: [{ t: "2026-01-01T09:00:00.000Z", score: 5 }] }] });
+    const base = data({ series: [{ playerId: "ada", name: "ada", image: null, points: [{ t: "2026-01-01T09:00:00.000Z", score: 5 }] }] });
     const result = await withModuleSeries(base);
     expect(result.series?.[0].points).toEqual([{ t: "2026-01-01T09:00:00.000Z", score: 5 }]);
   });
@@ -207,7 +207,7 @@ describe("withModuleSeries", () => {
   });
 
   // Issue #446: the chart draws the series it is handed, and shipping every
-  // login's history put ~200 player series into each RSC payload while the
+  // player id's history put ~200 player series into each RSC payload while the
   // chart is written for the top ten. Only the top-ten rows per view are read
   // and emitted; ranks past the cap keep their row and get no line.
   it("emits series only for the top-ten entries and reads only their events", async () => {
@@ -219,10 +219,10 @@ describe("withModuleSeries", () => {
     // One quiz reply per charted entry — a 12th reply would prove rank 11 was
     // read. Rank 11 and 12 hold no line.
     mocks.upstashPipeline.mockResolvedValueOnce(
-      entries.slice(0, 10).map((e) => hash([`q-${e.login}`, 5, "2026-01-01T10:00:00.000Z"])),
+      entries.slice(0, 10).map((e) => hash([`q-${e.playerId}`, 5, "2026-01-01T10:00:00.000Z"])),
     );
     const result = await withModuleSeries(data({ entries }));
-    expect(result.series?.map((s) => s.login)).toEqual(entries.slice(0, 10).map((e) => e.login.toLowerCase()));
+    expect(result.series?.map((s) => s.playerId)).toEqual(entries.slice(0, 10).map((e) => e.playerId.toLowerCase()));
     const commands = mocks.upstashPipeline.mock.calls[0][0] as unknown[][];
     expect(commands).toHaveLength(10);
   });
@@ -261,7 +261,7 @@ describe("withModuleSeries", () => {
       hash(["q-ghost", 7, "2026-01-01T11:00:00.000Z"]),
     ]);
     const result = await withModuleSeries(base);
-    expect(result.series?.map((s) => s.login)).toEqual(["ada"]);
+    expect(result.series?.map((s) => s.playerId)).toEqual(["ada"]);
     expect(result.teamSeries?.[0].points).toEqual([
       { t: "2026-01-01T10:00:00.000Z", score: 40 },
       { t: "2026-01-01T11:00:00.000Z", score: 47 },

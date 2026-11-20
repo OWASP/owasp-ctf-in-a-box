@@ -52,6 +52,7 @@ vi.mock("@/lib/admin-store", () => ({
   effectiveRegistrationOpen: () => true,
 }));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
+vi.mock("@/lib/username-store", () => ({ hasPassword: async () => true }));
 vi.mock("@/lib/leaderboard/source", () => ({ getLeaderboardSource: async () => ({ getUser }) }));
 vi.mock("@/lib/team-store", () => ({
   getViewerTeam,
@@ -76,9 +77,11 @@ vi.mock("@/lib/upstash", () => ({ upstashPipeline: vi.fn() }));
 
 import ProfilePage from "@/app/(site)/profile/page";
 
+const ADA_ID = "2d1a6b5e-3f4c-4e7d-a081-9cadbe1f2041";
+
 beforeEach(() => {
   vi.clearAllMocks();
-  getSession.mockResolvedValue({ user: { login: "ada", image: null } });
+  getSession.mockResolvedValue({ user: { id: ADA_ID, login: "ada", username: "ada", image: null } });
   getUser.mockResolvedValue({
     login: "ada",
     team: null,
@@ -93,7 +96,7 @@ beforeEach(() => {
   });
   getViewerTeam.mockResolvedValue(null);
   getViewerHints.mockResolvedValue({ purchased: {}, spent: 0, count: 0 });
-  getQuizTotals.mockResolvedValue(new Map([["ada", { points: 15, answered: 3, lastAt: null }]]));
+  getQuizTotals.mockResolvedValue(new Map([[ADA_ID, { points: 15, answered: 3, lastAt: null }]]));
   listQuestions.mockResolvedValue([{}, {}, {}, {}, {}]);
 });
 

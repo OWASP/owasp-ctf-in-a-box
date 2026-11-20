@@ -1,0 +1,53 @@
+import "server-only";
+import { APIError, type createAuthMiddleware } from "better-auth/api";
+import { clientIp } from "@/lib/client-ip";
+import { RATE_LIMITS, consumeRateLimit } from "@/lib/rate-limit-store";
+import { normalizeUsername } from "@/lib/username-rules";
+
+type AuthCtx = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
+
+async function charge(r: { bucket: string; limit: number; windowSeconds: number }, key: string): Promise<void> {
+  // Fail closed: these guard account creation and a password compare, and
+  // with Redis down sign-in is down anyway.
+  const verdict = await consumeRateLimit(r.bucket, key, r.limit, r.windowSeconds, { failClosed: true });
+  if (verdict.allowed) return;
+  const retryAfterSeconds = verdict.retryAfterSeconds;
+  throw new APIError(
+    "TOO_MANY_REQUESTS",
+    {
+      message: `Too many attempts. Try again in ${retryAfterSeconds} seconds.`,
+      code: "RATE_LIMITED",
+      retryAfterSeconds,
+    },
+    { "Retry-After": String(retryAfterSeconds) },
+  );
+}
+
+/**
+ * The before hook that rate-limits the auth paths a client can make write
+ * per client address. Username sign-in is also bounded per address AND
+ * username, so guessing one account's password is limited per source while a
+ * stranger elsewhere cannot lock the player out. `/sign-in/social` and
+ * `/link-social` each write an OAuth state row, so they share the sign-in
+ * address budget. `/callback/:id` consumes a state row a charged request
+ * wrote, and `/get-session` and `/sign-out` run on every page, so those and
+ * every other path are not charged here.
+ */
+export async function limitAuthAttempt(ctx: AuthCtx): Promise<void> {
+  if (ctx.path === "/sign-up/email") {
+    await charge(RATE_LIMITS.signUpIp, clientIp(ctx.headers ?? new Headers()));
+    return;
+  }
+  if (ctx.path === "/sign-in/social" || ctx.path === "/link-social") {
+    await charge(RATE_LIMITS.signInIp, clientIp(ctx.headers ?? new Headers()));
+    return;
+  }
+  if (ctx.path === "/sign-in/username") {
+    const ip = clientIp(ctx.headers ?? new Headers());
+    await charge(RATE_LIMITS.signInIp, ip);
+    // Keyed on the username as the plugin stores it, so case and spaces
+    // cannot buy a fresh budget for one account.
+    const typed = (ctx.body as { username?: unknown } | null)?.username;
+    await charge(RATE_LIMITS.signInUser, `${ip}|${typeof typed === "string" ? normalizeUsername(typed) : ""}`);
+  }
+}

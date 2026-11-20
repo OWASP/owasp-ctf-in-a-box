@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adminErrorLabel, clearDemoData, seedDemoData } from "@/lib/admin-store";
+import { auditActor } from "@/lib/admin-audit-keys";
 
 // Populate (POST) or remove (DELETE) demo leaderboard rows. No DEMO_MODE gate
 // (issue #419 — dropped everywhere, not just here): admin-gated + type-to-
@@ -17,7 +18,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await seedDemoData(gate.login);
+    const result = await seedDemoData(auditActor(gate.player));
     return NextResponse.json(result);
   } catch (err) {
     console.error("[admin/seed] seed failed", adminErrorLabel(err));
@@ -35,7 +36,7 @@ export async function DELETE(request: Request) {
   }
 
   try {
-    const result = await clearDemoData(gate.login);
+    const result = await clearDemoData(auditActor(gate.player));
     return NextResponse.json(result);
   } catch (err) {
     console.error("[admin/seed] clear failed", adminErrorLabel(err));

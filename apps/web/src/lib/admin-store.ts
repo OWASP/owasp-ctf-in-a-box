@@ -1,7 +1,6 @@
 import "server-only";
 import { ADJUSTMENTS_KEY } from "@/lib/adjustment-keys";
 import { assertPipelineOk, parseScanPage, upstashEval, upstashPipeline } from "@/lib/upstash";
-import { ADMIN_ADMINS_KEY, LOGIN_RE } from "@/lib/admin-admins";
 import { TEAM_MAX_MEMBERS_MAX } from "@/lib/team-limits";
 import { SCORE_COOLDOWN_MIN_MAX } from "@/lib/scoring-defaults";
 import { HINT_COST_MAX } from "@/lib/hint-defaults";
@@ -34,20 +33,11 @@ import {
   CLASSIC_ATTEMPTS_PREFIX,
   CLASSIC_OPENED_PREFIX,
 } from "@/lib/classic-keys";
-import {
-  AI_POINTS_KEY,
-  AI_SOLVED_KEY,
-  AI_SOLVECOUNT_KEY,
-  AI_LAST_AT_KEY,
-  AI_SOLVES_PREFIX,
-  AI_ATTEMPTS_PREFIX,
-  AI_OPENED_PREFIX,
-  AI_NONCE_PREFIX,
-  AI_LAUNCHKEY_KEY,
-} from "@/lib/ai-keys";
 import { ACTIVITY_LOG_KEY } from "@/lib/activity-keys";
-import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-audit-keys";
+import { ANNOUNCE_FIRST_ANNOUNCED_KEY, ANNOUNCE_MILESTONE_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY } from "@/lib/announce/keys";
+import { ADMIN_AUDIT_KEY, AUDIT_CAP, type AuditActor } from "@/lib/admin-audit-keys";
 import { SPONSORS_KEY, SPONSORS_LOGO_KEY, isSponsorLogoSize, type SponsorLogoSize } from "@/lib/sponsors-keys";
+import { PROVIDER_SWITCH_FIELD, SIGN_IN_PROVIDERS, type SignInProviderId } from "@/lib/sign-in-providers";
 
 // The audit trail's key and cap live in a dependency-free leaf so
 // lib/demo-seed.ts can append to the same trail without importing this module
@@ -75,11 +65,6 @@ const QUIZ_MAX_ATTEMPTS_MAX = 100;
 const QUIZ_RETRY_AFTER_MAX = 100000; // minutes
 /** Cap for the classic-module submission cooldown (see below). */
 const CLASSIC_COOLDOWN_SEC_MAX = 3600;
-/** Cap for the ai-module submission cooldown (see below). Separate constant
- *  from CLASSIC_COOLDOWN_SEC_MAX rather than shared: the two modules' knobs
- *  happen to agree on [0, 3600] today, but nothing ties them together, and a
- *  shared constant would make that agreement look load-bearing when it isn't. */
-export const AI_COOLDOWN_SEC_MAX = 3600;
 
 /** The ONLY thing an admin-authoring route may hand `console.error`. Shared
  *  by every `admin/*` route that writes secrets (a flag, a signing key).
@@ -97,9 +82,14 @@ export const adminErrorLabel: (err: unknown) => string = errorLabel;
  *  audit-write failure is logged but never fails a request whose actual data
  *  write already succeeded. `detail` must carry identifiers only, never a
  *  flag, a signing key, or a minted token — callers are responsible for
- *  keeping it that way. */
-export async function writeAdminAudit(actor: string, action: string, detail: Record<string, unknown>): Promise<void> {
-  const audit = JSON.stringify({ at: new Date().toISOString(), by: actor, action, ...detail });
+ *  keeping it that way. A detail key named `at`, `by`, `name` or `action`
+ *  is dropped in favour of the line's own. */
+export async function writeAdminAudit(actor: AuditActor, action: string, detail: Record<string, unknown>): Promise<void> {
+  // `at`, `by`, `name` and `action` describe the line itself, so a detail key
+  // of the same name never replaces them: spreading `entry` first fixes the
+  // key order, spreading it last makes its values win.
+  const entry = { at: new Date().toISOString(), by: actor.id, name: actor.name, action };
+  const audit = JSON.stringify({ ...entry, ...detail, ...entry });
   try {
     await upstashPipeline([
       ["LPUSH", ADMIN_AUDIT_KEY, audit],
@@ -149,11 +139,6 @@ export type AdminSettings = {
    *  challenge. null = use the module default. Seconds, not minutes: its job
    *  is blocking scripted brute force, not rationing tries. */
   classicCooldownSec: number | null;
-  /** Seconds a login must wait between flag submissions on the SAME ai
-   *  challenge. null = use the module default. Mirrors `classicCooldownSec`
-   *  exactly, including the module's own script re-enforcing whatever value
-   *  this resolves to. */
-  aiCooldownSec: number | null;
   /** Minutes a contestant must wait between SCORED runs on the same PR.
    *  Null = no override; the fork workflow's baked default applies. 0 disables
    *  the cooldown. Enforced by the Action inside each fork, which reads it
@@ -167,6 +152,10 @@ export type AdminSettings = {
   /** The projector board's QR code of the event URL. On unless an
    *  organizer turns it off: absent is on, a stored "0" is off. */
   displayQr: boolean;
+  /** The GitHub sign-in switch, keyed by provider id. On unless an
+   *  organizer turns it off: absent is on, a stored "0" is off. Keys being
+   *  present is a separate gate (see sign-in-providers). */
+  signInProviders: Record<SignInProviderId, boolean>;
   // Scheduled "auto dates" — nullable ISO instants. scoring* gates the freeze
   // through outsideScoringWindow (before start / after end = paused, and an
   // absent start = not launched, so paused); registration* gates
@@ -178,6 +167,7 @@ export type AdminSettings = {
   scoringEndsAt: string | null;
   registrationStartsAt: string | null;
   registrationEndsAt: string | null;
+  /** Display name of the admin who last changed a setting, as it was then. */
   updatedBy: string | null;
   updatedAt: string | null;
   /** Organizer-authored title/blurb overrides, keyed by module id. Unknown or
@@ -262,7 +252,6 @@ const NUMERIC_KNOBS = {
   quizMaxAttempts: [0, QUIZ_MAX_ATTEMPTS_MAX],
   quizRetryAfterMin: [0, QUIZ_RETRY_AFTER_MAX],
   classicCooldownSec: [0, CLASSIC_COOLDOWN_SEC_MAX],
-  aiCooldownSec: [0, AI_COOLDOWN_SEC_MAX],
   scoreCooldownMin: [0, SCORE_COOLDOWN_MIN_MAX],
   teamMaxMembers: [1, TEAM_MAX_MEMBERS_MAX],
 } as const satisfies Record<string, readonly [number, number]>;
@@ -274,6 +263,7 @@ export type SettingsPatch = {
 } & { [K in NumericKnob]?: number | null | "" } & {
   teamRegistrationOpen?: boolean;
   displayQr?: boolean;
+  signInGithub?: boolean;
   /** The modules this event serves. Replaces the set wholesale;
    *  see updateAdminSettings for the two things it refuses. */
   enabledModules?: ModuleId[];
@@ -359,11 +349,13 @@ function decodeSettings(h: Record<string, string>): AdminSettings {
     quizMaxAttempts: h.quizMaxAttempts === undefined ? null : Number(h.quizMaxAttempts),
     quizRetryAfterMin: h.quizRetryAfterMin === undefined ? null : Number(h.quizRetryAfterMin),
     classicCooldownSec: h.classicCooldownSec === undefined ? null : Number(h.classicCooldownSec),
-    aiCooldownSec: h.aiCooldownSec === undefined ? null : Number(h.aiCooldownSec),
     teamMaxMembers: h.teamMaxMembers === undefined ? null : Number(h.teamMaxMembers),
     scoreCooldownMin: h.scoreCooldownMin === undefined ? null : Number(h.scoreCooldownMin),
     teamRegistrationOpen: h.teamRegistrationOpen !== "0",
     displayQr: h.displayQr !== "0",
+    signInProviders: Object.fromEntries(
+      SIGN_IN_PROVIDERS.map((p) => [p, h[PROVIDER_SWITCH_FIELD[p]] !== "0"]),
+    ) as Record<SignInProviderId, boolean>,
     scoringStartsAt: h.scoringStartsAt ?? null,
     scoringEndsAt: h.scoringEndsAt ?? null,
     registrationStartsAt: h.registrationStartsAt ?? null,
@@ -489,7 +481,9 @@ function windowRefusal(start: string, end: string): AdminValidationError {
   );
 }
 
-export async function updateAdminSettings(patch: SettingsPatch, actor: string): Promise<AdminSettings> {
+const SWITCH_FIELDS: ReadonlySet<string> = new Set(Object.values(PROVIDER_SWITCH_FIELD));
+
+export async function updateAdminSettings(patch: SettingsPatch, actor: AuditActor): Promise<AdminSettings> {
   const keys = Object.keys(patch);
   if (keys.length === 0) throw new AdminValidationError("patch", "empty patch");
   const fields: string[] = [];
@@ -520,6 +514,12 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
     } else if (k === "displayQr") {
       if (typeof v !== "boolean") throw new AdminValidationError(k, `${k} must be a boolean`);
       // On by default, like registration: on HDELs, off writes "0".
+      if (v) dels.push(k);
+      else fields.push(k, "0");
+      changed[k] = v;
+    } else if (SWITCH_FIELDS.has(k)) {
+      if (typeof v !== "boolean") throw new AdminValidationError(k, `${k} must be a boolean`);
+      // On by default, like displayQr: on HDELs, off writes "0".
       if (v) dels.push(k);
       else fields.push(k, "0");
       changed[k] = v;
@@ -687,7 +687,7 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
     throw windowRefusal(patchedStart, patchedEnd);
   }
   const at = new Date().toISOString();
-  const audit = JSON.stringify({ at, by: actor, changed });
+  const audit = JSON.stringify({ at, by: actor.id, name: actor.name, changed });
   // A settings write can LOWER a contestant's folded score: the fold counts
   // only the ENABLED modules' points (`withModuleContributions`), so a module
   // switched off takes its points out. So the write sits inside a
@@ -707,7 +707,7 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
     result = await upstashEval(
       UPDATE_SCRIPT,
       [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY, ADMIN_PAUSES_KEY],
-      [actor, at, audit, String(AUDIT_CAP - 1), String(dels.length), ...dels, ...fields],
+      [actor.name, at, audit, String(AUDIT_CAP - 1), String(dels.length), ...dels, ...fields],
     );
   } finally {
     await endScoreLowering();
@@ -723,9 +723,9 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
 // record + API response reports as a cleared count. Deliberately excludes
 // ctf:admin:settings (kept), ctf:admin:audit (appended, not cleared), and
 // ctf:sync:status (sync owns it). ctf:user:* covers both the team-membership
-// hash and ctf:user:<login>:hints; ctf:team:* covers <slug> and <slug>:members.
+// hash and ctf:user:<playerId>:hints; ctf:team:* covers <slug> and <slug>:members.
 //
-// Quiz scope (spec Q1): wipes contestant PROGRESS (per-login answers/attempts,
+// Quiz scope (spec Q1): wipes contestant PROGRESS (per-player answers/attempts,
 // plus the two running-total aggregate hashes and the award-time hash) and deliberately KEEPS
 // `ctf:quiz:questions` / `ctf:quiz:key` — those are organizer CONTENT, like
 // `ctf:admin:settings`, not something a reset should ever destroy. The
@@ -738,16 +738,22 @@ export async function updateAdminSettings(patch: SettingsPatch, actor: string): 
 // Classic scope mirrors quiz's exactly, for the same reason (see
 // deleteChallenge's doc comment in classic-store.ts for the same contract
 // stated from the single-challenge-delete side): wipes contestant PROGRESS —
-// per-login solves/attempts, plus the three aggregate hashes
+// per-player solves/attempts, plus the three aggregate hashes
 // (`ctf:classic:points`/`ctf:classic:solved`/`ctf:classic:solvecount`) and
 // the award-time hash (`ctf:classic:lastAt`) the leaderboard reads — and deliberately KEEPS `ctf:classic:challenges` /
 // `ctf:classic:flag` / `ctf:classic:flagnorm` / `ctf:classic:categories`,
 // which are organizer CONTENT, not something a reset should ever destroy.
-const RESET_PREFIXES: readonly [string, string][] = [
+export const RESET_PREFIXES: readonly [string, string][] = [
   ["solves", "ctf:solves:*"],
   ["teams", "ctf:team:*"],
   ["users", "ctf:user:*"],
   ["joinCodes", "ctf:joincode:*"],
+  // Scores sync is holding for authors who have not linked yet belong to the
+  // event being wiped. The link itself (`ctf:link:*`) is account data and stays.
+  ["sdHeld", "ctf:sd:held:*"],
+  // Logins blocked from re-linking (a deleted player's) are blocked for this
+  // event only. The pattern must never match `ctf:link:*`.
+  ["relinkBlock", "ctf:relink:*"],
   ["hints", "ctf:hints:*"],
   ["quizAnswers", `${QUIZ_ANSWERS_PREFIX}*`],
   ["quizAttempts", `${QUIZ_ATTEMPTS_PREFIX}*`],
@@ -765,37 +771,23 @@ const RESET_PREFIXES: readonly [string, string][] = [
   // When each contestant first opened each challenge: it only times
   // this event's solves, so it goes with them.
   ["classicOpened", `${CLASSIC_OPENED_PREFIX}*`],
-  // ai scope mirrors classic's exactly, same PROGRESS/CONTENT split: solves,
-  // attempts, the two per-login aggregate hashes, the award-time hash and the
-  // per-challenge solvecount are wiped, while `ctf:ai:challenges` / `ctf:ai:flag` /
-  // `ctf:ai:flagnorm` / `ctf:ai:hints` / `ctf:ai:signkey` / `ctf:ai:categories`
-  // survive for the same reason classic's catalogue does: organizer CONTENT,
-  // not something a reset should ever destroy.
-  ["aiSolves", `${AI_SOLVES_PREFIX}*`],
-  ["aiAttempts", `${AI_ATTEMPTS_PREFIX}*`],
-  ["aiPoints", AI_POINTS_KEY],
-  ["aiSolved", AI_SOLVED_KEY],
-  ["aiSolveCount", AI_SOLVECOUNT_KEY],
-  ["aiLastAt", AI_LAST_AT_KEY],
-  ["aiOpened", `${AI_OPENED_PREFIX}*`],
-  // The replay-guard nonces are also contestant PROGRESS in the same sense —
-  // spent single-use markers from THIS event, not something a fresh one
-  // should start carrying.
-  ["aiNonces", `${AI_NONCE_PREFIX}*`],
-  // Deliberately DOES clear the launch keypair — unlike `clearAiChallenges`
-  // (ai-store.ts), which deliberately does NOT, and that contrast is the
-  // point. A master reset starts the event over: no live launch token should
-  // survive it, so the published public key must rotate and any deployed
-  // external verifier has to re-fetch /api/ai/launch-key on its next check.
-  // `clearAiChallenges` backs a replace-all archive IMPORT instead — it must
-  // NOT rotate the published key, or every deployed integration breaks and
-  // every already-issued token is invalidated for a wipe that was only ever
-  // meant to replace the challenge list.
-  ["aiLaunchKey", AI_LAUNCHKEY_KEY],
   // The activity log is contestant PROGRESS in the same sense as
   // solves — a record of what people did during the event — so a reset wipes
   // it. Leaving it would let a "fresh" event open with last event's sign-ins.
   ["activity", ACTIVITY_LOG_KEY],
+  // Discord-announcement STATE: the dedup ledgers, the delivery
+  // outbox, the lifecycle observations and the status counters are
+  // PROGRESS — a record of what this run announced — so a reset wipes them
+  // and a fresh run starts SILENT: the lifecycle pack re-seeds on the first
+  // tick without replaying old transitions, and a fresh first blood is
+  // claimable again. The organizer's CONFIGURATION (`ctf:admin:discord`,
+  // `ctf:admin:discord:webhook`, `ctf:admin:discord:webhook-generation`)
+  // deliberately does NOT live under this prefix: like the event images and
+  // the settings hash, a webhook the organizer set up is something they set,
+  // not event data, and survives the reset. `resetEvent` increments that
+  // generation before this sweep so an entry enqueued from a pre-reset config
+  // snapshot cannot match the post-reset value.
+  ["announcements", "ctf:announce:*"],
   // Sponsors are the one exception to the CONTENT/PROGRESS split every other
   // entry above follows: unlike a challenge's flag/description, a sponsor
   // configuration is scoped to ONE event run (sponsors funded last year's
@@ -810,8 +802,9 @@ const RESET_PREFIXES: readonly [string, string][] = [
 ];
 
 // SCAN (never KEYS — non-blocking) a prefix and DEL matches in batches until the
-// cursor wraps. Returns how many keys were removed.
-async function scanDelByPrefix(pattern: string): Promise<number> {
+// cursor wraps. Returns how many keys were removed. Exported for
+// deleteAllAccounts, which sweeps the account namespaces the same way.
+export async function scanDelByPrefix(pattern: string): Promise<number> {
   let cursor = "0";
   let total = 0;
   do {
@@ -843,41 +836,44 @@ async function scanDelByPrefix(pattern: string): Promise<number> {
 // intervals go; the reset's own freeze is open from the reset instant), and
 // append the audit record. One atomic script so a reset can never land
 // without its audit line. Exported for the live suite only.
-// KEYS: [1]=settings [2]=audit [3]=pause log
+// KEYS: [1]=settings [2]=audit [3]=pause log [4]=webhook generation
+//       [5]=milestone claims [6]=first-blood announcement claims
 // ARGV: [1]=actor [2]=at [3]=resetAt [4]=auditLine [5]=cap-1
 export const RESET_SCRIPT = `
 redis.call('HSET', KEYS[1], 'paused', '1', 'pausedSince', ARGV[2], 'resetAt', ARGV[3], 'updatedBy', ARGV[1], 'updatedAt', ARGV[2])
 redis.call('HDEL', KEYS[1], 'scoringStartsAt')
 redis.call('DEL', KEYS[3])
 redis.call('LPUSH', KEYS[2], ARGV[4])
-redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
+redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))
+-- The final generation bump and the claim wipe are one atomic step: a tick
+-- that read the first bump can still recreate an old milestone claim before
+-- this script, and that claim must not block the fresh event's first mark.
+if KEYS[4] then redis.call('INCR', KEYS[4]) end
+if KEYS[5] then redis.call('DEL', KEYS[5]) end
+if KEYS[6] then redis.call('DEL', KEYS[6]) end`;
 
-export type ResetEventOptions = {
-  /** Leave `ctf:ai:launchkey` in place — see `importEventBundle`, which
-   *  replaces the challenge catalogue but must not rotate the module's
-   *  published launch keypair (every deployed external verifier would break,
-   *  #250, ADR 53). Defaults to false: a master reset still rotates it. */
-  keepLaunchKey?: boolean;
-};
+// The reset's first write, before its sweep: the freeze, the new `resetAt`
+// epoch and a `reset:start` audit line, in one atomic script, so the pause it
+// sets is never unaudited. Exported for the live suite only.
+// KEYS: [1]=settings [2]=audit
+// ARGV: [1]=actor [2]=at [3]=resetAt [4]=auditLine [5]=cap-1
+export const RESET_BEGIN_SCRIPT = `
+redis.call('HSET', KEYS[1], 'paused', '1', 'pausedSince', ARGV[2], 'resetAt', ARGV[3], 'updatedBy', ARGV[1], 'updatedAt', ARGV[2])
+redis.call('LPUSH', KEYS[2], ARGV[4])
+redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]))`;
 
 /**
  * Master reset: wipe all event data (solves, teams, users, join codes, hints),
  * freeze scoring, bump the sync reset epoch, and audit it. Keeps admin
  * settings. Server-only — callers gate on requireAdmin.
  *
- * `opts.keepLaunchKey` skips the `ctf:ai:launchkey` wipe for callers that
- * replace the catalogue without rotating module identity (archive import);
- * every other prefix is cleared as usual. The default (false) is the master
- * reset's ordinary behavior — the launch keypair rotates.
- *
  * Poll-mode note: freezing + the `resetAt` epoch (honoured by sync, which drops
- * its cursor) is what makes the wipe stick; a later unfreeze re-ingests from
- * live PR comments, so a post-event wipe also needs those comments gone.
+ * its cursor, and by the scorer's solve script, which refuses a score timed
+ * before it at write time) is what makes the wipe stick; a later unfreeze
+ * re-ingests from live PR comments, so a post-event wipe also needs those
+ * comments gone.
  */
-export async function resetEvent(
-  actor: string,
-  opts: ResetEventOptions = {},
-): Promise<{ cleared: Record<string, number>; resetAt: string }> {
+export async function resetEvent(actor: AuditActor): Promise<{ cleared: Record<string, number>; resetAt: string }> {
   const cleared: Record<string, number> = {};
   // Score-lowering bracket (#553, fold-cache.ts): BEFORE the first delete,
   // raise the shared in-progress marker and bump the revision — a hint
@@ -889,18 +885,52 @@ export async function resetEvent(
   // (`scanDelByPrefix` does not undo).
   await beginScoreLowering();
   try {
+    const now = Date.now();
+    const at = new Date(now).toISOString();
+    const resetAt = String(now);
+    // The epoch and the freeze land BEFORE the first solve is swept: the
+    // scorer's solve script reads `resetAt` in the same EVAL as its write and
+    // refuses a score timed before it, so a score judged before the reset and
+    // written after the sweep cannot bring a solve back. RESET_SCRIPT below
+    // writes the same values again with the relock, the pause-log reset and
+    // the closing audit line. A sweep that throws leaves the event frozen at
+    // the new epoch with only the `reset:start` line; re-running the reset
+    // finishes it.
+    const start = JSON.stringify({ at, by: actor.id, name: actor.name, action: "reset:start" });
+    await upstashEval(
+      RESET_BEGIN_SCRIPT,
+      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY],
+      [actor.name, at, resetAt, start, String(AUDIT_CAP - 1)],
+    );
+
+    // Advance BEFORE the announcement wipe: a producer that read generation
+    // 0 before the reset can still write its outbox entry after the reset
+    // deletes the outbox. That entry keeps 0; the generation it must match
+    // is already 1, so the delivery sweeps skip it instead of posting it to
+    // the webhook the reset retained. Fail closed: if this INCR fails, abort
+    // before any prefix is swept, or the old generation would remain active
+    // against a wiped outbox.
+    assertPipelineOk(
+      await upstashPipeline([["INCR", ANNOUNCE_WEBHOOK_GENERATION_KEY]]),
+      "reset webhook generation",
+    );
     for (const [label, pattern] of RESET_PREFIXES) {
-      if (opts.keepLaunchKey && pattern === AI_LAUNCHKEY_KEY) continue;
       cleared[label] = await scanDelByPrefix(pattern);
     }
-    const at = new Date().toISOString();
-    const resetAt = String(Date.now());
-    const audit = JSON.stringify({ at, by: actor, action: "reset", cleared });
+    const audit = JSON.stringify({ at, by: actor.id, name: actor.name, action: "reset", cleared });
     await upstashEval(
       RESET_SCRIPT,
-      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY, ADMIN_PAUSES_KEY],
-      [actor, at, resetAt, audit, String(AUDIT_CAP - 1)],
+      [ADMIN_SETTINGS_KEY, ADMIN_AUDIT_KEY, ADMIN_PAUSES_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY, ANNOUNCE_MILESTONE_KEY, ANNOUNCE_FIRST_ANNOUNCED_KEY],
+      [actor.name, at, resetAt, audit, String(AUDIT_CAP - 1)],
     );
+    // RESET_SCRIPT's trailing increment advances the generation AGAIN, inside
+    // the same atomic step that clears milestone claims. The first increment
+    // only outruns producers that read the generation BEFORE the reset; a
+    // ticker pass can read the NEW generation and still read the previous
+    // event's settings before this script clears them, then recreate a
+    // milestone claim and enqueue an entry matching the first increment. The
+    // trailing bump makes the entry stale and the claim wipes leave the fresh
+    // event's first bloods and marks unclaimed.
     return { cleared, resetAt };
   } finally {
     await endScoreLowering();
@@ -920,55 +950,7 @@ import { runDemoSeed } from "@/lib/demo-seed";
 /** See lib/demo-seed.ts for the seed itself; this wrapper exists only to do
  *  the settings read this module owns. */
 export async function seedDemoData(
-  actor: string,
+  actor: AuditActor,
 ): Promise<{ contestants: number; teams: number; solves: number; sponsors: number }> {
   return runDemoSeed(await getAdminSettings(), actor);
-}
-
-
-// --- runtime admins ----------------------------------------------------------
-
-// The key, the login pattern and the READ live in admin-admins.ts so the
-// authorization path can import them without pulling in this module and the
-// module registry behind it. Re-exported here so callers that already talk to
-// the admin store keep one import.
-export { ADMIN_ADMINS_KEY, listStoredAdmins } from "@/lib/admin-admins";
-
-// SADD/SREM plus one audit line, in a single script, so a grant can never
-// land without its record — the same guarantee updateAdminSettings gives.
-// Exported for the live suite only.
-export const ADMINS_SCRIPT = `
-if ARGV[1] == 'add' then redis.call('SADD', KEYS[1], ARGV[2])
-else redis.call('SREM', KEYS[1], ARGV[2]) end
-redis.call('LPUSH', KEYS[2], ARGV[3])
-redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[4]))
-return redis.call('SMEMBERS', KEYS[1])`;
-
-async function mutateAdmins(action: "add" | "remove", login: string, actor: string): Promise<string[]> {
-  const normalized = login.trim().toLowerCase();
-  if (!normalized) throw new AdminValidationError("login", "login is required");
-  if (!LOGIN_RE.test(normalized)) {
-    throw new AdminValidationError("login", `'${login}' is not a GitHub login`);
-  }
-  const at = new Date().toISOString();
-  const audit = JSON.stringify({ at, by: actor, action: `admin:${action}`, login: normalized });
-  const res = await upstashEval(
-    ADMINS_SCRIPT,
-    [ADMIN_ADMINS_KEY, ADMIN_AUDIT_KEY],
-    [action, normalized, audit, String(AUDIT_CAP - 1)],
-  );
-  const arr = Array.isArray(res) ? (res as string[]) : [];
-  return arr.map((a) => String(a).toLowerCase()).sort();
-}
-
-/** Grant admin to `login` at runtime. Idempotent (SADD). */
-export async function addStoredAdmin(login: string, actor: string): Promise<string[]> {
-  return mutateAdmins("add", login, actor);
-}
-
-/** Revoke a RUNTIME grant. Cannot touch a baked admin — the route refuses
- *  that before calling here, because a baked login is the lockout recovery
- *  path and must survive any mistake made through the panel. */
-export async function removeStoredAdmin(login: string, actor: string): Promise<string[]> {
-  return mutateAdmins("remove", login, actor);
 }

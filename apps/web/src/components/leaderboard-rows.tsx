@@ -105,11 +105,11 @@ export function EntryRow({
       >
         <div className="flex items-center gap-3 sm:gap-4">
           <RankChip rank={entry.rank} />
-          <Avatar login={entry.login} />
+          <Avatar name={entry.name} image={entry.image} />
 
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="truncate font-mono font-medium text-white">{entry.login}</span>
+              <span className="truncate font-mono font-medium text-white"><bdi>{entry.name}</bdi></span>
               {entry.team && (
                 <span className="flex-none rounded border border-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-zinc-400">
                   {entry.team}
@@ -128,7 +128,7 @@ export function EntryRow({
                 describes closing on desktop, left open on the screen most
                 contestants read the board on. Restated here rather than unhiding the
                 column because at 320px the row already carries a rank chip,
-                an avatar, a login, a team tag and the points. */}
+                an avatar, a name, a team tag and the points. */}
             <p className="mt-1.5 font-mono text-[11px] tabular-nums text-muted sm:hidden">
               {solved}
               {solvedTotal !== null && <span className="text-muted"> / {solvedTotal}</span>}{" "}
@@ -228,7 +228,7 @@ export function EntryRow({
               to enumerate. See `hasAppSideProgress` for why the gate is
               derived and keyed on a completed item rather than a block. */}
           {hasAppSideProgress(entry.modules) && (
-            <BoardItemLists logins={[entry.login]} classicPoints={entry.modules?.classic?.points} />
+            <BoardItemLists players={[entry.playerId]} classicPoints={entry.modules?.classic?.points} />
           )}
         </div>
       )}

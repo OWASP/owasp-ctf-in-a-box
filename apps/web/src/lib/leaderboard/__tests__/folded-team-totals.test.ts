@@ -1,5 +1,5 @@
-// Issue #520: every TEAM's total on a scorer-sourced board counted its quiz,
-// Jeopardy (classic) and AI points twice. Each stage's own suite passed —
+// Issue #520: every TEAM's total on a scorer-sourced board counted its quiz
+// and Jeopardy (classic) points twice. Each stage's own suite passed —
 // withModuleContributions attributed the app-side modules onto the source's
 // teams, withTeamStandings attributed them again over the union of source and
 // membership-only teams, and each was right in isolation. Only the COMPOSED
@@ -12,11 +12,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LeaderboardData } from "../types";
 import type { QuizTotal } from "@/lib/quiz-store";
 import type { ClassicTotal } from "@/lib/classic-store";
-import type { AiTotal } from "@/lib/ai-store";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/enabled-modules", async () =>
-  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development", "quiz", "classic", "ai"]),
+  (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development", "quiz", "classic"]),
 );
 
 const mocks = vi.hoisted(() => ({
@@ -28,9 +27,6 @@ const mocks = vi.hoisted(() => ({
   getTeamClassicTotalsBatch: vi.fn(),
   listChallenges: vi.fn(),
   listStories: vi.fn(),
-  getAiTotals: vi.fn(),
-  getTeamAiTotalsBatch: vi.fn(),
-  listAiChallenges: vi.fn(),
   listTeams: vi.fn(),
   penalties: new Map<string, number>(),
   adjustments: new Map<string, number>(),
@@ -54,11 +50,6 @@ vi.mock("@/lib/classic-store", () => ({
   listChallenges: mocks.listChallenges,
   listStories: mocks.listStories,
 }));
-vi.mock("@/lib/ai-store", () => ({
-  getAiTotals: mocks.getAiTotals,
-  getTeamAiTotalsBatch: mocks.getTeamAiTotalsBatch,
-  listAiChallenges: mocks.listAiChallenges,
-}));
 vi.mock("@/lib/team-store", () => ({ listTeams: mocks.listTeams }));
 vi.mock("@/lib/hint-config", () => ({
   getHintPenalties: async () => mocks.penalties,
@@ -80,8 +71,8 @@ const dvwa = (points: number, patched: number) => ({
 // app-only is a team contestants created that the scorer has never heard of.
 const scorerBoard = (): LeaderboardData => ({
   entries: [
-    { rank: 1, login: "carol", team: "sd-heavy", points: 2500, patched: 3, failed: 0, total: 3, apps: dvwa(2500, 3), updatedAt: null },
-    { rank: 2, login: "alice", team: "byte-me", points: 58, patched: 1, failed: 0, total: 3, apps: dvwa(58, 1), updatedAt: null },
+    { rank: 1, playerId: "carol", name: "carol", image: null, team: "sd-heavy", points: 2500, patched: 3, failed: 0, total: 3, apps: dvwa(2500, 3), updatedAt: null },
+    { rank: 2, playerId: "alice", name: "alice", image: null, team: "byte-me", points: 58, patched: 1, failed: 0, total: 3, apps: dvwa(58, 1), updatedAt: null },
   ],
   teams: [
     { rank: 1, slug: "sd-heavy", name: "SD Heavy", captain: "carol", points: 2500, members: ["carol"], apps: dvwa(2500, 3) },
@@ -112,12 +103,15 @@ beforeEach(() => {
       ["dave", { points: 100, answered: 1, lastAt: null }],
     ]),
   );
-  mocks.getClassicTotals.mockResolvedValue(new Map([["alice", { points: 1125, solved: 4, lastAt: null }]]));
-  mocks.getAiTotals.mockResolvedValue(new Map([["bob", { points: 650, solved: 2, lastAt: null }]]));
+  mocks.getClassicTotals.mockResolvedValue(
+    new Map([
+      ["alice", { points: 1125, solved: 4, lastAt: null }],
+      ["bob", { points: 650, solved: 2, lastAt: null }],
+    ]),
+  );
 
   const noQuiz: QuizTotal = { points: 0, answered: 0, lastAt: null };
   const noClassic: ClassicTotal = { points: 0, solved: 0, lastAt: null };
-  const noAi: AiTotal = { points: 0, solved: 0, lastAt: null };
   mocks.getTeamQuizTotalsBatch.mockImplementation(
     byRoster(
       {
@@ -128,15 +122,14 @@ beforeEach(() => {
     ),
   );
   mocks.getTeamClassicTotalsBatch.mockImplementation(
-    byRoster({ "alice,bob": { points: 1125, solved: 4, lastAt: null, itemIds: ["c1", "c2", "c3", "c-gone"] } }, noClassic),
-  );
-  mocks.getTeamAiTotalsBatch.mockImplementation(
-    byRoster({ "alice,bob": { points: 650, solved: 2, lastAt: null, itemIds: ["a1", "a-gone"] } }, noAi),
+    byRoster(
+      { "alice,bob": { points: 1775, solved: 6, lastAt: null, itemIds: ["c1", "c2", "c3", "c4", "c5", "c-gone"] } },
+      noClassic,
+    ),
   );
   mocks.listQuestions.mockResolvedValue(["q1", "q2", "q3", "q4", "q5"].map((id) => ({ id })));
   mocks.listChallenges.mockResolvedValue(["c1", "c2", "c3", "c4", "c5", "c6"].map((id) => ({ id })));
   mocks.listStories.mockResolvedValue([]);
-  mocks.listAiChallenges.mockResolvedValue(["a1", "a2", "a3"].map((id) => ({ id })));
 
   mocks.listTeams.mockResolvedValue([
     { slug: "sd-heavy", name: "SD Heavy", members: ["carol"] },
@@ -150,15 +143,14 @@ describe("the production fold's team totals (issue #520)", () => {
     const out = await getFoldedLeaderboard();
     const byteMe = out.teams.find((t) => t.slug === "byte-me")!;
 
-    // 58 SD + 275 quiz + 1125 classic + 650 ai — once. The bug served 4158.
-    expect(byteMe.points).toBe(58 + 275 + 1125 + 650);
+    // 58 SD + 275 quiz + 1775 classic — once. The bug served 4158.
+    expect(byteMe.points).toBe(58 + 275 + 1775);
 
     // The chips were always right; pin that the fix keeps them so, and that
     // they add up to the header.
     expect(byteMe.modules?.["secure-development"]?.points).toBe(58);
     expect(byteMe.modules?.quiz?.points).toBe(275);
-    expect(byteMe.modules?.classic?.points).toBe(1125);
-    expect(byteMe.modules?.ai?.points).toBe(650);
+    expect(byteMe.modules?.classic?.points).toBe(1775);
     const chipSum = Object.values(byteMe.modules ?? {}).reduce((n, m) => n + (m?.points ?? 0), 0);
     expect(chipSum).toBe(byteMe.points);
   });
@@ -170,7 +162,7 @@ describe("the production fold's team totals (issue #520)", () => {
     mocks.adjustments = new Map([["byte-me", 500]]);
     const out = await getFoldedLeaderboard();
     const byteMe = out.teams.find((t) => t.slug === "byte-me")!;
-    expect(byteMe.points).toBe(58 + 275 + 1125 + 650 - 100 + 500);
+    expect(byteMe.points).toBe(58 + 275 + 1775 - 100 + 500);
     expect(byteMe.adjustment).toBe(500);
     expect(out.teams.map((t) => t.slug).slice(0, 2)).toEqual(["byte-me", "sd-heavy"]);
   });
@@ -193,19 +185,18 @@ describe("the production fold's team totals (issue #520)", () => {
 
   it("leaves contestant rows as they were", async () => {
     const out = await getFoldedLeaderboard();
-    const points = Object.fromEntries(out.entries.map((e) => [e.login, e.points]));
+    const points = Object.fromEntries(out.entries.map((e) => [e.playerId, e.points]));
     expect(points).toEqual({ carol: 2500, alice: 58 + 275 + 1125, bob: 650, dave: 100 });
   });
 
   // A solved item whose challenge was since deleted still counts in the
   // numerator, so the denominator is the live catalogue UNIONED with it (#350)
-  // — 5+1 questions, 6+1 challenges, 3+1 ai challenges — on every module.
+  // — 5+1 questions, 6+1 challenges — on every module.
   it("keeps each chip's denominator on the live-catalogue union", async () => {
     const out = await getFoldedLeaderboard();
     const byteMe = out.teams.find((t) => t.slug === "byte-me")!;
     expect(byteMe.modules?.quiz?.detail).toMatchObject({ total: 6 });
     expect(byteMe.modules?.classic?.detail).toMatchObject({ total: 7 });
-    expect(byteMe.modules?.ai?.detail).toMatchObject({ total: 4 });
   });
 
   it("nets the hint penalty once, after the single-counted total", async () => {
@@ -215,7 +206,7 @@ describe("the production fold's team totals (issue #520)", () => {
     expect(byteMe.points).toBe(2108 - 8);
     expect(byteMe.hintPenalty).toBe(8);
     // Blocks stay gross.
-    expect(byteMe.modules?.ai?.points).toBe(650);
+    expect(byteMe.modules?.classic?.points).toBe(1775);
   });
 
   // The team store is a second record, not a precondition: a scorer board
@@ -246,7 +237,7 @@ describe("the production fold's team totals (issue #520)", () => {
     mocks.board = () => ({
       entries: ranked.map((n) => ({
         rank: n,
-        login: `player${n}`,
+        playerId: `player${n}`, name: `player${n}`, image: null,
         team: `team${n}`,
         points: points(n),
         patched: 0,
@@ -271,14 +262,10 @@ describe("the production fold's team totals (issue #520)", () => {
     );
     mocks.getQuizTotals.mockResolvedValue(new Map());
     mocks.getClassicTotals.mockResolvedValue(new Map());
-    mocks.getAiTotals.mockResolvedValue(new Map());
     mocks.getTeamQuizTotalsBatch.mockResolvedValue(
       ranked.map(() => ({ points: 0, answered: 0, lastAt: null })),
     );
     mocks.getTeamClassicTotalsBatch.mockResolvedValue(
-      ranked.map(() => ({ points: 0, solved: 0, lastAt: null })),
-    );
-    mocks.getTeamAiTotalsBatch.mockResolvedValue(
       ranked.map(() => ({ points: 0, solved: 0, lastAt: null })),
     );
     mocks.penalties = new Map([["player1", 200]]);
@@ -292,7 +279,7 @@ describe("the production fold's team totals (issue #520)", () => {
     );
 
     const out = await getFoldedLeaderboard();
-    expect(out.series?.map((s) => s.login)).toEqual(ranked.slice(1, 11).map((n) => `player${n}`));
+    expect(out.series?.map((s) => s.playerId)).toEqual(ranked.slice(1, 11).map((n) => `player${n}`));
     expect(out.teamSeries?.map((t) => t.slug)).toEqual([
       "team12",
       ...ranked.slice(1, 10).map((n) => `team${n}`),
@@ -300,7 +287,7 @@ describe("the production fold's team totals (issue #520)", () => {
 
     const keys = (mocks.upstashPipeline.mock.calls[0][0] as string[][]).map(([, key]) => key);
     const read = new Set(
-      keys.map((key) => key.replace(/^ctf:(?:quiz:answers|classic:solves|ai:solves):/, "")),
+      keys.map((key) => key.replace(/^ctf:(?:quiz:answers|classic:solves):/, "")),
     );
     expect([...read].sort()).toEqual(ranked.slice(1).map((n) => `player${n}`).sort());
   });

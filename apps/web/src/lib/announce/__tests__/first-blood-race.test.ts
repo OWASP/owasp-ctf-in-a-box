@@ -1,0 +1,210 @@
+// A first-blood producer reads its config, then awaits listTeams() and the
+// challenge lookup before enqueueing. If the organizer disables the stream and
+// re-enables it during that window, the notification composed from the OLD
+// config must not borrow the NEW epoch and post. This runs the real notify and
+// sender against a store whose enqueue is the same atomic counter check the
+// Lua script performs: the captured pre-toggle stamp is rejected.
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => {
+  const state = {
+    config: {
+      webhookConfigured: true,
+      webhookGeneration: 0,
+      firstBlood: true,
+      launch: false,
+      pause: false,
+      milestones: false,
+      marks: "",
+      webhookUrl: "https://discord.com/api/webhooks/1/aaaaaaaaaaaaaaaaaaaaaa",
+      kindEpochs: { "first-blood": 0, launch: 0, pause: 0, resume: 0, milestone: 0 },
+    },
+    entries: [] as { id: string; kind: string; stamp: { webhookGeneration: number; kindEpoch: number } }[],
+    listTeams: vi.fn(),
+    claimLedgerFieldsAndEnqueue: vi.fn(),
+  };
+  return {
+    state,
+    listTeams: state.listTeams,
+    claimLedgerFieldsAndEnqueue: state.claimLedgerFieldsAndEnqueue,
+  };
+});
+
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/error-label", () => ({ errorLabel: () => "label" }));
+vi.mock("@/lib/announce/store", () => ({
+  getAnnounceConfig: async () => structuredClone(mocks.state.config),
+  readLedgerField: async () => JSON.stringify({ playerId: "alice", at: "2026-10-14T12:00:00Z" }),
+  newOutboxId: (kind: string) => `id-${kind}`,
+  // The atomic claim+enqueue contract: write only while the captured
+  // counters still match the live config and the switch is on.
+  claimLedgerFieldsAndEnqueue: mocks.claimLedgerFieldsAndEnqueue,
+  getWebhookDeliveryTarget: async () => ({ url: mocks.state.config.webhookUrl, generation: mocks.state.config.webhookGeneration }),
+  outboxPending: async () => [],
+  outboxRetryable: async () => [],
+  outboxClaim: async () => null,
+  outboxComplete: async () => {},
+  outboxSkip: async () => {},
+  outboxPrune: async () => {},
+  bumpStatus: async () => {},
+}));
+vi.mock("@/lib/team-store", () => ({ listTeams: mocks.listTeams }));
+vi.mock("@/lib/classic-store", () => ({
+  readChallengeRecords: async () => [{ id: "web-1", title: "Web 1", category: "web", points: 100 }],
+  listStories: async () => [],
+}));
+vi.mock("@/lib/quiz-store", () => ({ listQuestions: async () => [] }));
+vi.mock("@/lib/ai-store", () => ({ listAiChallenges: async () => [] }));
+vi.mock("@/lib/player", () => ({ getPlayerProfiles: async () => new Map() }));
+vi.mock("@/lib/story-lock", () => ({ storyPositions: () => new Map(), isLocked: () => false }));
+
+import { notifyFirstBlood } from "@/lib/announce/notify";
+
+beforeEach(() => {
+  mocks.state.config.firstBlood = true;
+  mocks.state.config.webhookGeneration = 0;
+  mocks.state.config.kindEpochs["first-blood"] = 0;
+  mocks.state.entries = [];
+  mocks.listTeams.mockReset();
+  mocks.claimLedgerFieldsAndEnqueue.mockReset().mockImplementation(
+    async (
+      _ledger: string,
+      _fields: string[],
+      webhookGeneration: number,
+      kind: string,
+      kindEpoch: number,
+      id: string,
+    ) => {
+      const config = mocks.state.config;
+      if (!config.firstBlood || config.webhookGeneration !== webhookGeneration || config.kindEpochs["first-blood"] !== kindEpoch) {
+        return false;
+      }
+      mocks.state.entries.push({ id, kind, stamp: { webhookGeneration, kindEpoch } });
+      return true;
+    },
+  );
+});
+
+describe("first-blood enqueue race", () => {
+  it("rejects a notification whose config was captured before the stream toggled", async () => {
+    let releaseTeams: (() => void) | undefined;
+    mocks.listTeams.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseTeams = () => resolve([{ slug: "t1", name: "Team One", members: ["alice"] }]);
+        }),
+    );
+
+    const notify = notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
+    await vi.waitFor(() => expect(mocks.listTeams).toHaveBeenCalledTimes(1));
+
+    // Disable and re-enable while the producer is suspended in listTeams().
+    // Disabling advances the kind epoch to 1; re-enabling leaves it at 1,
+    // so the producer's captured epoch (0) is stale even though the switch is back on.
+    mocks.state.config.firstBlood = false;
+    mocks.state.config.kindEpochs["first-blood"] += 1;
+    mocks.state.config.firstBlood = true;
+
+    expect(mocks.state.config.kindEpochs["first-blood"]).toBe(1);
+
+    releaseTeams?.();
+    await notify;
+
+    expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledWith(
+      "ctf:announce:first-announced",
+      ["classic:web-1"],
+      0, // captured webhookGeneration
+      "first-blood",
+      0, // captured kindEpoch
+      expect.any(String),
+      expect.anything(),
+    );
+    expect(mocks.state.entries).toHaveLength(0);
+  });
+
+  it("rejects a notification whose webhook was cleared and reconfigured while suspended in listTeams", async () => {
+    let releaseTeams: (() => void) | undefined;
+    mocks.listTeams.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseTeams = () => resolve([{ slug: "t1", name: "Team One", members: ["alice"] }]);
+        }),
+    );
+
+    // Initial state: producer captures webhook generation 0 at the start of notify
+    expect(mocks.state.config.webhookGeneration).toBe(0);
+
+    const notify = notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
+    await vi.waitFor(() => expect(mocks.listTeams).toHaveBeenCalledTimes(1));
+
+    // Clear-and-reconfigure: advances live generation to 1 and configures a new webhook URL
+    // before the suspended notifier resumes. The webhook remains configured, so
+    // enqueue rejection is specifically due to the stale captured generation.
+    mocks.state.config.webhookGeneration = 1;
+    mocks.state.config.webhookUrl = "https://discord.com/api/webhooks/2/bbbbbbbbbbbbbbbbbbbbbb";
+    mocks.state.config.webhookConfigured = true;
+
+    // Live webhook generation is now 1
+    expect(mocks.state.config.webhookGeneration).toBe(1);
+
+    releaseTeams?.();
+    await notify;
+
+    // Verify claimLedgerFieldsAndEnqueue was called exactly once with captured generation 0
+    expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledWith(
+      "ctf:announce:first-announced",
+      ["classic:web-1"],
+      0, // captured webhookGeneration
+      "first-blood",
+      0, // captured kindEpoch
+      expect.any(String),
+      expect.anything(),
+    );
+
+    // No outbox entry created because atomic enqueue gate rejects stale generation (0 != 1)
+    expect(mocks.state.entries).toHaveLength(0);
+  });
+
+  it("accepts a notification when stream and webhook generation remain unchanged through listTeams", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.state.config.webhookGeneration = 3;
+      mocks.state.config.kindEpochs["first-blood"] = 7;
+
+      let releaseTeams: (() => void) | undefined;
+      mocks.listTeams.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            releaseTeams = () => resolve([{ slug: "t1", name: "Team One", members: ["alice"] }]);
+          }),
+      );
+
+      const notify = notifyFirstBlood({ module: "classic", challengeId: "web-1", playerId: "alice" });
+      await vi.waitFor(() => expect(mocks.listTeams).toHaveBeenCalledTimes(1));
+
+      // State remains untouched
+      releaseTeams?.();
+      await notify;
+
+      expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledTimes(1);
+      expect(mocks.claimLedgerFieldsAndEnqueue).toHaveBeenCalledWith(
+        "ctf:announce:first-announced",
+        ["classic:web-1"],
+        3,
+        "first-blood",
+        7,
+        expect.any(String),
+        expect.anything(),
+      );
+
+      expect(mocks.state.entries).toHaveLength(1);
+      expect(mocks.state.entries[0].stamp).toEqual({ webhookGeneration: 3, kindEpoch: 7 });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+});

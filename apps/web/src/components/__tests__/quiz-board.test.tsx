@@ -16,6 +16,7 @@ import QuizBoard, {
   QuestionCard,
   describeAttempts,
   describeCorrect,
+  dispatchAnswer,
   resultLine,
   submitDisabled,
   type Feedback,
@@ -191,13 +192,13 @@ describe("QuizBoard", () => {
 
   it("offers a signed-out visitor no submit control, and no per-question prompt", () => {
     const html = renderToStaticMarkup(<QuizBoard questions={[singleChoiceQuestion]} maxAttempts={3} authenticated={false} />);
-    // The single sign-in prompt is the PAGE's ("Sign in with GitHub to answer
+    // The single sign-in prompt is the PAGE's ("Sign in to answer
     // questions.", quiz/page.tsx, rendered above this board) — one line for
     // the whole set. The board repeating it under every question was the
     // signed-out wall of identical CTAs the redesign removed (findings, bug
     // 1), so the board itself now renders neither a submit control nor its
     // own prompt.
-    expect(html).not.toMatch(/sign in with github/i);
+    expect(html).not.toMatch(/sign in/i);
     expect(html).not.toContain("<button");
   });
 
@@ -359,5 +360,43 @@ describe("describeRefusal (quiz)", () => {
 describe("quiz dry-run result copy (#464 admin preview)", () => {
   it("says a preview grade recorded nothing", () => {
     expect(describeCorrect(20, false, true)).toBe("Correct — preview only, nothing was recorded (+20 once the event launches).");
+  });
+});
+
+describe("dispatchAnswer", () => {
+  it("POSTs questionId and choices to /api/quiz/answer and parses a 200 payload", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ correct: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    try {
+      const out = await dispatchAnswer("q1", ["a"]);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("/api/quiz/answer");
+      expect(init.method).toBe("POST");
+      expect(init.body).toBe(JSON.stringify({ questionId: "q1", choices: ["a"] }));
+      expect(out).toEqual({ ok: true, data: { correct: false } });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("parses a 429 cooldown refusal as not-ok with error and retryAt (#753)", async () => {
+    const retryAt = "2026-08-19T10:00:00.000Z";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "cooldown", retryAt }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "42" },
+      }),
+    );
+    try {
+      const out = await dispatchAnswer("q1", ["a"]);
+      expect(out).toEqual({ ok: false, data: { error: "cooldown", retryAt } });
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

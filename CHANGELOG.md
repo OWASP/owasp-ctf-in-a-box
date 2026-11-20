@@ -8,26 +8,311 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
-### Changes
+- **Added: username and password accounts (#737).** Players sign up on the
+  box at `/sign-in` with a username (3 to 30 of letters, digits, `_` and
+  `.`, unique ignoring case) and a password (12 to 128, no composition
+  rules), no GitHub account needed. Account creation is always open; the
+  registration window still gates teams. A player who signs in with GitHub
+  and has no username picks one at `/welcome` first, and team create, join
+  and solo answer 409 `username_required` until they do. OAuth-only players
+  can add a password from `/profile`. Password sign-ins and sign-ups are in
+  the admin activity log. There is no password change or recovery yet.
+  **Existing GitHub-only accounts are asked to pick a username on their next
+  sign-in.**
+- **Security: sign-up and sign-in are rate-limited per address in Redis
+  (#737).** better-auth's in-memory limiter is off. The kit's limiter keys on
+  the address the box's proxy vouches for (the rightmost `X-Forwarded-For`
+  entry behind Caddy or the ALB, `Fly-Client-IP` on Fly through the new
+  `TRUSTED_CLIENT_IP_HEADER`, which the Fly render sets) and fails closed with a 429 and
+  `Retry-After`: 300 sign-ups and 600 sign-ins (password and GitHub start or
+  link) per address per 10 minutes, and 10 password attempts per address and
+  username per 15 minutes. Behind Cloudflare the address is the edge's. A
+  sign-up body is limited to `username` and `password`; the server sets the
+  name and a placeholder email, and `/sign-in/email`, `/update-user`,
+  `/change-password` and `/is-username-available` stay closed.
+- **Security: client-chosen OAuth scopes are refused (#768).** better-auth
+  forwards a `scopes` or `additionalParams` key on `/sign-in/social` and
+  `/link-social` into the GitHub authorization URL. The kit uses GitHub for
+  identity only, so a request carrying either key, with any value, now
+  answers 400 `OAUTH_PARAMS_NOT_ALLOWED` and no authorization URL is built.
+  The kit's own sign-in and link buttons never send them.
+- **Removed: the AI module (#729).** The module ADR 69 deprecated in v1.1.0
+  is deleted: the `/ai` and `/ai/[id]` pages, every `/api/ai/*` route
+  (`submit`, `event`, `state`, `launch-key`), `/api/admin/ai` and the AI admin
+  panel, its libraries, award Lua script and upstash suite,
+  `scripts/acceptance-ai-only.sh` with its `ai-only` CI job and
+  `make acceptance-ai-only` target, and `docs/ai-module.md`. The module
+  registry holds Secure Development, Quiz and Jeopardy; the master reset, the
+  per-contestant reset, the demo seed, the event archive, hints, metrics, the
+  leaderboard and the profile carry no AI branch, and the proxy's
+  `/api/ai/*` CSRF exemption is gone. Run AI security challenges as Jeopardy
+  challenges with flags (ADR 69, ADR 71).
+  **Breaking:** the AI module, its routes, its `aiCooldownSec` setting and
+  its acceptance script are gone, and an external challenge site has no
+  launch key or event endpoint to call. Nothing migrates: v2 refuses a Redis
+  holding v1 data and does not read v1 archives, so an event that wants its
+  AI results records them from its v1.x box before upgrading.
+- **Added: admin claim codes (#738).** An admin is a kit account that claimed
+  a one-time code at `/admin/claim`. The first code's SHA-256 is
+  `ADMIN_CLAIM_CODE_HASH` in `.env`; the Admins tab issues further codes
+  (single use, 15 minutes), lists admins by name and removes them, refusing
+  the last one whose account still exists. Claims are limited to five attempts per player per 15
+  minutes, and every claim, issue and removal is audited without the code.
+  Master reset keeps the admins. ADR 72.
+  **Breaking:** `ADMIN_LOGINS` is ignored; a GitHub login no longer makes
+  anyone an admin, and grants made from the v1 panel (`ctf:admin:admins`)
+  are not read. The Admins tab's add-by-login form and
+  `POST /api/admin/admins` are gone. **Upgrade note:** run
+  `./setup/ctf-setup.sh admin-code` (or the Fly/AWS `--new-admin-code` flag
+  below), recreate the app container
+  (`docker compose up -d --no-deps --force-recreate app`; a plain restart does
+  not reload `.env`), and claim at `/admin/claim` with the printed code.
+- **Added: provisioning writes the admin claim code (#738).**
+  `ctf-setup.sh secrets` writes `ADMIN_CLAIM_CODE_HASH` and prints its code
+  once, and leaves `SCORE_IMAGE` as a comment so a wizard run stopped before
+  step 3 asks it again; `ctf-setup.sh admin-code` rotates it, names a
+  non-default `--out` file in its recovery command, and prints the app
+  recreate under `env -u ADMIN_CLAIM_CODE_HASH`; the wizard generates one when
+  `.env` has none and otherwise offers a default-No rotation, and `doctor`
+  checks the hash without printing it. `deploy/fly/deploy.sh init` gives
+  `.env.fly` its own code, and `deploy.sh --new-admin-code` rotates it on a
+  deploy; the render always takes the env file's hash over one exported in
+  the shell. On AWS, Terraform creates the SSM SecureString
+  `<ssm_prefix>/ADMIN_CLAIM_CODE_HASH` holding a placeholder the app reads as
+  unset (later plans ignore its value; the hash, never the code, may sit in
+  state as a sensitive value), and
+  `deploy/aws-terraform/deploy.sh` writes the hash into it once the stack
+  exists; `--new-admin-code` replaces it and rolls the app. The code is
+  printed as soon as the hash is stored, so a failed roll still leaves it in
+  hand, with the `update-service` command that activates it. `dev-stack`
+  writes a code into its throwaway env, and refuses to start when an exported
+  `ADMIN_CLAIM_CODE_HASH` differs from its env file's. The dry-run redactor hides `*_HASH`
+  values and the argument after `--value`.
+  **Breaking:** setup no longer asks for or writes `ADMIN_LOGINS`; `doctor`
+  and the Fly deploy warn on a leftover line. The Terraform variable
+  `admin_logins` is removed — delete it from `terraform.tfvars` (Terraform
+  warns about an undeclared variable there, and `-var admin_logins=…`
+  fails). Fly `init` no longer copies `.env`'s claim hash, and `--refresh`
+  and the drift check leave it alone. **Upgrade note (AWS):** remove
+  `admin_logins`, run `deploy.sh` (it builds and pushes this revision's
+  images; it does not apply), then `terraform apply` (bootstrap-code claims
+  are unavailable from here until the next step), then
+  `deploy.sh --skip-build --new-admin-code`, which prints the code. On a
+  Secure Development stack both `deploy.sh` runs need `--scorer-source` or
+  `SCORE_IMAGE`.
+- **Added: GitHub linking, and held Secure Development scores (#741).** With
+  Secure Development on, a player links a GitHub account from their profile
+  or by signing in with GitHub; one GitHub account links to one kit account,
+  a player already linked cannot start a second link, and there is no
+  unlink. Email is not identity, so the GitHub account may carry a different
+  email, and a GitHub sign-in no longer refreshes the player's name or
+  avatar. The Secure Development page hides the fork links until the player
+  has linked. A score whose PR author has not linked is now
+  held (`ctf:sd:held:*`, tally bucket `held`) instead of dropped. Each sync
+  tick releases the held scores of authors who linked before Scoring closes
+  (or of any linked author when the event has no end), oldest comment
+  first, at the original comment time, so the scorer still judges the
+  window, freeze and reset against that time. A link made at or after the
+  close does not release while that close stands (an organizer who moves
+  the end later lets it release);
+  the Secure Development admin tab lists held and `unclaimed` scores
+  (read-only). A master reset wipes held scores and keeps links; deleting a
+  player clears their held scores. A held score for a target the organizer
+  has turned off stays held until the target is back, and a newer score
+  waits behind an older one still held for the same target, or behind an
+  older comment of the same author that failed and will be retried, so a
+  solve keeps its first comment time.
+  **Breaking:** sync's `unlinked` tally and its `dropped` log line are gone;
+  that score is now counted as `held`, so update any log parser that matched
+  `unlinked`. Every link now carries its time in `ctf:link:at`, and a link
+  with no time counts as made after the close whenever `scoringEndsAt` is
+  set. **Upgrade note:** only a box running unreleased `main` between #742
+  and this change has links without a time; a v1.x box has no links at all,
+  and v2 refuses v1 data. On such a box, each linked player signing in again
+  before the close stamps their link; one who signs in again only after the
+  close leaves their held scores `unclaimed`. Or stamp every existing link
+  before the close: `docker compose exec redis sh -c 'redis-cli --no-auth-warning -a "$REDIS_PASSWORD" --scan --pattern "ctf:link:user:*" | while read k; do redis-cli --no-auth-warning -a "$REDIS_PASSWORD" HSETNX ctf:link:at "${k#ctf:link:user:}" "$(date +%s)000"; done'`,
+  which records "now" as each link's time (`HSETNX`, so a link that already
+  has one keeps it): run before the close, those links release their held
+  scores; run after it, they stay `unclaimed`.
+- **Fixed: a failed sign-up no longer locks the contestant out (#759).** If
+  the linked-account write failed after the user row was written, that row
+  stayed behind and every later sign-in answered `account not linked`. The
+  auth store now deletes the rows a failed sign-up created, so the next
+  sign-in starts clean.
+- **Changed: `/api/classic/submit` and `/api/quiz/answer` now return HTTP
+  `429` with `Retry-After` on cooldown refusals (#753).** Both endpoints
+  previously returned `403` without `Retry-After`, unlike `/api/ai/submit`,
+  `/api/hints/reveal`, and `/api/team/join`. Both routes now include a
+  `Retry-After` header in whole seconds until `retryAt` while preserving
+  `{ error: "cooldown", retryAt }` in the body; every other refusal on these
+  routes still answers `403`.
+- **Changed: every player record is keyed by the player's account id, not
+  their GitHub login (#742).** Solves, teams, hints, quiz, Jeopardy and AI
+  progress, the activity log and Insights all follow the id, and boards, the
+  admin panel and the audit log show names resolved from the account store (a
+  player with no name shows as `player` plus the first 8 characters of the
+  id). What this changes for you: the Support tab finds a contestant by name,
+  and its actions and the delete confirmation work on the player (deleting
+  removes their event record, never their sign-in account or GitHub link).
+  Secure Development scores reach a player through the GitHub login linked at
+  their sign-in, so a PR author who has not linked an account yet is held,
+  not dropped (see the #741 entry). `sync` now refuses to start without Redis, and the file-state
+  poller for Redis-less runs is gone. The scorer's `POST /score` takes
+  `{player, target, solved, pr, sha, at}` and `GET /leaderboard` returns
+  `player` rather than `author`; the judge's score-comment marker is
+  unchanged. A master reset keeps accounts and GitHub links, and the event
+  archive never contains them, so demo and load-test accounts survive a reset
+  until **Clear demo data** or `scripts/load-seed.mjs --clean` removes them.
+  The AI launch token's `sub` is now the player id. `GET /api/hints` is
+  behind the pre-launch lock like the other module routes (403
+  `not-launched` before launch, admins pass as a preview). Data written by an
+  earlier version is not migrated: v2 refuses it (#743).
+- **AWS deploys now check credentials before reading Terraform outputs (#750).**
+  An expired SSO session fails with a credential message before image work
+  starts, while dry runs still make no AWS calls.
+- **Fixed: a fresh scorer image build fails at `apk add docker-cli` (#756).**
+  Alpine rebuilt `docker-cli` 29.9.3 as `-r1` and keeps only the latest
+  revision, so the pinned `-r0` could no longer be installed. The scorer now
+  copies the `docker` binary from the official `docker:29.9.3-cli` image,
+  pinned by digest, so an Alpine package rebuild can no longer break the
+  build. Dependabot keeps that image current with the base.
+- **Changed: sign-in state lives in Redis (#736).** Users, linked accounts and
+  sessions are stored under `ctf:auth:` in the box's Redis instead of only in
+  the session cookie, so a session can be revoked. Everyone signs in once more
+  after upgrading. A master reset keeps accounts; the event archive never
+  contains them; GitHub access tokens are not stored.
+- **Fixed: individual leaderboard rows now include team-unlocked Jeopardy
+  story steps in their denominator (#689).** Reachability is now calculated
+  for existing leaderboard contestants even when they have no personal
+  Jeopardy solves, using their team's roster and shared unlock progress.
+  Solve-less teammates therefore see the same reachable challenge total as
+  their teammates, without changing points, rankings or leaderboard row
+  creation.
 
-- **Added: Jeopardy hints are now an ordered, independently priced ladder
-  (#594).** A challenge can carry several hints, bought in order — hint 2 only
-  after hint 1 — each with its own price (or blank to use the event-wide
-  `hintCost`). The challenge page shows how many rungs exist and every rung's
-  price before purchase, renders an owned rung's text, and offers the next
-  rung's buy button; the Jeopardy editor gains a ladder field with add, move
-  and remove. Storage is additive: rung `N` is the field `<id>#<n>` in
-  `ctf:classic:hints` (level 1 stays the bare id, so existing single hints
-  read as hint 1 with no migration), per-rung prices live in
-  `ctf:classic:hintcosts`, and the price actually charged is recorded per
-  purchase in `ctf:hints:cost:<login>`. Ordering, the authoritative price
-  re-read and the client-confirmed quote (#557) are enforced atomically in the
-  reveal script — a stale quote is refused with `409` and nothing read. Bundle
-  version 5 exports/imports the ladder (on top of version 4's challenge
-  visibility) and still reads v1-v4 single hints as a one-rung list; Insights
-  adds a "hints by level" table (buyers, spend, before/after solving).
-  `ctf:hints:spent` stays the points penalty it always was. Secure Development
-  and the AI module keep a single hint.
+## v1.1.0 — 2026-11-10
+
+- **Fixed: `apps/web` pins minimatch to 11.0.1 for GHSA-g3hv-75wg-m249 (#734).**
+  eslint's TypeScript parser pulled in minimatch 10.2.6, which has a
+  denial-of-service advisory. The fix is a new major that no dependant's range
+  reaches yet, so an exact override in `apps/web/pnpm-workspace.yaml` brings it
+  in. Only lint loads it; the app never calls it at runtime. The
+  `brace-expansion@5` pin is dropped: minimatch 11 already requires 5.0.12.
+- **Deprecated: the AI module (#726, #728).** It keeps working in v1.x, with
+  security fixes only, and is removed in v2.0.0. Its switch in `/admin`
+  (Event → Modules and the AI panel's header) now says so, and so does the
+  confirmation when you enable it. For a new event, run AI security
+  challenges as Jeopardy challenges with flags. ADR 69 records why; it
+  supersedes ADR 53.
+- **Fixed: a fresh scorer image build fails at `apk add docker-cli` (#724).**
+  Alpine moved `docker-cli` from 29.9.2-r0 to 29.9.3-r0 and keeps only the
+  latest revision in its index, so the pinned 29.9.2-r0 could no longer be
+  installed. The scorer Dockerfile now pins `29.9.3-r0`. An image you already
+  built still works; this affects only a clean build.
+
+## v1.0.3 — 2026-10-25
+
+The second security patch on the v1.0.1 freeze, one day after the first: a
+zod denial of service that the public sign-in route reaches, carried in with
+the week's dependency bumps as one release. No breaking change, no
+configuration change. Redeploy the app; the scorer and sync images pick up
+the refreshed Node base on their next build.
+
+### Changes
+- **Security: `zod` 4.5.4 → 4.6.7 (#711).** GHSA-mrhx-c7xc-m3w5 (high): an
+  array schema without a length cap accumulates one issue object per failing
+  element, so a large array of wrong-typed items exhausts memory. zod is
+  transitive here, through `better-auth` and `better-call`, and the body of
+  `POST /api/auth/sign-in/social` carries `scopes: z.array(z.string())` with
+  no cap. That route is public on every box that signs in with GitHub, which
+  is all of them, and nothing in front of the app limits a request body. One
+  request could take the app container down; the 10 s health check (v1.0.2)
+  brought it back, but the request repeats.
+- **Security: `better-auth` 1.7.7 → 1.7.12 (#711).** 1.7.12 runs the same
+  issuer and nonce checks on OAuth callbacks completed through the OAuth
+  proxy as on the standard callback, and rejects ID tokens without `exp` or
+  `iat` or from a provider with no client ID. The kit uses neither the proxy
+  nor ID-token sign-in; the bump is hygiene on the auth library, and it moves
+  `better-call` to 1.4.4.
+- **Security: `happy-dom` 21.0.3 → 21.0.4 (#711).** GHSA-834v-8h66-3h79
+  (high), an incomplete fix for CVE-2026-33943. Test-only: happy-dom is the
+  vitest DOM and never ships in the runtime image.
+- **Deps: `react` and `react-dom` 19.3.0 → 19.3.1, `vitest` 5.0.4 → 5.0.5,
+  the `node:22-alpine` digest in all three Dockerfiles, `codeql-action`
+  4.39.1, `hashicorp/aws` 6.70.0 (#711).** The eight Dependabot PRs of the
+  week (#695, #699, #701, #702, #707, #708, #709, #710) land as this one
+  change so they get one CI run, one review and one deploy. `engines.node`
+  in `apps/web` narrows from `>=22` to `^22.12.0`, the line CI, `.nvmrc` and
+  the images actually run and the floor vitest 5 declares.
+
+## v1.0.2 — 2026-10-24
+
+A security patch for the v1.0.1 freeze: the Next.js advisories of October 22
+and the Fly health-check interval. No breaking change, no configuration
+change, no scorer rebuild. Upgrade a public box now; the Server Actions
+denial of service reaches any App Router deployment with a server action,
+and this kit has one.
+
+### Changes
+- **Security: `next` 16.4.0 → 16.4.2 (#703).** Closes three advisories
+  published 2026-10-22 and patched in 16.4.1: GHSA-p3m5-59mp-jv5r (high, a
+  denial of service through Server Actions; crafted requests pin the app's
+  CPU, and this kit's `ai` module carries a server action whether or not the
+  module is switched on), GHSA-2464-fhr4-w9xw (critical, remote code
+  execution in Image Optimization with SVG input; the shipped lockfile
+  already carried sharp 0.35.5, the advisory's workaround, and the image is
+  musl-based) and GHSA-673q-mjm6-r5xr (critical, remote code execution in
+  `use cache` functions; the kit has none). `eslint-config-next` moves with
+  it.
+- **Fixed: an app-container crash on Fly costs ~30 seconds of errors (#691).**
+  The container restarts in about two seconds, but Fly's proxy routes to it
+  again only after the next passing health check, and `fly.toml` checked every
+  30 seconds. The check now runs every 10 seconds. It still watches `/health`
+  (liveness) only. Takes effect on the next `deploy.sh` run.
+
+## v1.0.1 — 2026-10-22
+
+A fixes-only release: the build that runs the OWASP Global AppSec USA 2026
+demo (November 5). No breaking changes and no configuration change. Rebuild
+and push the scorer image after upgrading: the VAmPI rubric fix (#661) and
+the probe-count fix (#643) ship inside it.
+
+### Changes
+- **Changed: the Fly machine defaults to the minimum, `shared-cpu-1x` with
+  1 GB (was `shared-cpu-2x`, 2 GB).** The five containers hold about 665 MB
+  idle, so 1 GB is the floor and the right size between events. An event sizes
+  up with two new `.env.fly` keys, `FLY_VM_SIZE` and `FLY_VM_MEMORY`, which
+  `deploy.sh` renders into the deployed copy of `fly.toml`, so a redeploy
+  mid-event keeps the event size. **An existing Fly box shrinks to 1 GB on its next deploy unless both
+  keys are set** (`FLY_VM_SIZE=shared-cpu-2x`, `FLY_VM_MEMORY=2048` restores
+  the old size). A preset Fly does not know, or memory under 1024 MB, is
+  refused before the deploy.
+- **Fixed: a fresh scorer image build fails at `apk add docker-cli` (#687).**
+  Alpine moved `docker-cli` from 29.8.2-r1 to 29.9.2-r0 and keeps only the
+  latest revision in its index, so the pinned `-r1` could no longer be
+  installed. The scorer Dockerfile now pins `29.9.2-r0`. An image you already
+  built still works; this affects only a clean build.
+- **Fixed: the Fly deploy fails on flyctl 0.4.120 with "restart policy
+  `unless-stopped` is not supported by Fly Machines".** flyctl now reads the
+  compose `restart:` key it used to ignore, and refuses the whole machine
+  update. `deploy/fly/render-compose.sh` drops `restart:` from the rendered
+  file, so every container inherits the machine's `on-failure` policy — the
+  same behaviour as before, verified by the container-kill drill (#437).
+  Docker Compose bring-ups keep their `restart:` policies unchanged.
+- **Fixed: `ctf-setup.sh`'s amd64 rebuild hint builds an image Fly accepts.**
+  The hint now includes `--provenance=false --sbom=false`, as
+  `docs/hosting.md` already does. Without them buildx pushes an OCI index
+  carrying an attestation, which Fly's registry refuses with `400 Bad
+  Request` when the deploy mirrors the scorer.
+- **Fixed: `apps/web` pins vite to 8.1.6 for the launch-editor advisories.**
+  A `pnpm-workspace.yaml` override moves the test-only vite that vitest pulls
+  in from 8.1.3 to 8.1.6, clearing Dependabot's three launch-editor alerts
+  (one high). The runtime image never ships vite, so the box was not exposed.
+- **Fixed: the leaderboard could show stale scores due to an extra fetch cache (#598).**
+  Normal scorer requests now bypass Next.js's 30-second fetch cache, while the
+  leaderboard retains its 10-second fold memoization to avoid unnecessary
+  recomputation. The Secure Development caption now says the board updates about
+  every 10 seconds.
 - **Fixed: the scorer's unreachable-target early-abort test no longer flakes
   under CPU load (#643).** `runExec` now also returns `spawned`, the number of
   probes it actually launched — counted at the spawn decision, not by a marker
@@ -102,6 +387,11 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   receive distinct form keys to cleanly remount form state and re-trigger
   focus effects, and the Add button is guarded against clicks while categories
   are reordering, not yet loaded, or when the initial load failed.
+- **Changed: admin challenge lifecycle tests drive real DOM interactions (#676).**
+  `apps/web` adds `@testing-library/react` and `happy-dom`, so deleting an open
+  challenge, switching editors with a revealed flag, cancelling a draft switch
+  and successive new-challenge drafts are covered through rendered components
+  rather than static markup alone.
 
 ## v1.0.0 — 2026-10-16
 

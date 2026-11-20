@@ -9,12 +9,15 @@
 //
 // WHAT IT WRITES. The same keys `seedDemoData` (apps/web/src/lib/admin-store.ts)
 // writes for the demo roster, for N generated contestants on teams of 2–4:
-//   ctf:team:<slug> hash + ctf:team:<slug>:members set + ctf:user:<login>
+//   ctf:team:<slug> hash + ctf:team:<slug>:members set + ctf:user:<player>
 //     (team, joinedAt, firstTeamAt)
-//   ctf:solves:<target>  <login>:<challengeId> -> ISO   (Secure Development)
-//   ctf:quiz:answers:<login> / ctf:quiz:attempts:<login> + ctf:quiz:points /
+//   ctf:auth:user <player> -> account row (a display name, no GitHub link) +
+//     its email index set, so the board shows names; account rows are not
+//     under any master-reset prefix, so --clean is the way they go
+//   ctf:solves:<target>  <player>:<challengeId> -> ISO   (Secure Development)
+//   ctf:quiz:answers:<player> / ctf:quiz:attempts:<player> + ctf:quiz:points /
 //     ctf:quiz:answered aggregates + ctf:quiz:lastAt (latest award)
-//   ctf:classic:solves:<login> / ctf:classic:attempts:<login> +
+//   ctf:classic:solves:<player> / ctf:classic:attempts:<player> +
 //     ctf:classic:points / ctf:classic:solved aggregates + ctf:classic:lastAt
 // It attaches solves to the CATALOGUE THE BOX ALREADY HAS (quiz questions,
 // classic challenges, the scorer's /challenges) so titles resolve and the
@@ -25,9 +28,9 @@
 // clean could not lower it back safely. Hint purchases are omitted too (no
 // penalty path on a load run). Both are noted in the report.
 //
-// OWNERSHIP IS THE MANIFEST, NOT A NAME PATTERN. `load-0001` is a legal
-// GitHub login and nothing in the app reserves it, so the harness cannot
-// infer "ours" from the shape of a key. Instead every seed writes an exact
+// OWNERSHIP IS THE MANIFEST, NOT A NAME PATTERN. A seeded player id is
+// derived from its index and nothing in the app reserves it, so the harness
+// cannot infer "ours" from the shape of a key. Instead every seed writes an exact
 // manifest — every key and every shared-hash field it wrote — to
 // ctf:load-seed:manifest, and:
 //   - the SEED writes each batch through ONE Lua script (EVAL, atomic on the
@@ -71,15 +74,18 @@
 // a board that does not show them and the load test would measure the wrong
 // page. A collision (above) aborts the same way.
 //
-// IDEMPOTENT AND REVERSIBLE. Logins are `load-0001`…, teams `load-team-01`…
+// IDEMPOTENT AND REVERSIBLE. Players are `Load Player 0001`…, teams `load-team-01`…
 // (teams of 2–4, so --count is at least 2); the same --count regenerates the
-// same set, so a re-run rewrites its own rows. Master reset also removes
-// them; --clean is so the box does not depend on that.
+// same set, so a re-run rewrites its own rows. Master reset removes the event rows but
+// not the account rows, so --clean is what takes the whole seed away.
 
+import { createHash } from "node:crypto";
 import { parseArgs } from "node:util";
 
-const LOGIN_PREFIX = "load-";
 const TEAM_PREFIX = "load-team-";
+/** Where better-auth keeps its user rows, and the email index its create script maintains (apps/web/src/lib/auth-store). */
+export const AUTH_USER_KEY = "ctf:auth:user";
+const SEED_EMAIL_DOMAIN = "load.invalid";
 const BATCH = 200;
 const WINDOW_MS = 2 * 60 * 60 * 1000;
 /** Every network wait is bounded: the seed holds a non-expiring lock, and Node's fetch would otherwise sit on a stalled socket for minutes. */
@@ -91,12 +97,12 @@ export const MANIFEST_KEY = "ctf:load-seed:manifest";
 export const MANIFEST_KEYS_KEY = "ctf:load-seed:manifest:keys";
 /** SET of every shared-hash field the seed owns, encoded `${hash}\u0001${field}`. */
 export const MANIFEST_FIELDS_KEY = "ctf:load-seed:manifest:fields";
-/** Separator inside a manifest field entry; never appears in a key or a login. */
+/** Separator inside a manifest field entry; never appears in a key or a player id. */
 export const FIELD_SEP = "\u0001";
 /** One seed or clean at a time: a token lock held for the whole operation. */
 export const LOCK_KEY = "ctf:load-seed:lock";
-/** The shared hashes keyed by login or `<login>:<id>` that the seed writes fields INTO (everything else it writes is a whole key of its own). */
-export const SHARED_HASHES = ["ctf:quiz:points", "ctf:quiz:answered", "ctf:quiz:lastAt", "ctf:classic:points", "ctf:classic:solved", "ctf:classic:lastAt"];
+/** The shared hashes keyed by player id or `<player>:<id>` that the seed writes fields INTO (everything else it writes is a whole key of its own). */
+export const SHARED_HASHES = ["ctf:auth:user", "ctf:quiz:points", "ctf:quiz:answered", "ctf:quiz:lastAt", "ctf:classic:points", "ctf:classic:solved", "ctf:classic:lastAt"];
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for scripts/test/load-seed.test.mjs)
@@ -114,25 +120,41 @@ export function rng(seed) {
   };
 }
 
-/** The i-th seeded login (`load-0001`…): a stable name, not an ownership claim — the manifest is. */
-export function loginFor(i) {
-  return `${LOGIN_PREFIX}${String(i).padStart(4, "0")}`;
+/**
+ * The i-th seeded player id: a lowercase v4-shaped UUID derived from the
+ * index, so the same --count regenerates the same ids. Stable, not an
+ * ownership claim — the manifest is.
+ */
+export function playerFor(i) {
+  const h = createHash("sha256").update(`owasp-ctf-load-seed:${i}`).digest("hex");
+  const variant = "89ab"[Number.parseInt(h[16], 16) % 4];
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
-/** Teams of 2–4, in order, every login on exactly one team. */
-export function partitionTeams(logins, rand) {
+/** The i-th seeded player's display name (`Load Player 0001`). */
+export function nameFor(i) {
+  return `Load Player ${String(i).padStart(4, "0")}`;
+}
+
+/** The account row better-auth would hold for seeded player `i`, so the board names them. No GitHub link is written: a synthetic name must never claim a real player. */
+export function userRow(i, createdAt) {
+  return JSON.stringify({ id: playerFor(i), name: nameFor(i), email: `load-${String(i).padStart(4, "0")}@${SEED_EMAIL_DOMAIN}`, emailVerified: true, image: null, createdAt, updatedAt: createdAt });
+}
+
+/** Teams of 2–4, in order, every player on exactly one team. */
+export function partitionTeams(players, rand) {
   const teams = [];
   let i = 0;
   let n = 1;
-  while (i < logins.length) {
-    const remaining = logins.length - i;
+  while (i < players.length) {
+    const remaining = players.length - i;
     let size = 2 + Math.floor(rand() * 3); // 2..4
     size = Math.min(size, remaining);
-    // Never leave exactly one login behind: shrink this team (to no fewer
+    // Never leave exactly one player behind: shrink this team (to no fewer
     // than 2) or, when it is already 2, grow it — 3 stays inside the cap.
     if (remaining - size === 1) size = size > 2 ? size - 1 : size + 1;
     if (remaining < 2) size = remaining; // n=1 is the only legitimate solo
-    const members = logins.slice(i, i + size);
+    const members = players.slice(i, i + size);
     const slug = `${TEAM_PREFIX}${String(n).padStart(2, "0")}`;
     teams.push({ slug, name: `Load Team ${n}`, captain: members[0], members });
     i += size;
@@ -237,12 +259,19 @@ export function resolveCatalogue({ enabled, quizRows, classicRows, sdChallenges,
 /** Everything one run writes, as pipeline commands, from a resolved catalogue. */
 export function buildCommands({ count, catalogue, now = Date.now(), seed = 439 }) {
   const rand = rng(seed + count);
-  const logins = Array.from({ length: count }, (_, i) => loginFor(i + 1));
-  const teams = partitionTeams(logins, rand);
+  const players = Array.from({ length: count }, (_, i) => playerFor(i + 1));
+  const teams = partitionTeams(players, rand);
   const base = now - WINDOW_MS;
   const at = (frac) => new Date(base + Math.min(0.999, Math.max(0, frac)) * WINDOW_MS);
   const cmds = [];
   const createdAt = new Date(base).toISOString();
+
+  // The seeded players as account rows (hash field plus the email index set), so a board names them.
+  players.forEach((player, i) => {
+    const email = `load-${String(i + 1).padStart(4, "0")}@${SEED_EMAIL_DOMAIN}`;
+    cmds.push(["HSET", AUTH_USER_KEY, player, userRow(i + 1, createdAt)]);
+    cmds.push(["SADD", `${AUTH_USER_KEY}:by:email:${email}`, player]);
+  });
 
   for (const t of teams) {
     cmds.push(["HSET", `ctf:team:${t.slug}`, "name", t.name, "captain", t.captain, "createdAt", createdAt, "joinCode", t.slug.slice(-6)]);
@@ -254,11 +283,11 @@ export function buildCommands({ count, catalogue, now = Date.now(), seed = 439 }
   let quizAnswers = 0;
   let classicSolves = 0;
 
-  logins.forEach((login, li) => {
+  players.forEach((player, li) => {
     // Secure Development: 0–6 solves per target the box has, spread over the window.
     for (const [target, ids] of Object.entries(catalogue.sd)) {
       for (const id of pickSubset(ids, 0, 6, rand)) {
-        cmds.push(["HSET", `ctf:solves:${target}`, `${login}:${id}`, at(rand()).toISOString()]);
+        cmds.push(["HSET", `ctf:solves:${target}`, `${player}:${id}`, at(rand()).toISOString()]);
         sdSolves += 1;
       }
     }
@@ -270,17 +299,17 @@ export function buildCommands({ count, catalogue, now = Date.now(), seed = 439 }
       for (const q of answered) {
         const ts = at(rand());
         if (!lastAt || ts > lastAt) lastAt = ts;
-        cmds.push(["HSET", `ctf:quiz:answers:${login}`, q.id, JSON.stringify({ choices: q.choices, points: q.points, at: ts.toISOString() })]);
-        cmds.push(["HSET", `ctf:quiz:attempts:${login}`, q.id, attemptRow(1 + (li % 3), ts.getTime(), 3 + (li % 7), base)]);
+        cmds.push(["HSET", `ctf:quiz:answers:${player}`, q.id, JSON.stringify({ choices: q.choices, points: q.points, at: ts.toISOString() })]);
+        cmds.push(["HSET", `ctf:quiz:attempts:${player}`, q.id, attemptRow(1 + (li % 3), ts.getTime(), 3 + (li % 7), base)]);
         points += q.points;
         quizAnswers += 1;
       }
       const missed = catalogue.quiz.find((q) => !answered.includes(q));
-      if (missed) cmds.push(["HSET", `ctf:quiz:attempts:${login}`, missed.id, attemptRow(1 + (li % 2), at(rand()).getTime(), 5, base)]);
+      if (missed) cmds.push(["HSET", `ctf:quiz:attempts:${player}`, missed.id, attemptRow(1 + (li % 2), at(rand()).getTime(), 5, base)]);
       if (answered.length) {
-        cmds.push(["HSET", "ctf:quiz:points", login, points]);
-        cmds.push(["HSET", "ctf:quiz:answered", login, answered.length]);
-        cmds.push(["HSET", "ctf:quiz:lastAt", login, lastAt.toISOString()]);
+        cmds.push(["HSET", "ctf:quiz:points", player, points]);
+        cmds.push(["HSET", "ctf:quiz:answered", player, answered.length]);
+        cmds.push(["HSET", "ctf:quiz:lastAt", player, lastAt.toISOString()]);
       }
     }
     // Classic: solve 0–50% of the board; one extra failed attempt.
@@ -291,22 +320,22 @@ export function buildCommands({ count, catalogue, now = Date.now(), seed = 439 }
       for (const c of solved) {
         const ts = at(rand());
         if (!lastAt || ts > lastAt) lastAt = ts;
-        cmds.push(["HSET", `ctf:classic:solves:${login}`, c.id, JSON.stringify({ points: c.points, at: ts.toISOString() })]);
-        cmds.push(["HSET", `ctf:classic:attempts:${login}`, c.id, attemptRow(1 + ((li + 1) % 3), ts.getTime(), 2 + (li % 9), base)]);
+        cmds.push(["HSET", `ctf:classic:solves:${player}`, c.id, JSON.stringify({ points: c.points, at: ts.toISOString() })]);
+        cmds.push(["HSET", `ctf:classic:attempts:${player}`, c.id, attemptRow(1 + ((li + 1) % 3), ts.getTime(), 2 + (li % 9), base)]);
         points += c.points;
         classicSolves += 1;
       }
       const missed = catalogue.classic.find((c) => !solved.includes(c));
-      if (missed) cmds.push(["HSET", `ctf:classic:attempts:${login}`, missed.id, attemptRow(2 + (li % 3), at(rand()).getTime(), 4, base)]);
+      if (missed) cmds.push(["HSET", `ctf:classic:attempts:${player}`, missed.id, attemptRow(2 + (li % 3), at(rand()).getTime(), 4, base)]);
       if (solved.length) {
-        cmds.push(["HSET", "ctf:classic:points", login, points]);
-        cmds.push(["HSET", "ctf:classic:solved", login, solved.length]);
-        cmds.push(["HSET", "ctf:classic:lastAt", login, lastAt.toISOString()]);
+        cmds.push(["HSET", "ctf:classic:points", player, points]);
+        cmds.push(["HSET", "ctf:classic:solved", player, solved.length]);
+        cmds.push(["HSET", "ctf:classic:lastAt", player, lastAt.toISOString()]);
       }
     }
   });
 
-  return { cmds, logins, teams, stats: { contestants: count, teams: teams.length, sdSolves, quizAnswers, classicSolves } };
+  return { cmds, players, teams, stats: { contestants: count, teams: teams.length, sdSolves, quizAnswers, classicSolves } };
 }
 
 /** True when `key` is a shared hash the seed writes fields into rather than a key it owns whole. */
@@ -386,7 +415,7 @@ return 'ok:' .. #ops
  * the caller executes each batch before the next is built and nothing
  * cumulative is retained. Each batch carries its ops (`claimed` when the
  * previous run or an earlier batch already owns that key or field, so a
- * login's rows split across two batches are not a self-collision), the
+ * player's rows split across two batches are not a self-collision), the
  * DELTA of whole keys and shared-hash fields it adds to the manifest, and
  * `complete` on the last. Ownership is two Sets grown as batches are
  * yielded: O(total) work overall, not O(total²).
@@ -690,7 +719,7 @@ async function run(values, count) {
   const plan = buildCommands({ count, catalogue });
   const manifest = manifestFor(plan.cmds);
   const clash = collisions(manifest, await probeExisting(manifest), previous);
-  if (clash.length) throw new Error(`refusing to seed: ${clash.length} key(s)/field(s) already exist and are not this harness's (first: ${clash[0]}) — a contestant may own that login`);
+  if (clash.length) throw new Error(`refusing to seed: ${clash.length} key(s)/field(s) already exist and are not this harness's (first: ${clash[0]}) — an account may own that id`);
   const totalBatches = Math.ceil(plan.cmds.length / BATCH);
   const summary = { mode: "seed", ...plan.stats, commands: plan.cmds.length, batches: totalBatches, manifest: { keys: manifest.keys.length, fields: Object.values(manifest.fields).reduce((n, a) => n + a.length, 0) }, catalogue: { quiz: catalogue.quiz.length, classic: catalogue.classic.length, sdTargets: Object.keys(catalogue.sd).length, sdChallenges: Object.values(catalogue.sd).reduce((n, a) => n + a.length, 0) } };
   if (values["dry-run"]) { console.log(JSON.stringify({ ...summary, dryRun: true })); return; }

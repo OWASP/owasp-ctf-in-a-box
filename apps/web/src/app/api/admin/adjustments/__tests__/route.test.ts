@@ -29,6 +29,7 @@ vi.mock("@/lib/adjustments-store", () => ({
 }));
 
 import { DELETE, GET, POST } from "@/app/api/admin/adjustments/route";
+import { actor } from "@/lib/__tests__/audit-actor";
 
 const req = (method: string, body?: unknown) =>
   new Request("http://x/api/admin/adjustments", { method, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -38,7 +39,7 @@ const ROW = { id: "a1", slug: "red", points: -10, reason: "late", by: "alice", a
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(console, "error").mockImplementation(() => {});
-  m.requireAdmin.mockResolvedValue({ ok: true, login: "alice" });
+  m.requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: { ...actor("alice"), image: null, githubLogin: "alice" } });
   m.listAdjustments.mockResolvedValue([ROW]);
   m.addAdjustment.mockResolvedValue(ROW);
   m.removeAdjustment.mockResolvedValue(ROW);
@@ -63,7 +64,7 @@ describe("/api/admin/adjustments", () => {
   it("adds with the admin as actor", async () => {
     const res = await POST(req("POST", { slug: "red", points: -10, reason: "late" }));
     expect(res.status).toBe(200);
-    expect(m.addAdjustment).toHaveBeenCalledWith("red", -10, "late", "alice");
+    expect(m.addAdjustment).toHaveBeenCalledWith("red", -10, "late", actor("alice"));
   });
 
   it("400s a body of the wrong shape without touching the store", async () => {
@@ -80,7 +81,7 @@ describe("/api/admin/adjustments", () => {
 
   it("removes by id with the admin as actor", async () => {
     expect((await DELETE(req("DELETE", { id: "a1" }))).status).toBe(200);
-    expect(m.removeAdjustment).toHaveBeenCalledWith("a1", "alice");
+    expect(m.removeAdjustment).toHaveBeenCalledWith("a1", actor("alice"));
   });
 
   it("503s a store failure without echoing it", async () => {

@@ -13,13 +13,13 @@
 #     contains both
 #   - the app builds and comes up with NO build-time config at all (config v2,
 #     issue #386: the image takes no config build-arg; which modules run is an
-#     /admin setting in Redis, and GITHUB_ORG/ADMIN_LOGINS are runtime env)
+#     /admin setting in Redis, and GITHUB_ORG/ADMIN_CLAIM_CODE_HASH are runtime env)
 #   - /quiz serves and shows a seeded question BY NAME
 #   - /challenges 404s (module contract §5.4 — the route must not exist, not
 #     just disappear from the nav; apps/web already pins this at the unit
 #     level in app/(site)/challenges/__tests__/page-quiz-only.test.tsx, this
 #     proves it through the real built app)
-#   - /leaderboard shows a seeded contestant's quiz points BY LOGIN. A
+#   - /leaderboard shows a seeded contestant's quiz points BY NAME. A
 #     quiz-only event always resolves the leaderboard source to "empty"
 #     (lib/leaderboard/source.ts — secure-development disabled means no
 #     scorer/lambda/upstash backend is even consulted), so a row landing here
@@ -68,7 +68,8 @@ APP_PORT=3110
 # Runtime env for the app container (config v2, #386) — there is no config
 # file to put these in any more.
 APP_GITHUB_ORG=acceptance-quiz-org
-APP_ADMIN_LOGINS=acceptance-quiz-admin
+# The test-vector hash (claim code 0123-4567-89ab-cdef-0123-4567-89ab-cdef).
+APP_ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9
 
 SYNC_OVERRIDE="$TMP/docker-compose.sync-override.yml"
 acc_write_sync_override "$SYNC_OVERRIDE"
@@ -117,7 +118,7 @@ acc_boot_redis_srh "$NET" qo "$SRH_TOKEN"
 # ---------------------------------------------------------------------------
 # Seed the quiz's real Redis schema directly (see header comment for why).
 # Key names/shapes are the canonical ones from apps/web/src/lib/quiz-keys.ts
-# (ctf:quiz:questions, ctf:quiz:key, ctf:quiz:answers:<login>, ctf:quiz:points,
+# (ctf:quiz:questions, ctf:quiz:key, ctf:quiz:answers:<player>, ctf:quiz:points,
 # ctf:quiz:answered) — this duplication fails CLOSED, not silently: a renamed
 # key or a value shape parseQuestion()/parseCounterHash() (quiz-store.ts)
 # rejects yields a blank /quiz or /leaderboard and a failed grep below, never
@@ -131,7 +132,7 @@ acc_boot_redis_srh "$NET" qo "$SRH_TOKEN"
 # render as the same bare "137", and a bare unanchored grep for either could
 # also coincidentally match a chunk id/hash elsewhere on the page.
 #
-# `ctf:quiz:key` and `ctf:quiz:answers:<login>` are seeded here for realism
+# `ctf:quiz:key` and `ctf:quiz:answers:<player>` are seeded here for realism
 # (a real answer always writes all five keys together) but NOT independently
 # asserted below — this script never exercises grading, so their shapes are
 # not verified by anything here.
@@ -139,19 +140,21 @@ acc_boot_redis_srh "$NET" qo "$SRH_TOKEN"
 QUESTION_ID="acceptance-xss-basics"
 QUESTION_PROMPT="ACCEPTANCE-GATE-QUESTION: what does XSS stand for?"
 QUESTION_POINTS=137
-CONTESTANT_LOGIN="quiz-acceptance-bot"
+CONTESTANT_NAME="quiz-acceptance-bot"
+CONTESTANT_ID=33333333-3333-4333-8333-333333333333
 CONTESTANT_POINTS=4321
 CONTESTANT_POINTS_FORMATTED="4,321"
 
 echo "--- seeding one quiz question + one contestant's answer"
+acc_seed_player qo-redis "$CONTESTANT_ID" "$CONTESTANT_NAME"
 docker exec qo-redis redis-cli HSET ctf:quiz:questions "$QUESTION_ID" \
   '{"id":"acceptance-xss-basics","prompt":"'"$QUESTION_PROMPT"'","type":"single","choices":[{"id":"a","label":"Cross-Site Scripting"},{"id":"b","label":"XML Signature Exchange"}],"points":'"$QUESTION_POINTS"',"order":1}' \
   >/dev/null
 docker exec qo-redis redis-cli HSET ctf:quiz:key "$QUESTION_ID" '["a"]' >/dev/null
-docker exec qo-redis redis-cli HSET "ctf:quiz:answers:$CONTESTANT_LOGIN" "$QUESTION_ID" \
+docker exec qo-redis redis-cli HSET "ctf:quiz:answers:$CONTESTANT_ID" "$QUESTION_ID" \
   '{"choices":["a"],"points":'"$QUESTION_POINTS"',"at":"2026-08-19T00:00:00.000Z"}' >/dev/null
-docker exec qo-redis redis-cli HSET ctf:quiz:points "$CONTESTANT_LOGIN" "$CONTESTANT_POINTS" >/dev/null
-docker exec qo-redis redis-cli HSET ctf:quiz:answered "$CONTESTANT_LOGIN" 1 >/dev/null
+docker exec qo-redis redis-cli HSET ctf:quiz:points "$CONTESTANT_ID" "$CONTESTANT_POINTS" >/dev/null
+docker exec qo-redis redis-cli HSET ctf:quiz:answered "$CONTESTANT_ID" 1 >/dev/null
 
 # Config v2 (#386): modules are switched on in ctf:admin:settings, and that
 # hash is now the ONLY thing that enables one. Without this the board is OFF
@@ -161,14 +164,14 @@ docker exec qo-redis redis-cli HSET ctf:admin:settings enabledModules quiz >/dev
 # ---------------------------------------------------------------------------
 # Build + boot the app. NO build-args: config v2 (#386) removed the config
 # bake, so which modules run comes from the Redis hash seeded above and
-# GITHUB_ORG/ADMIN_LOGINS are passed as runtime env below — the same shape
+# GITHUB_ORG/ADMIN_CLAIM_CODE_HASH are passed as runtime env below — the same shape
 # scripts/acceptance-app.sh uses.
 # ---------------------------------------------------------------------------
 echo "--- building app (no build-time config at all)"
 docker build -f apps/web/Dockerfile -t ctf-web:quiz-only-acceptance .
 
 acc_boot_app qo-app "$APP_PORT" ctf-web:quiz-only-acceptance "$NET" \
-  http://srh:80 "$SRH_TOKEN" "$APP_GITHUB_ORG" "$APP_ADMIN_LOGINS" \
+  http://srh:80 "$SRH_TOKEN" "$APP_GITHUB_ORG" "$APP_ADMIN_CLAIM_CODE_HASH" \
   quiz-only-acceptance-secret-32-characters-min
 
 APP_URL="http://localhost:$APP_PORT"
@@ -206,10 +209,10 @@ echo "    not just be hidden from the nav)"
 CHALLENGES_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$APP_URL/challenges")
 [ "$CHALLENGES_CODE" = "404" ] || { echo "FAIL: /challenges returned $CHALLENGES_CODE, want 404"; exit 1; }
 
-# The row-by-login + formatted-total assertion (the anti-vacuous overlay check
+# The row-by-name + formatted-total assertion (the anti-vacuous overlay check
 # the header describes) is shared with the classic/ai gates — its whole-page
 # match rationale lives with acc_assert_leaderboard_contrib.
-acc_assert_leaderboard_contrib "$APP_URL" quiz "$CONTESTANT_LOGIN" "$CONTESTANT_POINTS_FORMATTED"
+acc_assert_leaderboard_contrib "$APP_URL" quiz "$CONTESTANT_NAME" "$CONTESTANT_POINTS_FORMATTED"
 
 # ---------------------------------------------------------------------------
 # Identity is a runtime setting (issue #386), not a build-time bake: rename

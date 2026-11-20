@@ -3,12 +3,12 @@
 // activity tiebreak): earliest solve time wins, a row with no parseable time
 // sorts after every row with one. Where the leaderboard falls back to source
 // order, first blood cannot (source order here is SCAN order), so the last
-// key is the login, compared case-insensitively.
+// key is the player id, compared case-insensitively.
 import { describe, expect, it } from "vitest";
 
 import { compareFirstBlood, earlierFirstBlood, type FirstBlood } from "@/lib/first-blood";
 
-const at = (login: string, iso: string | null): FirstBlood => ({ login, at: iso });
+const at = (playerId: string, iso: string | null): FirstBlood => ({ playerId, at: iso });
 
 describe("compareFirstBlood", () => {
   it("puts the earlier solve first", () => {
@@ -31,7 +31,7 @@ describe("compareFirstBlood", () => {
     expect(compareFirstBlood(at("amy", "not a time"), timed)).toBeGreaterThan(0);
   });
 
-  it("breaks an exact tie by login, case-insensitively, whatever the input order", () => {
+  it("breaks an exact tie by player id, case-insensitively, whatever the input order", () => {
     const t = "2026-10-01T12:00:00.000Z";
     expect(compareFirstBlood(at("bob", t), at("Alice", t))).toBeGreaterThan(0);
     expect(compareFirstBlood(at("Alice", t), at("bob", t))).toBeLessThan(0);

@@ -1,6 +1,6 @@
 "use client";
 
-// The classic and ai challenge pages' paid-hint control (#190, issue #211):
+// The classic challenge page's paid-hint control (#190):
 // one button that charges and reveals through the SAME /api/hints/reveal
 // endpoint the secure-development rows use — the server is the boundary that
 // gates, charges idempotently, and never sends a text that wasn't paid for.
@@ -8,9 +8,8 @@
 // the page hands the server-known text over so this SAME element renders it,
 // before and after router.refresh() — swapping in a plain <p> there unmounted
 // the component and took the spend/balance acknowledgement with it. `app` is
-// the target this reveal is charged against (Task 1's
-// `HintTarget`) — originally hardcoded to "classic", now the caller's prop so
-// flags/[id] and ai/[id] share one component instead of a copy each.
+// the target this reveal is charged against (a `HintTarget`), passed in by
+// the caller.
 //
 // A reveal is a PAID, irreversible deduction, so the first press does not
 // charge: it opens a confirm step (idle → confirm → pending), mirroring the

@@ -9,22 +9,6 @@ import { MUTATING_METHODS, originAllowed } from "@/lib/origin";
  *  nobody can find. */
 const AUTH_PREFIX = "/api/auth";
 
-/** The ai module's endpoints, which are cross-origin BY DESIGN: an externally
- *  hosted challenge (a static SPA, or its backend) posts flags and signed
- *  solve events here from its own origin.
- *
- *  Exempt for the same reason `AUTH_PREFIX` is — the blanket assertion below
- *  would refuse every legitimate call — but on a different argument. These
- *  routes read NO cookie: they never call `auth.api.getSession`, so a
- *  cross-site POST from an attacker's page carries no ambient credential to
- *  ride, and there is no CSRF for the origin check to prevent. Authentication
- *  is the box-minted token, plus (on /event) an HMAC signature over the raw
- *  body. See docs/superpowers/specs/2026-08-31-ai-module-design.md §6.
- *
- *  The trailing slash is load-bearing: `/api/ai` without it would also exempt
- *  a future `/api/airline`. */
-const AI_PREFIX = "/api/ai/";
-
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -37,7 +21,6 @@ export function proxy(request: NextRequest) {
   if (
     pathname.startsWith("/api/") &&
     !pathname.startsWith(AUTH_PREFIX) &&
-    !pathname.startsWith(AI_PREFIX) &&
     MUTATING_METHODS.has(request.method)
   ) {
     if (!originAllowed({ origin: request.headers.get("origin"), configuredUrl: process.env.BETTER_AUTH_URL })) {

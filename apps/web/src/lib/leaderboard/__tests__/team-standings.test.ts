@@ -21,18 +21,18 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/enabled-modules", async () =>
   (await import("@/test/enabled-modules-mock")).mockEnabledModules(["secure-development"]),
 );
-// This suite is secure-development-only — quiz/classic/ai are disabled —
+// This suite is secure-development-only — quiz/classic are disabled —
 // stated explicitly in the enabled-modules mock above,
-// so `withTeamQuizPoints`/`withTeamClassicPoints`/`withTeamAiPoints` take the
-// quiz/classic/ai-disabled early return instead of reaching their real,
+// so `withTeamQuizPoints`/`withTeamClassicPoints` take the
+// quiz/classic-disabled early return instead of reaching their real,
 // unmocked stores (which would fail open against no Upstash credentials and
 // pass the `[0, 0]` assertions below for the wrong reason).
 vi.mock("@/lib/team-store", () => ({ listTeams: mocks.listTeams }));
 
 import { withTeamStandings } from "../team-standings";
 
-function entry(login: string, points: number): LeaderboardEntry {
-  return { rank: 0, login, team: null, points, patched: 0, failed: 0, total: 0, apps: {}, updatedAt: null };
+function entry(playerId: string, points: number): LeaderboardEntry {
+  return { rank: 0, playerId, name: playerId, image: null, team: null, points, patched: 0, failed: 0, total: 0, apps: {}, updatedAt: null };
 }
 
 function data(overrides: Partial<LeaderboardData> = {}): LeaderboardData {
@@ -62,7 +62,7 @@ describe("withTeamStandings", () => {
   it("attaches the team slug to member entries and leaves solo players alone", async () => {
     mocks.listTeams.mockResolvedValueOnce([{ slug: "red", name: "Red Team", members: ["bob"] }]);
     const result = await withTeamStandings(data());
-    expect(result.entries.map((e) => [e.login, e.team])).toEqual([
+    expect(result.entries.map((e) => [e.playerId, e.team])).toEqual([
       ["ada", null],
       ["bob", "red"],
       ["cyd", null],
@@ -118,7 +118,7 @@ describe("withTeamStandings", () => {
   // Review finding on #414. The overlays fold by each row's `members`, so a
   // slug both records claim has to carry the union: keeping the source's
   // roster verbatim would drop a member the scorer never scored, and with them
-  // every quiz/classic/ai item they alone hold — an undercount with nothing on
+  // every quiz/classic item they alone hold — an undercount with nothing on
   // screen to suggest it. Asserted on the returned row because that is the
   // exact array the overlays were handed.
   it("unions the rosters when both records claim the same slug", async () => {
@@ -151,7 +151,7 @@ describe("withTeamStandings", () => {
     });
     mocks.listTeams.mockResolvedValueOnce([{ slug: "red", name: "Red Team", members: ["bob"] }]);
     const result = await withTeamStandings(base);
-    expect(result.entries.map((e) => [e.login, e.team])).toEqual([
+    expect(result.entries.map((e) => [e.playerId, e.team])).toEqual([
       ["ada", "byte-me"],
       ["bob", "red"],
       ["cyd", null],
@@ -165,7 +165,7 @@ describe("withTeamStandings", () => {
     });
     mocks.listTeams.mockResolvedValueOnce([{ slug: "current", name: "Current", members: ["bob"] }]);
     const result = await withTeamStandings(base);
-    expect(result.entries.find((e) => e.login === "bob")?.team).toBe("current");
+    expect(result.entries.find((e) => e.playerId === "bob")?.team).toBe("current");
   });
 
   it("no-ops when no teams exist", async () => {
@@ -200,7 +200,7 @@ describe("every team member has an Individual row", () => {
       { slug: "blue", name: "Blue Team", members: ["ada"] },
     ]);
     const result = await withTeamStandings(data({ entries: [entry("ada", 100), entry("bob", 40)] }));
-    expect(result.entries.map((e) => [e.login, e.points, e.team, e.rank])).toEqual([
+    expect(result.entries.map((e) => [e.playerId, e.points, e.team, e.rank])).toEqual([
       ["ada", 100, "blue", 1],
       ["bob", 40, "red", 2],
       ["eve", 0, "red", 3],
@@ -211,7 +211,7 @@ describe("every team member has an Individual row", () => {
   it("never duplicates a member who already has a row under another spelling", async () => {
     mocks.listTeams.mockResolvedValueOnce([{ slug: "red", name: "Red Team", members: ["Bob"] }]);
     const result = await withTeamStandings(data({ entries: [entry("bob", 40)] }));
-    expect(result.entries.map((e) => e.login)).toEqual(["bob"]);
+    expect(result.entries.map((e) => e.playerId)).toEqual(["bob"]);
   });
 
   it("adds a row for a member only the source's roster names", async () => {
@@ -222,7 +222,7 @@ describe("every team member has an Individual row", () => {
       teams: [{ rank: 1, slug: "blue", name: "Blue", captain: "ada", members: ["ada"], points: 0 }],
     });
     const result = await withTeamStandings(base);
-    expect(result.entries.map((e) => [e.login, e.points, e.team])).toEqual([
+    expect(result.entries.map((e) => [e.playerId, e.points, e.team])).toEqual([
       ["bob", 40, "red"],
       ["ada", 0, "blue"],
     ]);
@@ -231,6 +231,6 @@ describe("every team member has an Individual row", () => {
   it("adds no row for a signed-in player on no team", async () => {
     mocks.listTeams.mockResolvedValueOnce([{ slug: "red", name: "Red Team", members: ["bob"] }]);
     const result = await withTeamStandings(data({ entries: [entry("bob", 40), entry("solo", 10)] }));
-    expect(result.entries.map((e) => e.login)).toEqual(["bob", "solo"]);
+    expect(result.entries.map((e) => e.playerId)).toEqual(["bob", "solo"]);
   });
 });

@@ -6,8 +6,8 @@ import { lambdaSource } from "./lambda";
 import { emptySource } from "./empty";
 
 export interface LeaderboardSource {
-  getLeaderboard(options?: { fresh?: boolean }): Promise<LeaderboardData>;
-  getUser(login: string): Promise<UserProfile | null>;
+  getLeaderboard(): Promise<LeaderboardData>;
+  getUser(playerId: string): Promise<UserProfile | null>;
 }
 
 /**

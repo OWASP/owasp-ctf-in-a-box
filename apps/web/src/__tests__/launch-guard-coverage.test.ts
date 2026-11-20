@@ -33,6 +33,10 @@ const API_EXEMPT: Record<string, string> = {
   "api/auth/[...all]/route.ts": "sign-in itself",
   "api/post-signin/route.ts": "the OAuth return leg",
   "api/me/admin/route.ts": "is the viewer an admin — no module content",
+  "api/me/admin/claim/route.ts": "organizers claim the panel before launch — no module content",
+  "api/me/username/route.ts": "picking a display name precedes the event - no module content",
+  "api/me/password/route.ts": "adding a sign-in password precedes the event - no module content",
+  "api/reset-password/route.ts": "an organizer's password reset is account recovery - no module content",
   "api/team/route.ts": "teams form before launch",
   "api/team/disband/route.ts": "teams form before launch",
   "api/team/join/route.ts": "teams form before launch",
@@ -48,10 +52,6 @@ const API_EXEMPT: Record<string, string> = {
   "api/sponsors/logo/[id]/route.ts": "sponsor logos, shown on the landing page",
   "api/event/logo/route.ts": "the event logo (#529), shown on the landing page",
   "api/event/icon/route.ts": "the event favicon (#529), on every page",
-  "api/ai/launch-key/route.ts": "a public key",
-  "api/ai/submit/route.ts": "token-authenticated; the lock is enforced where the token is minted (/ai/[id])",
-  "api/ai/event/route.ts": "token-authenticated; the lock is enforced where the token is minted (/ai/[id])",
-  "api/ai/state/route.ts": "token-authenticated; the lock is enforced where the token is minted (/ai/[id])",
 };
 
 /** The source of a module's `generateMetadata` function, when it has one. */
@@ -69,7 +69,7 @@ describe("launch guard coverage (#464)", () => {
 
   it("every registry route has a page tree, and the trees hold the pages it is meant to check (anti-vacuous)", () => {
     for (const d of PAGE_ROOTS) expect(existsSync(d), `missing page root ${d}`).toBe(true);
-    expect(pages.length).toBeGreaterThanOrEqual(7);
+    expect(pages.length).toBeGreaterThanOrEqual(5);
     expect(lockedRoutes.length).toBeGreaterThanOrEqual(4);
   });
 
@@ -109,10 +109,6 @@ describe("launch guard coverage (#464)", () => {
   it.each(lockedRoutes.map((p) => [rel(p), p]))("route %s calls the launch lock", (_name, p) => {
     // classicVisibility (#186) asks the launch lock itself — pinned above.
     expect(readFileSync(p, "utf8")).toMatch(/await (requireLaunchedApi|launchApiAccess|classicVisibility)\(/);
-  });
-
-  it("guards the ai launch-token mint (the server action behind /ai/[id])", () => {
-    expect(readFileSync(join(APP, "(site)/ai/[id]/actions.ts"), "utf8")).toContain("await getLaunchAccess(");
   });
 
   // The leaderboard page has no render test of its own (its dependency graph

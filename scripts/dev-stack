@@ -6,22 +6,26 @@
 # Subcommands:
 #   up                          bring the stack up, seed a demo leaderboard
 #   down [--wipe]                tear it down (--wipe also drops volumes)
-#   score <login> <target> <n>   mark the first <n> catalogue challenges for
-#                                 <target> solved for <login> (real scorer API)
+#   score <player> <target> <n>  mark the first <n> catalogue challenges for
+#                                 <target> solved for <player>: a player id
+#                                 (UUID) or a linked GitHub login (real scorer API)
 #
 # Reuses the same compose/SRH patterns as scripts/smoke.sh, but drives the
 # real scorer's bearer-authed POST /score instead of writing Redis keys
 # directly — see the note above submit_solves() for why.
 #
-# Needs NO config file (config v2, #386): `ADMIN_LOGINS` and `GITHUB_ORG` are
-# runtime keys resolved from the environment or `.env`, nothing is baked into
+# Needs NO config file (config v2, #386): `GITHUB_ORG` and
+# `ADMIN_CLAIM_CODE_HASH` are runtime keys read from the env file (an exported
+# GITHUB_ORG wins, as it does for compose), nothing is baked into
 # the app image, and everything else — the event's name, which modules run,
 # which Secure Development targets — is an `/admin` setting.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 # shellcheck source=scripts/lib/dotenv.sh
 . scripts/lib/dotenv.sh
+# shellcheck source=scripts/lib/claim-code.sh
+. scripts/lib/claim-code.sh
 
 SCORER_IMAGE_TAG="ctf-dev-stack/scorer:local"
 DEV_ENV_FILE=.env.dev-stack
@@ -55,41 +59,18 @@ file_value() {
   dotenv_get "$2" "$1"
 }
 
-# ADMIN_LOGINS and GITHUB_ORG are RUNTIME keys since config v2 (#386) — there
-# is no config file to derive them from any more, and nothing is baked into
-# the image. Resolve them the way the containers will actually see them:
-# docker compose lets the shell environment win over --env-file, so an
-# exported value is authoritative, then the env file, then a last resort.
-#
-# ADMIN_LOGINS falls back to the login `gh` is authenticated as — the same
-# default the setup wizard offers (setup/ctf-setup.sh's wiz_event_basics) —
-# and only when `gh` is both installed and logged in, so a box without it just
-# gets an empty allowlist. Empty is not fatal here: the stack still runs and
-# /admin forbids everyone, which the summary says, and how to fix it.
+# GITHUB_ORG is a RUNTIME key since config v2 (#386) — there is no config file
+# to derive it from, and nothing is baked into the image. Resolve it the way
+# the containers will actually see it: docker compose lets the shell
+# environment win over --env-file, so an exported value is authoritative, then
+# the env file.
 #
 # `${VAR+x}`, not `${VAR:-}`: compose gives the shell precedence over the env
-# file, so an EXPORTED empty value is exactly what the containers get and
-# must not be papered over with the file's (or gh's) value — only an unset
-# variable falls through. Otherwise the file this writes and the summary
-# below could name an allowlist the app is not using.
-resolve_admin_logins() {
-  local v
-  if [ "${ADMIN_LOGINS+x}" = x ]; then
-    v="$ADMIN_LOGINS"
-  else
-    v="$(file_value ADMIN_LOGINS .env)" || exit 1
-    if [ -z "$v" ]; then
-      if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-        v="$(gh api user --jq .login 2>/dev/null || true)"
-      fi
-    fi
-  fi
-  printf '%s' "$v"
-}
-
+# file, so an EXPORTED empty value is exactly what the containers get and must
+# not be papered over with the file's value — only an unset variable falls
+# through.
 # No fallback for the org: an invented one would put wrong fork links on
-# /challenges. Empty means the app shows bare repo names. Same unset-vs-empty
-# rule as above.
+# /challenges. Empty means the app shows bare repo names.
 resolve_github_org() {
   local v
   if [ "${GITHUB_ORG+x}" = x ]; then
@@ -100,8 +81,37 @@ resolve_github_org() {
   printf '%s' "$v"
 }
 
+# Compose lets the shell environment win over --env-file, an exported EMPTY
+# value included (`${VAR+x}`), so an exported ADMIN_CLAIM_CODE_HASH is the
+# hash the app gets — and a code announced for the file's hash could not
+# claim. Refuse a mismatch before any code is generated or the stack starts.
+# With no env file yet, any exported value is a mismatch: the file is about
+# to get a fresh hash nothing exported can equal. The value is never printed.
+refuse_claim_hash_override() {
+  [ "${ADMIN_CLAIM_CODE_HASH+x}" = x ] || return 0
+  local file_hash=""
+  if [ -n "$ENV_FILE" ]; then
+    file_hash="$(file_value ADMIN_CLAIM_CODE_HASH "$ENV_FILE")" || exit 1
+    [ "$ADMIN_CLAIM_CODE_HASH" != "$file_hash" ] || return 0
+  fi
+  echo "FAIL: ADMIN_CLAIM_CODE_HASH is exported in this shell and differs from ${ENV_FILE:-the env file this run would write}." >&2
+  echo "      docker compose would hand the app the exported value, so the admin claim" >&2
+  echo "      code for the file would not work. Run: unset ADMIN_CLAIM_CODE_HASH" >&2
+  exit 1
+}
+
+# The claim hash the containers get: exported (even empty) wins, then the file.
+effective_claim_hash() {
+  if [ "${ADMIN_CLAIM_CODE_HASH+x}" = x ]; then
+    printf '%s' "$ADMIN_CLAIM_CODE_HASH"
+  else
+    env_value ADMIN_CLAIM_CODE_HASH
+  fi
+}
+
 ensure_env() {
   resolve_env_file
+  refuse_claim_hash_override
   if [ -n "$ENV_FILE" ]; then
     echo "== using existing $ENV_FILE"
     # An env file written before Redis grew a password is the common case on
@@ -122,12 +132,13 @@ ensure_env() {
     return
   fi
   echo "== no .env found; writing a throwaway $DEV_ENV_FILE (same fields as setup/ctf-setup.sh secrets)"
-  # ADMIN_LOGINS/GITHUB_ORG are runtime keys, so the throwaway file wants real
-  # values rather than blanks — resolved from the environment (or `gh`, for the
-  # admin login) by the helpers above.
-  local admin_logins github_org
-  admin_logins="$(resolve_admin_logins)" || exit 1
+  # GITHUB_ORG is a runtime key, so the throwaway file wants the real value
+  # rather than a blank. The admin seat is claimed with a fresh one-time code
+  # (ADR 72): only its hash goes in the file, and the code is printed once.
+  local github_org claim_code claim_hash
   github_org="$(resolve_github_org)" || exit 1
+  claim_code="$(claim_code_new)" || exit 1
+  claim_hash="$(claim_code_hash "$claim_code")" || exit 1
   {
     echo "# generated by scripts/dev-stack — throwaway local secrets, do not use for a real event"
     echo "BETTER_AUTH_SECRET=$(openssl rand -base64 32 | tr -d '\n')"
@@ -141,10 +152,11 @@ ensure_env() {
     echo "GITHUB_APP_INSTALLATION_ID="
     echo "EVENT_URL=http://localhost"
     echo "SCORE_IMAGE="
-    echo "ADMIN_LOGINS=$admin_logins"
+    echo "ADMIN_CLAIM_CODE_HASH=$claim_hash"
     echo "GITHUB_ORG=$github_org"
   } > "$DEV_ENV_FILE"
   ENV_FILE="$DEV_ENV_FILE"
+  claim_code_announce "$claim_code" http://localhost "./setup/ctf-setup.sh admin-code --out $DEV_ENV_FILE"
 }
 
 # Read one KEY=value out of the RESOLVED env file, with a default.
@@ -247,7 +259,7 @@ challenge_ids_json() {
 # scorer does not implement. Seeding through the real /score endpoint
 # is what actually renders under the compose file as shipped.
 submit_solves() {
-  local login="$1" target="$2" count="$3" ids_json status n
+  local player="$1" target="$2" count="$3" ids_json status n
   case "$target" in
     juice-shop) n=${#JUICE_SHOP_IDS[@]} ;;
     dvwa) n=${#DVWA_IDS[@]} ;;
@@ -263,13 +275,13 @@ submit_solves() {
   # decides that, not this script — no fourth copy of the window logic here.
   local rc=0
   status="$(compose exec -T \
-    -e CTF_LOGIN="$login" -e CTF_TARGET="$target" -e CTF_IDS_JSON="$ids_json" \
+    -e CTF_PLAYER="$player" -e CTF_TARGET="$target" -e CTF_IDS_JSON="$ids_json" \
     scorer node -e '
       fetch("http://localhost:4000/score", {
         method: "POST",
         headers: { authorization: "Bearer " + process.env.CTF_SCORE_BEARER_TOKEN, "content-type": "application/json" },
         body: JSON.stringify({
-          author: process.env.CTF_LOGIN,
+          player: process.env.CTF_PLAYER,
           target: process.env.CTF_TARGET,
           solved: JSON.parse(process.env.CTF_IDS_JSON),
         }),
@@ -280,11 +292,11 @@ submit_solves() {
       }).catch((err) => { console.error(String(err)); process.exit(1); });
     ')" || rc=$?
   if [ "$rc" -eq 3 ]; then
-    echo "   $login / $target: not scored — scoring is paused or not open yet (HTTP 503)"
+    echo "   $player / $target: not scored — scoring is paused or not open yet (HTTP 503)"
     return 3
   fi
   [ "$rc" -eq 0 ] || return "$rc"
-  echo "   $login / $target: submitted $count solve(s) -> HTTP $status"
+  echo "   $player / $target: submitted $count solve(s) -> HTTP $status"
 }
 
 # Every event needs an official launch (#464): with no valid scoringStartsAt,
@@ -306,23 +318,85 @@ launch_dev_event() {
   fi
 }
 
+# The demo players are real accounts with fixed ids: the scorer keys solves by
+# player id, and the board names a player from its `ctf:auth:user` row. Each
+# also gets the GitHub link keys (apps/web/src/lib/github-link.ts) so a login
+# resolves to its id. Fixed constants keep every write idempotent.
+DEMO_LOGINS="alice-dev bob-dev carol-dev mallory-dev"
+
+demo_player_id() {
+  case "$1" in
+    alice-dev) echo "a11ce000-0000-4000-8000-000000000001" ;;
+    bob-dev) echo "b0b00000-0000-4000-8000-000000000002" ;;
+    carol-dev) echo "ca401000-0000-4000-8000-000000000003" ;;
+    mallory-dev) echo "ba11a000-0000-4000-8000-000000000004" ;;
+    *) return 1 ;;
+  esac
+}
+
+seed_demo_accounts() {
+  echo "== seeding demo accounts (auth rows, email index, GitHub link keys)"
+  local login id now now_ms row
+  now="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+  # Sync counts a link with no ctf:link:at time as made after scoring closed.
+  now_ms="$(date +%s)000"
+  for login in $DEMO_LOGINS; do
+    id="$(demo_player_id "$login")" || { echo "dev-stack: no player id for demo login '$login'" >&2; return 1; }
+    row="{\"id\":\"$id\",\"name\":\"$login\",\"email\":\"$login@dev-stack.invalid\",\"emailVerified\":true,\"image\":null,\"createdAt\":\"$now\",\"updatedAt\":\"$now\"}"
+    # -e: redis-cli exits 0 on an error reply (WRONGTYPE, NOAUTH) without it,
+    # which would read a failed write as a seeded account.
+    if ! { compose exec -T redis redis-cli -e HSETNX ctf:auth:user "$id" "$row" >/dev/null \
+      && compose exec -T redis redis-cli -e SADD "ctf:auth:user:by:email:$login@dev-stack.invalid" "$id" >/dev/null \
+      && compose exec -T redis redis-cli -e SETNX "ctf:link:github:$login" "$id" >/dev/null \
+      && compose exec -T redis redis-cli -e SETNX "ctf:link:user:$id" "$login" >/dev/null \
+      && compose exec -T redis redis-cli -e HSETNX ctf:link:at "$id" "$now_ms" >/dev/null; }; then
+      echo "dev-stack: could not write the demo account for '$login' to redis" >&2
+      return 1
+    fi
+  done
+}
+
+# A player id passes through; anything else is a GitHub login, resolved
+# through its link key. An unlinked login fails here, never as a scorer 400.
+resolve_player() {
+  local who="$1" lower id
+  if printf '%s' "$who" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'; then
+    printf '%s\n' "$who"
+    return 0
+  fi
+  lower="$(printf '%s' "$who" | tr '[:upper:]' '[:lower:]')"
+  id="$(compose exec -T redis redis-cli GET "ctf:link:github:$lower" | tr -d '\r')" || {
+    echo "dev-stack: could not read ctf:link:github:$lower from redis" >&2
+    return 1
+  }
+  if [ -z "$id" ]; then
+    echo "dev-stack: '$who' is not a player id and no GitHub login '$lower' is linked (no ctf:link:github:$lower key); pass a player id, or one of: $DEMO_LOGINS" >&2
+    return 1
+  fi
+  printf '%s\n' "$id"
+}
+
 seed_demo_data() {
+  seed_demo_accounts || return 1
   echo "== seeding demo leaderboard data (real POST /score, rubric-priced)"
   # The first submission doubles as the probe: when the scorer says scoring is
   # not open (a scheduled start kept above, or a freeze), seeding is DEFERRED,
   # not a failed `up` — the stack itself is fine.
   local rc=0
-  submit_solves alice-dev juice-shop 6 || rc=$?
+  local alice bob carol mallory
+  alice="$(demo_player_id alice-dev)"; bob="$(demo_player_id bob-dev)"
+  carol="$(demo_player_id carol-dev)"; mallory="$(demo_player_id mallory-dev)"
+  submit_solves "$alice" juice-shop 6 || rc=$?
   if [ "$rc" -eq 3 ]; then
     echo "== demo seeding deferred: scoring is not open yet (scheduled start kept, or frozen)."
-    echo "   Once it opens, seed by hand: ./scripts/dev-stack score <login> <juice-shop|dvwa> <n>"
+    echo "   Once it opens, seed by hand: ./scripts/dev-stack score <player> <juice-shop|dvwa> <n>"
     return 0
   fi
   [ "$rc" -eq 0 ] || return "$rc"
-  submit_solves alice-dev dvwa 4
-  submit_solves bob-dev juice-shop 3
-  submit_solves carol-dev dvwa 5
-  submit_solves mallory-dev juice-shop 1
+  submit_solves "$alice" dvwa 4
+  submit_solves "$bob" juice-shop 3
+  submit_solves "$carol" dvwa 5
+  submit_solves "$mallory" juice-shop 1
 }
 
 # ---------------------------------------------------------------------------
@@ -368,9 +442,9 @@ cmd_up() {
   docker build -q -t "$SCORER_IMAGE_TAG" ./scorer >/dev/null
   export SCORE_IMAGE="$SCORER_IMAGE_TAG"
 
-  # Nothing to bake: the app reads ADMIN_LOGINS and GITHUB_ORG from its
-  # environment at start-up (config v2, #386), so the image is config-free and
-  # a changed value needs a restart, not a rebuild.
+  # Nothing to bake: the app reads GITHUB_ORG and ADMIN_CLAIM_CODE_HASH from
+  # its environment at start-up (config v2, #386), so the image is config-free
+  # and a changed value needs a container recreate, not a rebuild.
 
   # Build stamp for GET /health, so a local stack reports the same fields
   # production does. The sha is deliberately left empty rather than faked: a
@@ -394,10 +468,15 @@ cmd_up() {
   seed_demo_data
 
   # What the CONTAINERS got, in their precedence order — an exported value
-  # (even an empty one) beats the env file for compose, so reading the file
-  # alone could print an allowlist the app is not using.
-  local admins org org_note profiles
-  if [ "${ADMIN_LOGINS+x}" = x ]; then admins="$ADMIN_LOGINS"; else admins="$(env_value ADMIN_LOGINS)" || exit 1; fi
+  # (even an empty one) beats the env file for compose. The claim hash is
+  # only ever reported as set or not, never printed.
+  local claim_note claim_hash org org_note profiles
+  claim_hash="$(effective_claim_hash)" || exit 1
+  if claim_code_is_hash "$claim_hash"; then
+    claim_note="set — claim the admin seat at $event_url/admin/claim"
+  else
+    claim_note="NOT SET — run ./setup/ctf-setup.sh admin-code --out $ENV_FILE, then ./scripts/dev-stack down && ./scripts/dev-stack up"
+  fi
   if [ "${GITHUB_ORG+x}" = x ]; then org="$GITHUB_ORG"; else org="$(env_value GITHUB_ORG)" || exit 1; fi
   if [ -n "$org" ]; then
     org_note="$org (fork links on /challenges point there)"
@@ -428,30 +507,29 @@ cmd_up() {
  Env file:        $ENV_FILE (no config file: every setting is .env or /admin)
  Profiles:        $profiles
  GITHUB_ORG:      $org_note
+ Admin claim:     $claim_note
 
- Seeded demo players (real scorer POST /score, so this is the same
- code path a scored PR uses): alice-dev, bob-dev, carol-dev, mallory-dev.
+ Seeded demo players (real accounts, scored by player id through the real
+ scorer POST /score, the code path a scored PR uses): alice-dev, bob-dev,
+ carol-dev, mallory-dev.
  The board's fetch cache revalidates every 30s, so give it a few seconds
  if a fresh load still shows the old numbers.
 
  Watch a NEW score land live:
-   ./scripts/dev-stack score <login> <juice-shop|dvwa> <n>
-   (marks the first <n> catalogue challenges solved for <login>; reload
+   ./scripts/dev-stack score <player> <juice-shop|dvwa> <n>
+   (marks the first <n> catalogue challenges solved for <player>, a player
+   id or a linked GitHub login such as alice-dev; reload
    $event_url/leaderboard after ~30s)
 
- Admin panel / signed-in experience (NOT available out of the box):
-   /admin requires a signed-in session whose GitHub login is in
-   $ENV_FILE's ADMIN_LOGINS (currently: ${admins:-<none set>}), and
-   sign-in requires a real GitHub OAuth app. This script does not fake
-   or bypass that boundary. To exercise it:
-     1. Create a GitHub OAuth app, callback <EVENT_URL>/api/auth/callback/github.
-     2. Put its client id/secret into $ENV_FILE (GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET).
-     3. Put your GitHub login into $ENV_FILE's ADMIN_LOGINS (comma-separated).
-        An EXPORTED ADMIN_LOGINS overrides the file (that is compose's
-        precedence, and the value shown above is what the app got), so unset
-        it or export the new list before the next step.
-     4. ./scripts/dev-stack down && ./scripts/dev-stack up   (restarts and picks
-        up the new .env; no rebuild needed — ADMIN_LOGINS is read at start)
+ Admin panel / signed-in experience:
+   /admin needs a signed-in kit account that claimed the admin claim code
+   (printed once when the env file was written) at $event_url/admin/claim.
+   Lost it? ./setup/ctf-setup.sh admin-code --out $ENV_FILE prints a new one;
+   then ./scripts/dev-stack down && ./scripts/dev-stack up so the app reads
+   the new hash (a plain restart keeps the old environment). Signing in with
+   GitHub needs a real OAuth app: callback
+   <EVENT_URL>/api/auth/callback/github, client id/secret in $ENV_FILE
+   (GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET).
    Everything else — leaderboard, challenge browsing, seeded scores — works now.
 
  Tear down: ./scripts/dev-stack down            (keeps seeded state)
@@ -477,18 +555,23 @@ cmd_down() {
 }
 
 cmd_score() {
-  [ $# -eq 3 ] || { echo "usage: dev-stack score <login> <juice-shop|dvwa> <n>" >&2; exit 2; }
+  [ $# -eq 3 ] || { echo "usage: dev-stack score <player> <juice-shop|dvwa> <n>" >&2; exit 2; }
   resolve_env_file
   [ -n "$ENV_FILE" ] || { echo "no .env or $DEV_ENV_FILE found — run 'dev-stack up' first" >&2; exit 1; }
-  submit_solves "$1" "$2" "$3"
+  local player
+  player="$(resolve_player "$1")" || exit 1
+  submit_solves "$player" "$2" "$3"
 }
+
+# Sourcing (the bats suite) defines the functions without running a command.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
 
 case "${1:-}" in
   up|"") cmd_up ;;
   down) shift; cmd_down "$@" ;;
   score) shift; cmd_score "$@" ;;
   *)
-    echo "usage: dev-stack {up|down [--wipe]|score <login> <juice-shop|dvwa> <n>}" >&2
+    echo "usage: dev-stack {up|down [--wipe]|score <player> <juice-shop|dvwa> <n>}" >&2
     exit 2
     ;;
 esac

@@ -11,8 +11,8 @@
 # functions are that common core: neither gate reimplements any of it any more
 # (M15, #504), so a fix to the staging/build/judge path lands exactly once.
 #
-# The single-module gates (acceptance-quiz-only.sh, acceptance-classic-only.sh,
-# acceptance-ai-only.sh) source this file too; their module-independent
+# The single-module gates (acceptance-quiz-only.sh and
+# acceptance-classic-only.sh) source this file too; their module-independent
 # machinery — the compose line-up check, the redis/srh and app bring-ups, the
 # sync refusal check — lives in the acc_* helpers at the bottom of this file.
 #
@@ -220,14 +220,14 @@ acc_launch() {
 }
 
 # ---------------------------------------------------------------------------
-# Single-module (*-only) gates: the machinery the quiz/classic/ai gates share.
+# Single-module (*-only) gates: the machinery the quiz/classic gates share.
 #
-# acceptance-quiz-only.sh, acceptance-classic-only.sh and acceptance-ai-only.sh
-# run the SAME event for three different modules; everything below is that
-# shared half, parameterized on the module label ("quiz"/"classic"/"ai"), a
-# container-name prefix, or a compose project/override pair. The
-# module-specific half — the seeded question/challenge JSON, the module page
-# assertions, ai's extra routes — stays in each script.
+# acceptance-quiz-only.sh and acceptance-classic-only.sh run the SAME event
+# for two different modules; everything below is that shared half,
+# parameterized on the module label ("quiz"/"classic"), a container-name
+# prefix, or a compose project/override pair. The module-specific half — the
+# seeded question/challenge JSON and the module page assertions — stays in
+# each script.
 # ---------------------------------------------------------------------------
 
 # acc_compose_services [compose-args…] — `docker compose … config --services`
@@ -257,7 +257,8 @@ acc_compose_services() {
 acc_assert_module_lineups() {
   label="$1"
   # The article for the "'$svc' is in the …-only line-up" message, spelled the
-  # way each gate already spells it ("a quiz-only event", "an ai-only event").
+  # way each gate already spells it ("a quiz-only event"), and "an" for a
+  # label that starts with a vowel.
   case "$label" in
     [aeiou]*) article="an" ;;
     *) article="a" ;;
@@ -315,16 +316,16 @@ acc_boot_redis_srh() {
 }
 
 # acc_boot_app <name> <port> <image> <network> <srh-url> <srh-token>
-# <github-org> <admin-logins> <auth-secret> — boot a *-only gate's app
+# <github-org> <admin-claim-hash> <auth-secret> — boot a *-only gate's app
 # container: remove any leftover of the same name, then `docker run -d` the
 # image on the gate's private network with <port> published on localhost.
 # Every value that differs between gates is an argument (config v2, #386: the
 # image takes NO build-time config — which modules run is an /admin setting in
-# Redis, and GITHUB_ORG/ADMIN_LOGINS arrive as runtime env here). Only
+# Redis, and GITHUB_ORG/ADMIN_CLAIM_CODE_HASH arrive as runtime env here). Only
 # BETTER_AUTH_URL is derived — from <port>, the way all three gates spell it.
 acc_boot_app() {
   name="$1"; port="$2"; img="$3"; net="$4"; srh_url="$5"; token="$6"
-  org="$7"; logins="$8"; secret="$9"
+  org="$7"; claim_hash="$8"; secret="$9"
   echo "--- booting the app"
   docker rm -f "$name" >/dev/null 2>&1 || true
   # pins: the caller passes the app image it built
@@ -334,7 +335,7 @@ acc_boot_app() {
     -e UPSTASH_REDIS_REST_URL="$srh_url" \
     -e UPSTASH_REDIS_REST_TOKEN="$token" \
     -e GITHUB_ORG="$org" \
-    -e ADMIN_LOGINS="$logins" \
+    -e ADMIN_CLAIM_CODE_HASH="$claim_hash" \
     "$img" >/dev/null
 }
 
@@ -418,8 +419,24 @@ acc_assert_sync_refuses_no_org() {
   fi
 }
 
-# acc_assert_leaderboard_contrib <base-url> <module> <login> <points-formatted>
-# — /leaderboard must render a row for <login>, and that row must carry the
+# acc_seed_player <redis-container> <player-id> <display-name>
+# — creates the account row a signed-in player has (`ctf:auth:user` plus the
+# email index set better-auth keeps beside it), so the board resolves the
+# player id to <display-name> instead of the `player <id prefix>` fallback.
+# No `ctf:link:github:` key is written: the player is not claiming a login.
+# The row shape and index key are apps/web/src/lib/auth-store's.
+acc_seed_player() {
+  sp_redis="$1"; sp_id="$2"; sp_name="$3"
+  sp_email="${sp_name}@acceptance.invalid"
+  docker exec "$sp_redis" redis-cli -e HSET ctf:auth:user "$sp_id" \
+    '{"id":"'"$sp_id"'","name":"'"$sp_name"'","email":"'"$sp_email"'","emailVerified":true,"image":null,"createdAt":"2026-08-19T00:00:00.000Z","updatedAt":"2026-08-19T00:00:00.000Z"}' \
+    >/dev/null || { echo "FAIL: could not seed the account row for $sp_name" >&2; return 1; }
+  docker exec "$sp_redis" redis-cli -e SADD "ctf:auth:user:by:email:$sp_email" "$sp_id" >/dev/null \
+    || { echo "FAIL: could not seed the email index for $sp_name" >&2; return 1; }
+}
+
+# acc_assert_leaderboard_contrib <base-url> <module> <display-name> <points-formatted>
+# — /leaderboard must render a row for the player named <display-name>, and that row must carry the
 # module-contributed total <points-formatted>. A module-only event always
 # resolves the leaderboard source to "empty" (lib/leaderboard/source.ts —
 # secure-development disabled means no scorer/lambda/upstash backend is even
@@ -436,16 +453,16 @@ acc_assert_sync_refuses_no_org() {
 # avoid bounded-repetition constructs here: some machines' `grep` is ugrep,
 # which errors on some of them that GNU grep accepts.
 acc_assert_leaderboard_contrib() {
-  lb_base="$1"; lb_module="$2"; lb_login="$3"; lb_points_fmt="$4"
-  echo "--- /leaderboard shows the seeded contestant by login, with their $lb_module points"
+  lb_base="$1"; lb_module="$2"; lb_name="$3"; lb_points_fmt="$4"
+  echo "--- /leaderboard shows the seeded contestant by name, with their $lb_module points"
   lb_html="$(curl -sf "$lb_base/leaderboard")"
-  if ! grep -qF "$lb_login" <<< "$lb_html"; then
-    echo "FAIL: /leaderboard has no row for $lb_login — a contestant whose" >&2
+  if ! grep -qF "$lb_name" <<< "$lb_html"; then
+    echo "FAIL: /leaderboard has no row for $lb_name — a contestant whose" >&2
     echo "      only points are $lb_module points did not get a row created at all." >&2
     return 1
   fi
   if ! grep -qF "$lb_points_fmt" <<< "$lb_html"; then
-    echo "FAIL: /leaderboard shows $lb_login but not their $lb_module total" >&2
+    echo "FAIL: /leaderboard shows $lb_name but not their $lb_module total" >&2
     echo "      ($lb_points_fmt) — the row exists, so the module" >&2
     echo "      overlay ran, but the points did not reach it." >&2
     return 1

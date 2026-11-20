@@ -16,7 +16,7 @@ describe("defaultEnabledModules", () => {
   it("is secure-development only when a scorer image exists", () => {
     expect(defaultEnabledModules({ SCORE_IMAGE: "ghcr.io/x/score:latest" })).toEqual(["secure-development"]);
   });
-  it("is empty when there is no scorer image — quiz, classic and ai start OFF", () => {
+  it("is empty when there is no scorer image — quiz and classic start OFF", () => {
     expect(defaultEnabledModules({})).toEqual([]);
   });
   it("never reads anything but SCORE_IMAGE", () => {

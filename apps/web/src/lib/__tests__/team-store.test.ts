@@ -43,6 +43,8 @@ vi.mock("next/headers", () => ({
 
 type TeamStore = typeof import("@/lib/team-store");
 
+const MEMBER_ID = "5f0c2a1e-7b3d-4c9e-8a21-0d6f4b9e3c71";
+
 /** TEAM_WRITES_ENABLED is read at module load, so each test re-imports the
  *  store with the env it needs. */
 async function loadStore(writesEnabled: boolean): Promise<TeamStore> {
@@ -435,13 +437,38 @@ describe("registration window", () => {
   it("asks the captain to confirm removing a member once registration is closed, writing nothing", async () => {
     const store = await loadStore(true);
     mockRegistrationClosed();
-    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "captain" }, { result: 1 }]); // captain, member listed
-    expect(await store.removeMember("captain", "red-team", "member2")).toEqual({
+    // captain, member listed, member's user row
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: "captain" },
+      { result: 1 },
+      { result: JSON.stringify({ username: "Mona", login: "octocat" }) },
+    ]);
+    expect(await store.removeMember("captain", "red-team", MEMBER_ID)).toEqual({
       ok: false,
       needsConfirm: true,
-      error: "Registration is closed. member2 won't be able to join any team again, and their points leave the team.",
+      error: "Registration is closed. Mona won't be able to join any team again, and their points leave the team.",
     });
+    expect(mocks.upstashPipeline.mock.calls[1][0][2]).toEqual(["HGET", "ctf:auth:user", MEMBER_ID]);
     expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  // The member argument is a player id; a captain reads this text, so the id
+  // never appears in it, even with no readable profile row.
+  it.each([
+    ["no user row", { result: null }],
+    ["an error reply", { error: "WRONGTYPE" }],
+    ["a malformed row", { result: "{not json" }],
+  ])("names the member by short id, never the full id, with %s", async (_label, profile) => {
+    const store = await loadStore(true);
+    mockRegistrationClosed();
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "captain" }, { result: 1 }, profile]);
+    const result = await store.removeMember("captain", "red-team", MEMBER_ID);
+    expect(result).toEqual({
+      ok: false,
+      needsConfirm: true,
+      error: `Registration is closed. player ${MEMBER_ID.slice(0, 8)} won't be able to join any team again, and their points leave the team.`,
+    });
+    expect(JSON.stringify(result)).not.toContain(MEMBER_ID);
   });
 
   // The warning names the member and says what removing them costs, so it
@@ -449,7 +476,7 @@ describe("registration window", () => {
   it("refuses a non-captain after close without the warning, writing nothing", async () => {
     const store = await loadStore(true);
     mockRegistrationClosed();
-    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "captain" }, { result: 1 }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "captain" }, { result: 1 }, { result: null }]);
     expect(await store.removeMember("intruder", "red-team", "member2")).toEqual({
       ok: false,
       error: "Only the team captain can do that",
@@ -460,10 +487,10 @@ describe("registration window", () => {
   it("refuses a login not on the team after close without the warning", async () => {
     const store = await loadStore(true);
     mockRegistrationClosed();
-    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "captain" }, { result: 0 }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "captain" }, { result: 0 }, { result: null }]);
     expect(await store.removeMember("captain", "red-team", "ghost")).toEqual({
       ok: false,
-      error: '"ghost" is not on this team',
+      error: "That player is not on this team",
     });
     expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
@@ -733,7 +760,7 @@ describe("captain roster actions", () => {
     mockRegistrationOpen();
     mocks.upstashEval.mockResolvedValueOnce("not-member");
     const result = await store.removeMember("captain", "red-team", "ghost");
-    expect(result).toEqual({ ok: false, error: '"ghost" is not on this team' });
+    expect(result).toEqual({ ok: false, error: "That player is not on this team" });
   });
 
   it("renames the team", async () => {
@@ -777,7 +804,7 @@ describe("captain roster actions", () => {
     const store = await loadStore(true);
     mocks.upstashEval.mockResolvedValueOnce("not-member");
     const result = await store.transferCaptain("captain", "red-team", "ghost");
-    expect(result).toEqual({ ok: false, error: '"ghost" is not on this team' });
+    expect(result).toEqual({ ok: false, error: "That player is not on this team" });
   });
 
   it("disbands the team and clears its join code", async () => {
@@ -1075,16 +1102,20 @@ describe("hasTeam", () => {
   });
 });
 
+const SOLO_ID = "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e2f";
+
 describe("createSoloTeam", () => {
   it("names the team after the contestant, with them as captain", async () => {
     const store = await loadStore(true);
     mockRegistrationOpen();
     mockCodeCollisionCheck(false);
     mocks.upstashEval.mockResolvedValueOnce("ok");
-    expect(await store.createSoloTeam("octocat")).toEqual({ ok: true, team: "octocat" });
+    expect(await store.createSoloTeam(SOLO_ID, "OctoCat")).toEqual({ ok: true, team: "octocat" });
     const [, keys, args] = mocks.upstashEval.mock.calls[0];
     expect(keys[1]).toBe("ctf:team:octocat");
-    expect(args[0]).toBe("octocat");
+    // The membership is keyed by the player id; the name only seeds the slug.
+    expect(args[0]).toBe(SOLO_ID);
+    expect(mocks.logActivity).toHaveBeenCalledExactlyOnceWith("team-create", { id: SOLO_ID, name: "OctoCat" }, "octocat");
   });
 
   it("falls back to a suffixed name when that team name is already taken", async () => {
@@ -1097,7 +1128,7 @@ describe("createSoloTeam", () => {
     mocks.upstashEval.mockResolvedValueOnce("name-taken");
     mockCodeCollisionCheck(false);
     mocks.upstashEval.mockResolvedValueOnce("ok");
-    const result = await store.createSoloTeam("octocat");
+    const result = await store.createSoloTeam(SOLO_ID, "octocat");
     expect(result.ok).toBe(true);
     expect(result.ok && result.team).toMatch(/^octocat-[a-z2-9]{3}$/);
   });
@@ -1113,29 +1144,40 @@ describe("createSoloTeam", () => {
       mockCodeCollisionCheck(false);
       mocks.upstashEval.mockResolvedValueOnce("name-taken");
     }
-    expect(await store.createSoloTeam("octocat")).toEqual({
+    expect(await store.createSoloTeam(SOLO_ID, "octocat")).toEqual({
       ok: false,
       error: "Couldn't create a team for you. Pick a team name instead",
     });
   });
 
-  it("clamps a long login to the team-name cap", async () => {
-    // A GitHub login runs to 39 characters and a team name stops at 32, so a
-    // login is NOT automatically a legal team name — unclamped, this path
-    // would mint names `renameTeam` then refuses.
+  it("clamps a long name to the team-name cap", async () => {
+    // A display name can outrun the 32-character team name, so it is NOT
+    // automatically a legal team name — unclamped, this path would mint names
+    // `renameTeam` then refuses.
     const store = await loadStore(true);
     mockRegistrationOpen();
     mockCodeCollisionCheck(false);
     mocks.upstashEval.mockResolvedValueOnce("ok");
-    const result = await store.createSoloTeam("a".repeat(39));
+    const result = await store.createSoloTeam(SOLO_ID, "a".repeat(39));
     expect(result.ok).toBe(true);
     expect(result.ok && result.team).toEqual(expect.stringMatching(/^a{1,32}$/));
+  });
+
+  it("names the team after the player id when the name has nothing to slugify", async () => {
+    const store = await loadStore(true);
+    mockRegistrationOpen();
+    mockCodeCollisionCheck(false);
+    mocks.upstashEval.mockResolvedValueOnce("ok");
+    expect(await store.createSoloTeam(SOLO_ID, "李雷")).toEqual({ ok: true, team: `player-${SOLO_ID.slice(0, 8)}` });
+    const [, keys, args] = mocks.upstashEval.mock.calls[0];
+    expect(keys[1]).toBe(`ctf:team:player-${SOLO_ID.slice(0, 8)}`);
+    expect(args[0]).toBe(SOLO_ID);
   });
 
   it("refuses while registration is closed, like every other create path", async () => {
     const store = await loadStore(true);
     mockRegistrationClosed();
-    const result = await store.createSoloTeam("octocat");
+    const result = await store.createSoloTeam(SOLO_ID, "octocat");
     expect(result.ok).toBe(false);
     expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
@@ -1145,7 +1187,7 @@ describe("createSoloTeam", () => {
     mockRegistrationOpen();
     mockCodeCollisionCheck(false);
     mocks.upstashEval.mockResolvedValueOnce("already-on-team");
-    expect(await store.createSoloTeam("octocat")).toEqual({
+    expect(await store.createSoloTeam(SOLO_ID, "octocat")).toEqual({
       ok: false,
       error: "Leave your current team before creating one",
     });

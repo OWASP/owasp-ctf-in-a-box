@@ -1,4 +1,4 @@
-// The delete confirmation every module admin panel (quiz, classic, ai)
+// The delete confirmation every module admin panel (quiz, classic)
 // renders once an organizer clicks Delete: `ConfirmModal` in its destructive,
 // type-to-confirm shape, plus the error line a failed DELETE lands on. This
 // repo's tests run `renderToStaticMarkup` in vitest's node environment, so the

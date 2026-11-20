@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { submitScore } from "../src/submit.js";
 
 const CFG = { scorerUrl: "http://scorer:4000", scorerToken: "s3cret" };
-const PAYLOAD = { author: "octocat", target: "dvwa", solved: ["sqli-low"], pr: 7, sha: "abc", at: "2026-08-13T11:00:00Z" };
+const PAYLOAD = { player: "11111111-1111-4111-8111-111111111111", target: "dvwa", solved: ["sqli-low"], pr: 7, sha: "abc", at: "2026-08-13T11:00:00Z" };
 
 test("POSTs payload with bearer token, accepted on 202", async () => {
   let seen;
@@ -23,13 +23,25 @@ test("rejected on 4xx (do not retry)", async () => {
   assert.deepEqual(await submitScore(CFG, PAYLOAD, f), { outcome: "rejected" });
 });
 
-// 422 is the scorer's final verdict on WHEN the score was posted: outside the
-// scoring window, during a freeze, or before the last master reset. Not a
-// loss to investigate, so it is told apart from every other 4xx.
+// 422 is the scorer's final verdict on WHEN the score was posted (outside the
+// scoring window, during a freeze, before the last master reset) or WHO it
+// belongs to (a deleted player). Not a loss to investigate, so it is told apart
+// from every other 4xx.
 test("refused on 422, carrying the scorer's reason", async () => {
   const f = async () =>
     new Response(JSON.stringify({ error: "the score was posted while scoring was frozen", refused: "paused" }), { status: 422 });
   assert.deepEqual(await submitScore(CFG, PAYLOAD, f), { outcome: "refused", reason: "paused" });
+});
+
+test("refused on 422 player-deleted: a verdict on who, final like the rest", async () => {
+  const f = async () =>
+    new Response(JSON.stringify({ error: "player deleted", refused: "player-deleted" }), { status: 422 });
+  assert.deepEqual(await submitScore(CFG, PAYLOAD, f), { outcome: "refused", reason: "player-deleted" });
+});
+
+test("a 503 (player scores on hold) throws so the caller retries", async () => {
+  const f = async () => new Response(JSON.stringify({ error: "player scores on hold" }), { status: 503 });
+  await assert.rejects(() => submitScore(CFG, PAYLOAD, f));
 });
 
 test("refused on a 422 whose body is unreadable, with an unknown reason", async () => {

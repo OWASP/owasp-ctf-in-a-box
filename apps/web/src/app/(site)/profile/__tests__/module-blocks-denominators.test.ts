@@ -4,10 +4,10 @@
 // The numerator counts SOLVE RECORDS, which survive deletion on purpose — the
 // admin delete dialog promises it: "Points already banked for it stay on the
 // leaderboard." The denominator counts the LIVE CATALOGUE, which no longer has
-// the challenge in it. So an organizer who deletes two solved AI challenges
-// mid-event hands every affected contestant:
+// the challenge in it. So an organizer who deletes two solved Jeopardy
+// challenges mid-event hands every affected contestant:
 //
-//     AI   5 / 5 cleared   870 / 850 pts
+//     Jeopardy   5 / 5 solved   870 / 850 pts
 //
 // with a bar filled past its own end, while the board they browse says 3 / 3.
 //
@@ -51,7 +51,6 @@ const input = {
   secureDev: true,
   quiz: { questions: LIVE, maxPoints: 500, viewer: { answered: SOLVED, attempts: {} } },
   classic: { challenges: LIVE, maxPoints: 500, viewer: { solved: SOLVED, attempts: {} } },
-  ai: { challenges: LIVE, maxPoints: 500, viewer: { solved: SOLVED, attempts: {} } },
 } as unknown as ProfileModuleInput;
 
 const progressFor = (detail: ModuleProgress["detail"]): ModuleProgress =>
@@ -60,7 +59,6 @@ const progressFor = (detail: ModuleProgress["detail"]): ModuleProgress =>
 const cases = [
   ["quiz", { kind: "quiz", answered: DONE, total: 5 }],
   ["classic", { kind: "classic", solved: DONE, total: 5 }],
-  ["ai", { kind: "ai", solved: DONE, total: 5 }],
 ] as unknown as Array<[string, ModuleProgress["detail"]]>;
 
 describe("a progress row counts the live-and-historical union", () => {
@@ -88,7 +86,6 @@ describe("a progress row counts the live-and-historical union", () => {
         ...input,
         quiz: { questions: LIVE, maxPoints: 500, viewer: { answered: { "live-1": { points: 100, at: "t" } }, attempts: {} } },
         classic: { challenges: LIVE, maxPoints: 500, viewer: { solved: { "live-1": { points: 100, at: "t" } }, attempts: {} } },
-        ai: { challenges: LIVE, maxPoints: 500, viewer: { solved: { "live-1": { points: 100, at: "t" } }, attempts: {} } },
       } as unknown as ProfileModuleInput;
       const row = moduleRow(
         { points: 100, completed: 1, detail: { ...(detail as object), ...oneSolved(detail) } } as unknown as ModuleProgress,
@@ -130,13 +127,11 @@ describe("the footer's remaining line counts the same union as the rows", () => 
     ...input,
     quiz: { ...(input.quiz as object), total: { points: BANKED_POINTS } },
     classic: { ...(input.classic as object), total: { points: BANKED_POINTS } },
-    ai: { ...(input.ai as object), total: { points: BANKED_POINTS } },
   } as unknown as ProfileModuleInput;
 
   const modules = [
     { id: "quiz", title: "Quiz" },
     { id: "classic", title: "Jeopardy" },
-    { id: "ai", title: "AI" },
   ] as unknown as ResolvedModule[];
 
   it("carries the union ceiling, not the live-only maxPoints", () => {
@@ -163,7 +158,7 @@ describe("the footer's remaining line counts the same union as the rows", () => 
     // Pre-fix this summed to 0 and the line hid itself entirely, telling a
     // contestant with six unsolved items that the board was cleared.
     const { remaining } = remainingSummary(remainingFor(modules, withTotals));
-    expect(remaining).toBe(3 * (UNION_POINTS - BANKED_POINTS));
+    expect(remaining).toBe(2 * (UNION_POINTS - BANKED_POINTS));
   });
 
   it("secure-development is clamped, never below its banked points", () => {

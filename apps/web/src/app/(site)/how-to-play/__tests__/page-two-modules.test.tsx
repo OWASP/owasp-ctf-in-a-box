@@ -44,7 +44,7 @@ describe("/how-to-play in a two-module event", () => {
   // describes the whole event, so the frame speaks for itself.
   it("falls back to the platform lede rather than one module's", () => {
     expect(html).toContain(
-      "New to the competition? Here&#x27;s everything you need to get from a GitHub sign-in to your first points.",
+      "New to the competition? Here&#x27;s everything you need to get from signing in to your first points.",
     );
     expect(html).not.toContain("your first patched challenge");
     expect(html).not.toContain("your first scored answer");

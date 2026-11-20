@@ -13,13 +13,17 @@
  * part most likely to carry interpolated arguments), no own properties, and no
  * `String(err)` on a non-`Error` — a thrown string could BE the flag.
  *
- * Shared by every store, `ai-http` and — as `adminErrorLabel` — the admin
+ * Shared by every store and — as `adminErrorLabel` — the admin
  * routes (#241, #244, #500), so they cannot drift: this is the ONE body, and
  * `error-label.test.ts` fails if a hand-rolled copy appears anywhere else in
  * `src/`. `docs/reviewing.md`'s secrets-in-logs invariant is the rule this
  * implements.
  */
-export function errorLabel(err: unknown): string {
+export function errorLabel(err: unknown, redact: readonly string[] = []): string {
   if (!(err instanceof Error)) return "non-Error throw";
-  return `${err.name}: ${err.message}`.slice(0, 200);
+  let label = `${err.name}: ${err.message}`;
+  for (const value of redact) {
+    if (value) label = label.split(value).join("[redacted]");
+  }
+  return label.slice(0, 200);
 }

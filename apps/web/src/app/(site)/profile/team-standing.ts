@@ -15,13 +15,16 @@ import { withHintPenalties } from "@/lib/leaderboard/hint-penalties";
 import { withScoreAdjustments } from "@/lib/leaderboard/score-adjustments";
 import { withModuleContributions } from "@/lib/leaderboard/module-contributions";
 import { withTeamStandings } from "@/lib/leaderboard/team-standings";
+import { attachNames } from "@/lib/leaderboard/names";
 
 type TeamPanelData = {
   standing: TeamStanding | null;
   /** One entry per roster member, in roster order; null when that member has
    *  no scored activity yet. */
-  memberEntries: { login: string; entry: LeaderboardEntry | null }[];
+  memberEntries: TeamMemberEntry[];
 };
+
+export type TeamMemberEntry = { playerId: string; name: string; image: string | null; entry: LeaderboardEntry | null };
 
 export async function loadTeamStanding(
   team: { slug: string; members: string[] } | null,
@@ -39,14 +42,15 @@ export async function loadTeamStanding(
     // The store's roster wins; the standing's member list covers the mock
     // fallback path where `team.members` arrives empty.
     const roster = team.members.length > 0 ? team.members : (standing?.members ?? []);
-    // Matched case-insensitively, like every other login join in this
-    // codebase: the roster stores the spelling the team join recorded, the
-    // board row the scorer's (PR author) — a disagreement must not render a
-    // scoring teammate as 0 pts.
-    const memberEntries = roster.map((member) => ({
-      login: member,
-      entry: data.entries.find((e) => e.login.toLowerCase() === member.toLowerCase()) ?? null,
-    }));
+    // Matched case-insensitively, like every other player join in this
+    // codebase, so a key stored in another case still finds its row.
+    // Names come from one profile read over the roster.
+    const memberEntries = await attachNames(
+      roster.map((member) => ({
+        playerId: member,
+        entry: data.entries.find((e) => e.playerId.toLowerCase() === member.toLowerCase()) ?? null,
+      })),
+    );
     return { standing, memberEntries };
   } catch {
     return { standing: null, memberEntries: [] };

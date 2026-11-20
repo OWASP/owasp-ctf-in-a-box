@@ -10,6 +10,7 @@ const settings: AdminSettings = {
   paused: false,
   teamRegistrationOpen: true,
   displayQr: true,
+  signInProviders: { github: true },
   hintsEnabled: null,
   hintCost: null,
   hintsMinSolves: null,
@@ -17,7 +18,6 @@ const settings: AdminSettings = {
   quizMaxAttempts: null,
   quizRetryAfterMin: null,
   classicCooldownSec: null,
-  aiCooldownSec: null,
   teamMaxMembers: null,
   scoreCooldownMin: null,
   scoringStartsAt: null,
@@ -39,12 +39,14 @@ const props = (s: AdminSettings): AdminEventTabProps => ({
   pending: false,
   resetInfo: null,
   eventName: "Fixture CTF",
+  configuredSignInProviders: ["github"],
   applyField: async () => true,
   statusOf: () => ({ state: "idle" }) as ReturnType<AdminEventTabProps["statusOf"]>,
   setConfirm: () => {},
   doReset: noop,
   doSeed: noop,
   doClearDemo: noop,
+  doDeleteAllAccounts: noop,
   teamMaxMembersInput: "",
   setTeamMaxMembersInput: () => {},
   commitNumber: (async () => true) as unknown as AdminEventTabProps["commitNumber"],
@@ -68,6 +70,14 @@ describe("AdminEventTab — projector QR code", () => {
     expect(qrInput(html)).not.toBe("");
     expect(qrInput(html)).not.toMatch(/checked=""/);
   });
+
+  // The projector section and the Discord-announcements section share this
+  // tab; dropping either from the tree would strand its controls.
+  it("still renders the Discord announcements section alongside the projector controls", () => {
+    const html = renderToStaticMarkup(<AdminEventTab {...props(settings)} />);
+    expect(html).toContain("Projector board");
+    expect(html).toContain("Discord announcements");
+  });
 });
 
 describe("AdminEventTab — master reset copy", () => {
@@ -78,5 +88,13 @@ describe("AdminEventTab — master reset copy", () => {
     const html = renderToStaticMarkup(<AdminEventTab {...props(settings)} />);
     expect(html).toMatch(/scored again after the reset/i);
     expect(html).not.toMatch(/come back when you unfreeze/i);
+  });
+});
+
+describe("AdminEventTab — delete all accounts", () => {
+  it("offers the control beside the master reset", () => {
+    const html = renderToStaticMarkup(<AdminEventTab {...props(settings)} />);
+    expect(html).toContain("Delete all accounts…");
+    expect(html).toContain("Reset event data…");
   });
 });

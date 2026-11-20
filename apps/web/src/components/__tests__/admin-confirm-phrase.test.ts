@@ -1,7 +1,7 @@
 // The phrase a delete confirmation makes an organizer retype, shared by the
-// quiz (prompt), classic (title) and ai (title) admin panels. Pins the
+// quiz (prompt) and classic (title) admin panels. Pins the
 // algorithm the three module wrappers used to carry separately, including
-// the classic/ai fallback for a blank title — `ConfirmModal` treats an empty
+// the classic fallback for a blank title — `ConfirmModal` treats an empty
 // `requireType` as "no confirmation required", so the fallback is the guard.
 import { describe, expect, it } from "vitest";
 import { DELETE_CONFIRM_PHRASE_MAX, confirmPhrase } from "@/components/admin/confirm-phrase";

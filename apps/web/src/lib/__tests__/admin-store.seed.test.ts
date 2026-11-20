@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   upstashPipeline: vi.fn<(c: (string | number)[][]) => Promise<{ result?: unknown; error?: string }[]>>(),
 }));
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/auth", () => ({ auth: {} }));
 vi.mock("@/lib/upstash", () => ({ upstashEval: mocks.upstashEval, upstashPipeline: mocks.upstashPipeline }));
 // The demo ships two real forensics artifacts through the attachments
 // store, which has its own suites — here, only what the seed asks of it.
@@ -16,9 +17,11 @@ const files = vi.hoisted(() => ({
 vi.mock("@/lib/attachments-store", () => files);
 
 import { seedDemoData, SEED_CATEGORIES_SCRIPT } from "@/lib/admin-store";
+import { demoPlayerId } from "@/lib/demo-seed";
+import { PLAYER_ID_RE } from "@/lib/player";
+import { PUT_ROW_SCRIPT } from "@/lib/auth-store/scripts";
 import { upsertQuestion } from "@/lib/quiz-store";
-import { normalizeFlag, flagComparisonForm, CLASSIC_CATEGORIES_MAX } from "@/lib/classic-keys";
-import { AI_CATEGORIES_MAX } from "@/lib/ai-keys";
+import { normalizeFlag, CLASSIC_CATEGORIES_MAX } from "@/lib/classic-keys";
 import {
   DEMO_CONTESTANTS,
   DEMO_TEAMS,
@@ -27,12 +30,10 @@ import {
   DEMO_CHALLENGES,
   DEMO_CLASSIC_CATEGORIES,
   DEMO_CLASSIC_SOLVES,
-  DEMO_AI_CHALLENGES,
-  DEMO_AI_CATEGORIES,
-  DEMO_AI_SOLVES,
   DEMO_SPONSORS,
   DEMO_CLASSIC_ATTACHMENTS,
 } from "@/lib/demo-fixture";
+import { ALICE, actor } from "./audit-actor";
 
 /** The settings-read shape `getAdminSettings` decodes `enabledModules` from —
  *  a comma-joined id list on the ONE hash the seed's schedule clamp and its
@@ -51,10 +52,7 @@ beforeEach(() => {
   // which the module gates below also read `enabledModules` off) and the
   // write batch (whose return is unused).
   //
-  // ai is deliberately left OFF by default (only secure-development + quiz +
-  // classic on), so the main block of assertions below exercises no ai
-  // behavior; ai gets its own describe block with its own mock.
-  // secure-development stays on by default too — most of this file's
+  // secure-development stays on by default — most of this file's
   // assertions read `ctf:solves:<target>` rows, which only exist when it is
   // live; the one no-secure-development case gets its own dedicated test
   // below.
@@ -84,8 +82,20 @@ function seededRecords(cmds: Cmd[], challengesKey: string): Record<string, unkno
 }
 
 describe("seedDemoData", () => {
+  // Demo rows keep their fixture GitHub login as an attribute, and no fixture
+  // can be an admin: the seed never writes the roster.
+  it("never writes the admin roster, and keeps the fixture login attribute", async () => {
+    await seedDemoData(actor("alice"));
+    const written = JSON.stringify([...mocks.upstashPipeline.mock.calls, ...mocks.upstashEval.mock.calls]);
+    expect(written).not.toContain("ctf:admin:grants");
+    const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
+    const neo = cmds.find((c) => c[0] === "EVAL" && c[6] === demoPlayerId("neo-anderson"));
+    expect(neo, "no demo user row for neo-anderson").toBeTruthy();
+    expect(JSON.parse(String(neo![8])).login).toBe("neo-anderson");
+  });
+
   it("writes solves, teams, membership + a seed audit line in one pipeline", async () => {
-    const out = await seedDemoData("alice");
+    const out = await seedDemoData(actor("alice"));
 
     const expectedSolves = DEMO_CONTESTANTS.reduce(
       (n, c) => n + Object.values(c.solves).reduce((m, ids) => m + ids.length, 0),
@@ -125,7 +135,7 @@ describe("seedDemoData", () => {
     // audit line records the seed
     const lpush = cmds.find((c) => c[0] === "LPUSH");
     expect(lpush).toBeTruthy();
-    expect(JSON.parse(String(lpush![2]))).toMatchObject({ by: "alice", action: "seed" });
+    expect(JSON.parse(String(lpush![2]))).toMatchObject({ by: ALICE.id, name: "alice", action: "seed" });
 
     // sponsors — a platform feature, so always seeded regardless of modules
     const sponsorCmds = cmds.filter((c) => c[1] === "ctf:sponsors");
@@ -151,7 +161,7 @@ describe("seedDemoData", () => {
   it("aborts the seed when the settings read fails, instead of seeding the default module set", async () => {
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "NOAUTH Authentication required." }]);
 
-    await expect(seedDemoData("alice")).rejects.toThrow("NOAUTH Authentication required.");
+    await expect(seedDemoData(actor("alice"))).rejects.toThrow("NOAUTH Authentication required.");
     expect(mocks.upstashPipeline).toHaveBeenCalledTimes(1);
   });
 
@@ -159,10 +169,10 @@ describe("seedDemoData", () => {
   // `solves` count derived from them) must not run unconditionally off the
   // fixture alone — that would show solves for a module this event isn't
   // even serving. Gated on `live.has("secure-development")`, same as
-  // quiz/classic/ai below.
+  // quiz/classic below.
   it("skips secure-development's demo solves entirely when it is not live", async () => {
     mockEnabledModules(["quiz"]);
-    const out = await seedDemoData("alice");
+    const out = await seedDemoData(actor("alice"));
     expect(out.solves).toBe(0);
 
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
@@ -174,7 +184,7 @@ describe("seedDemoData", () => {
   });
 
   it("spreads EACH contestant's solves across the window so lines interleave", async () => {
-    await seedDemoData("bob");
+    await seedDemoData(actor("bob"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
     // pick the contestant with the most solves and check their own timestamps
     // span most of the ~6h window (not a narrow per-contestant block).
@@ -184,7 +194,7 @@ describe("seedDemoData", () => {
         Object.values(a.solves).reduce((m, i) => m + i.length, 0),
     )[0];
     const times = cmds
-      .filter((c) => c[0] === "HSET" && String(c[1]).startsWith("ctf:solves:") && String(c[2]).startsWith(`${top.login}:`))
+      .filter((c) => c[0] === "HSET" && String(c[1]).startsWith("ctf:solves:") && String(c[2]).startsWith(`${demoPlayerId(top.login)}:`))
       .map((c) => Date.parse(String(c[3])))
       .sort((a, b) => a - b);
     const windowMs = 6 * 60 * 60 * 1000;
@@ -214,7 +224,7 @@ describe("seedDemoData", () => {
         ],
       },
     ]);
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
     const stamps = cmds
       .filter(
@@ -242,7 +252,7 @@ describe("seedDemoData", () => {
         ],
       },
     ]);
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
     const stamps = cmds
       .filter((c) => c[0] === "HSET" && String(c[1]).startsWith("ctf:solves:"))
@@ -250,6 +260,44 @@ describe("seedDemoData", () => {
     expect(stamps.length).toBeGreaterThan(0);
     // Never future-dated — the fallback is yesterday's now-minus-6h window.
     for (const t of stamps) expect(t).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("keys the demo roster by v4 player ids, never by the fixture login", async () => {
+    const ids = DEMO_CONTESTANTS.map((c) => demoPlayerId(c.login));
+    for (const id of ids) expect(id).toMatch(PLAYER_ID_RE);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(demoPlayerId("neo-anderson")).toBe(demoPlayerId("neo-anderson"));
+
+    await seedDemoData(actor("alice"));
+    const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
+    const logins = new Set(DEMO_CONTESTANTS.map((c) => c.login));
+    for (const t of DEMO_TEAMS) {
+      const team = cmds.find((c) => c[0] === "HSET" && c[1] === `ctf:team:${t.slug}`)!;
+      expect(team[team.indexOf("captain") + 1]).toBe(demoPlayerId(t.captain));
+      const roster = cmds.find((c) => c[0] === "SADD" && c[1] === `ctf:team:${t.slug}:members`)!;
+      expect(roster.slice(2)).toEqual(t.members.map(demoPlayerId));
+    }
+    for (const c of cmds) {
+      if (c[0] !== "HSET" && c[0] !== "SADD") continue;
+      expect(logins.has(String(c[2])), `${String(c[1])} is keyed by a raw login`).toBe(false);
+      expect(String(c[1]).startsWith("ctf:user:") && logins.has(String(c[1]).slice("ctf:user:".length))).toBe(false);
+    }
+  });
+
+  it("creates each demo player as an account row with a display name, and links no GitHub login", async () => {
+    await seedDemoData(actor("alice"));
+    const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
+    const puts = cmds.filter((c) => c[0] === "EVAL" && c[1] === PUT_ROW_SCRIPT);
+    expect(puts).toHaveLength(DEMO_CONTESTANTS.length);
+    for (const c of DEMO_CONTESTANTS) {
+      const put = puts.find((p) => p[6] === demoPlayerId(c.login))!;
+      expect(put.slice(2, 6)).toEqual([1, "ctf:auth:user", "ctf:auth", "user"]);
+      expect(put[7]).toBe(""); // create only: an existing row is left as it is
+      const row = JSON.parse(String(put[8]));
+      expect(row).toMatchObject({ id: demoPlayerId(c.login), name: c.login, login: c.login });
+    }
+    expect(cmds.some((c) => String(c[1]).startsWith("ctf:link:"))).toBe(false);
+    expect(cmds.some((c) => String(c[1]).startsWith("ctf:auth:") && c[0] !== "EVAL")).toBe(false);
   });
 
   it("puts every demo contestant on a team (no soloists left off the team board)", () => {
@@ -260,7 +308,7 @@ describe("seedDemoData", () => {
   });
 
   it("seeds demo questions and answers so DEMO_MODE shows two scoring modules", async () => {
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
 
     // a mix of single and multi questions
@@ -328,7 +376,7 @@ describe("seedDemoData", () => {
     expect(pointsCmds.length).toBe(logins.size);
     expect(answeredCmds.length).toBe(logins.size);
     for (const login of logins) {
-      const expectedAnswers = DEMO_QUIZ_ANSWERS.filter((a) => a.login === login);
+      const expectedAnswers = DEMO_QUIZ_ANSWERS.filter((a) => demoPlayerId(a.login) === login);
       const expectedPoints = expectedAnswers.reduce(
         (sum, a) => sum + DEMO_QUESTIONS.find((q) => q.id === a.questionId)!.points,
         0,
@@ -342,13 +390,13 @@ describe("seedDemoData", () => {
 
   it("does not seed quiz content when quiz is not live", async () => {
     mockEnabledModules(["classic"]);
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
     expect(cmds.some((c) => String(c[1]).startsWith("ctf:quiz:"))).toBe(false);
   });
 
   it("seeds classic challenges + both flag hashes, with NO flag in the public record", async () => {
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
 
     expect(DEMO_CHALLENGES.length).toBeGreaterThanOrEqual(8);
@@ -389,7 +437,7 @@ describe("seedDemoData", () => {
   });
 
   it("seeds classic solves so aggregates agree with the per-login rows and solvecount", async () => {
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
 
     expect(DEMO_CLASSIC_SOLVES.length).toBeGreaterThan(0);
@@ -417,7 +465,7 @@ describe("seedDemoData", () => {
     expect(pointsCmds.length).toBe(logins.size);
     expect(solvedCmds.length).toBe(logins.size);
     for (const login of logins) {
-      const rowsForLogin = DEMO_CLASSIC_SOLVES.filter((s) => s.login === login);
+      const rowsForLogin = DEMO_CLASSIC_SOLVES.filter((s) => demoPlayerId(s.login) === login);
       const expectedPoints = rowsForLogin.reduce(
         (sum, s) => sum + DEMO_CHALLENGES.find((c) => c.id === s.challengeId)!.points,
         0,
@@ -453,162 +501,9 @@ describe("seedDemoData", () => {
 
   it("writes no ctf:classic:* keys when the classic module is disabled", async () => {
     mockEnabledModules(["quiz"]);
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
     expect(cmds.some((c) => String(c[1]).startsWith("ctf:classic:"))).toBe(false);
-  });
-
-  it("seeds ai challenges + flag/flagnorm (flag mode only) + signing keys, with NO flag in the public record", async () => {
-    mockEnabledModules(["ai"]);
-    await seedDemoData("alice");
-    const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
-
-    expect(DEMO_AI_CHALLENGES.some((c) => c.mode === "flag")).toBe(true);
-
-    // NO demo challenge may be `event`-mode. Such a challenge can
-    // only be solved by an external arena POSTing a signed event, and the
-    // fixture's launch URLs are a documentation domain that does not resolve —
-    // so seeding one put a 400-point row on the board with no flag form and a
-    // dead Launch button, unclearable by anyone. This is the invariant, not a
-    // description of today's data: reintroducing an event-mode fixture entry
-    // has to fail here first.
-    expect(DEMO_AI_CHALLENGES.filter((c) => c.mode === "event")).toEqual([]);
-    for (const dc of DEMO_AI_CHALLENGES) {
-      expect(dc.flag, `${dc.id} must be flag-gradable so the demo board is clearable`).not.toBe("");
-    }
-
-    // one HSET per challenge into the public challenges hash, with NO flag or
-    // signing key field anywhere in the stored value
-    const challengeRecords = seededRecords(cmds, "ctf:ai:challenges");
-    expect(challengeRecords.length).toBe(DEMO_AI_CHALLENGES.length);
-    for (const stored of challengeRecords) {
-      expect(stored.flag).toBeUndefined();
-      expect(stored.signingKey).toBeUndefined();
-      expect(JSON.stringify(stored)).not.toMatch(/ctfbox/i);
-      expect(JSON.stringify(stored)).not.toMatch(/aik_/);
-    }
-
-    // the authored flag hash holds the flag verbatim, and ONLY for the
-    // graded (mode !== "event") challenges — an event-mode challenge has no
-    // flag entries at all, since signed events assert that solve instead
-    // Every fixture challenge is graded, so this set is all of
-    // them; the `mode === "event"` arms below are kept because the SEED still
-    // has that branch — the fixture does not exercise it, and a future entry
-    // could. `ai-store.authoring.test.ts` covers the same rule on the
-    // authoring path, where an event-mode challenge can still be created.
-    const gradedIds = new Set(DEMO_AI_CHALLENGES.filter((c) => c.mode !== "event").map((c) => c.id));
-    expect(gradedIds.size).toBe(DEMO_AI_CHALLENGES.length);
-
-    const flagCmds = cmds.filter((c) => c[0] === "HSET" && c[1] === "ctf:ai:flag");
-    expect(flagCmds.length).toBe(gradedIds.size);
-    for (const dc of DEMO_AI_CHALLENGES) {
-      if (dc.mode === "event") {
-        expect(flagCmds.some((c) => c[2] === dc.id)).toBe(false);
-        continue;
-      }
-      const cmd = flagCmds.find((c) => c[2] === dc.id)!;
-      expect(cmd[3]).toBe(dc.flag);
-    }
-
-    // the normalized flag hash is EXACTLY flagComparisonForm(authored) —
-    // proven against classic-keys.ts's own function (ai-keys.ts re-exports the
-    // identical one), never a re-derived formula — and also graded-only
-    const flagnormCmds = cmds.filter((c) => c[0] === "HSET" && c[1] === "ctf:ai:flagnorm");
-    expect(flagnormCmds.length).toBe(gradedIds.size);
-    for (const dc of DEMO_AI_CHALLENGES) {
-      if (dc.mode === "event") continue;
-      const cmd = flagnormCmds.find((c) => c[2] === dc.id)!;
-      expect(cmd[3]).toBe(flagComparisonForm(dc.flag, dc.caseSensitive));
-    }
-
-    // every challenge, graded or event-only, gets a signing key row — the
-    // event-signature path needs one regardless of whether a flag is graded
-    const signkeyCmds = cmds.filter((c) => c[0] === "HSET" && c[1] === "ctf:ai:signkey");
-    expect(signkeyCmds.length).toBe(DEMO_AI_CHALLENGES.length);
-    for (const dc of DEMO_AI_CHALLENGES) {
-      const cmd = signkeyCmds.find((c) => c[2] === dc.id)!;
-      expect(cmd[3]).toBe(dc.signingKey);
-    }
-
-    // handed to the script in display order; no bare SET of the key
-    expect(scriptArgs(cmds, "ctf:ai:challenges").fixtureCategories).toEqual(DEMO_AI_CATEGORIES);
-    expect(cmds.find((c) => c[0] === "SET" && c[1] === "ctf:ai:categories")).toBeUndefined();
-
-    // the launch keypair is never touched by the seed — it is minted lazily on
-    // first real use, not fixture data (see ai-store.ts's getAiLaunchKeys)
-    expect(cmds.some((c) => c[1] === "ctf:ai:launchkey")).toBe(false);
-  });
-
-  it("seeds ai solves so aggregates agree with the per-login rows and solvecount", async () => {
-    mockEnabledModules(["ai"]);
-    await seedDemoData("alice");
-    const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
-
-    expect(DEMO_AI_SOLVES.length).toBeGreaterThan(0);
-
-    // one HSET per solve into that login's own solves hash
-    const solveCmds = cmds.filter((c) => c[0] === "HSET" && String(c[1]).startsWith("ctf:ai:solves:"));
-    expect(solveCmds.length).toBe(DEMO_AI_SOLVES.length);
-    const logins = new Set(solveCmds.map((c) => String(c[1]).replace("ctf:ai:solves:", "")));
-    expect(logins.size).toBeGreaterThan(1);
-
-    // each stored solve row is well-formed and timestamped inside the same
-    // ~6h window as the other seeded activity
-    const windowMs = 6 * 60 * 60 * 1000;
-    for (const c of solveCmds) {
-      const row = JSON.parse(String(c[3]));
-      expect(typeof row.points).toBe("number");
-      const ageMs = Date.now() - Date.parse(row.at);
-      expect(ageMs).toBeGreaterThanOrEqual(0);
-      expect(ageMs).toBeLessThanOrEqual(windowMs + 1000);
-    }
-
-    // aggregate points/solved MUST equal what the per-login solve rows imply
-    // — the named failure mode this repo has hit before (seed/live-data
-    // aggregate collision): the aggregates have to agree with the rows.
-    const pointsCmds = cmds.filter((c) => c[0] === "HSET" && c[1] === "ctf:ai:points");
-    const solvedCmds = cmds.filter((c) => c[0] === "HSET" && c[1] === "ctf:ai:solved");
-    expect(pointsCmds.length).toBe(logins.size);
-    expect(solvedCmds.length).toBe(logins.size);
-    for (const login of logins) {
-      const rowsForLogin = DEMO_AI_SOLVES.filter((s) => s.login === login);
-      const expectedPoints = rowsForLogin.reduce(
-        (sum, s) => sum + DEMO_AI_CHALLENGES.find((c) => c.id === s.challengeId)!.points,
-        0,
-      );
-      const pointsCmd = pointsCmds.find((c) => c[2] === login)!;
-      const solvedCmd = solvedCmds.find((c) => c[2] === login)!;
-      expect(Number(pointsCmd[3])).toBe(expectedPoints);
-      expect(Number(solvedCmd[3])).toBe(rowsForLogin.length);
-    }
-
-    // solvecount per challenge MUST equal the number of DISTINCT logins that
-    // solved it (the fixture has no duplicate (login, challengeId) pairs)
-    // Sent as ONE raise-only EVAL rather than per-challenge HSETs: the count is
-    // keyed by challenge and counts distinct solvers across EVERYONE, so the
-    // fixture's number is a floor. An absolute write rewrote a real
-    // contestant's solve out of the public count on every re-seed.
-    const raise = cmds.find((c) => c[0] === "EVAL" && c[3] === "ctf:ai:solvecount")!;
-    expect(raise).toBeDefined();
-    expect(String(raise[1])).toContain("if current < floor then");
-    const floors = new Map<string, number>();
-    for (let i = 4; i < raise.length; i += 2) floors.set(String(raise[i]), Number(raise[i + 1]));
-
-    const solvedChallengeIds = new Set(DEMO_AI_SOLVES.map((s) => s.challengeId));
-    expect(floors.size).toBe(solvedChallengeIds.size);
-    for (const challengeId of solvedChallengeIds) {
-      const expectedCount = DEMO_AI_SOLVES.filter((s) => s.challengeId === challengeId).length;
-      expect(floors.get(challengeId)).toBe(expectedCount);
-    }
-    // and never as a plain HSET, which is what discarded the real solves
-    expect(cmds.some((c) => c[0] === "HSET" && c[1] === "ctf:ai:solvecount")).toBe(false);
-  });
-
-  it("writes no ctf:ai:* keys when the ai module is disabled", async () => {
-    // default beforeEach mock: quiz + classic on, ai off
-    await seedDemoData("alice");
-    const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
-    expect(cmds.some((c) => String(c[1]).startsWith("ctf:ai:"))).toBe(false);
   });
 
   // --- attempt rows -----------------------------------------------------
@@ -624,7 +519,7 @@ describe("seedDemoData", () => {
     ["classic", "ctf:classic:attempts:", "ctf:classic:solves:"],
   ] as const) {
     it(`records how many tries each seeded ${module} item took`, async () => {
-      await seedDemoData("alice");
+      await seedDemoData(actor("alice"));
       const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
 
       const attemptCmds = cmds.filter((c) => c[0] === "HSET" && String(c[1]).startsWith(prefix));
@@ -658,7 +553,7 @@ describe("seedDemoData", () => {
   }
 
   it("leaves some items attempted but never earned, so solve rates are not all 100%", async () => {
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
 
     // At least one (login, id) pair that has an attempt row and NO earned row.
@@ -686,7 +581,7 @@ describe("seedDemoData", () => {
     // time-to-solve of "0s" — arithmetically honest and factually impossible.
     // A first try is not the moment the contestant met the challenge; the
     // reading came first.
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     const rows = mocks.upstashPipeline.mock.calls.at(-1)![0]
       .filter((c) => c[0] === "HSET" && /^ctf:(quiz|classic):attempts:/.test(String(c[1])))
       .map((c) => JSON.parse(String(c[3])) as { attempts: number; firstAt: string; lastAtMs: number });
@@ -701,7 +596,7 @@ describe("seedDemoData", () => {
   });
 
   it("takes more than one try on some items, so average tries is not a flat 1.0", async () => {
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
     const tries = cmds
       .filter((c) => c[0] === "HSET" && /^ctf:(quiz|classic):attempts:/.test(String(c[1])))
@@ -714,7 +609,7 @@ describe("seedDemoData", () => {
     // absolute totals for that reason. An attempt row written with HINCRBY, or
     // with a time derived from Date.now() per-run, would break that quietly:
     // the second seed would double the tries instead of replacing them.
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     const first = mocks.upstashPipeline.mock.calls.at(-1)![0].filter(
       (c) => /^ctf:(quiz|classic):attempts:/.test(String(c[1])),
     );
@@ -743,29 +638,28 @@ describe("seedDemoData", () => {
 // arguments, and that nothing writes those keys behind its back.
 describe("seedDemoData hands its category work to one atomic script", () => {
   beforeEach(() => {
-    mockEnabledModules(["classic", "ai"]);
+    mockEnabledModules(["classic"]);
   });
 
-  it("writes both category keys ONLY through the script, never a bare SET", async () => {
-    await seedDemoData("alice");
+  it("writes the category key ONLY through the script, never a bare SET", async () => {
+    await seedDemoData(actor("alice"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
-    // The regression guard: an absolute SET of either key is the bug.
-    for (const key of ["ctf:classic:categories", "ctf:ai:categories"]) {
-      expect(cmds.find((c) => c[0] === "SET" && c[1] === key), key).toBeUndefined();
-      expect(cmds.find((c) => c[0] === "EVAL" && c[3] === key), key).toBeTruthy();
-    }
+    // The regression guard: an absolute SET of the key is the bug.
+    const key = "ctf:classic:categories";
+    expect(cmds.find((c) => c[0] === "SET" && c[1] === key)).toBeUndefined();
+    expect(cmds.find((c) => c[0] === "EVAL" && c[3] === key)).toBeTruthy();
   });
 
   it("reads nothing first — the union happens inside the write", async () => {
     // A GET here and a SET later is the race the script exists to close: on a
     // non-transactional pipeline an organizer's edit can land between them.
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     const reads = mocks.upstashPipeline.mock.calls.map((c) => c[0]).filter((cs) => cs.some((c) => c[0] === "GET"));
     expect(reads).toEqual([]);
   });
 
-  it("passes each module its own keys, fixture categories and cap", async () => {
-    await seedDemoData("alice");
+  it("passes the module its own keys, fixture categories and cap", async () => {
+    await seedDemoData(actor("alice"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
 
     const classic = scriptArgs(cmds, "ctf:classic:challenges");
@@ -774,14 +668,7 @@ describe("seedDemoData hands its category work to one atomic script", () => {
     expect(classic.max).toBe(CLASSIC_CATEGORIES_MAX);
     expect(classic.records.map((r) => r.id).sort()).toEqual(DEMO_CHALLENGES.map((c) => c.id).sort());
 
-    const ai = scriptArgs(cmds, "ctf:ai:challenges");
-    expect(ai.categoriesKey).toBe("ctf:ai:categories");
-    expect(ai.fixtureCategories).toEqual(DEMO_AI_CATEGORIES);
-    expect(ai.max).toBe(AI_CATEGORIES_MAX);
-    expect(ai.records.map((r) => r.id).sort()).toEqual(DEMO_AI_CHALLENGES.map((c) => c.id).sort());
-
-    // Both scripts are the same source — one implementation, two modules.
-    expect(cmds.filter((c) => c[0] === "EVAL" && c[1] === SEED_CATEGORIES_SCRIPT)).toHaveLength(2);
+    expect(cmds.filter((c) => c[0] === "EVAL" && c[1] === SEED_CATEGORIES_SCRIPT)).toHaveLength(1);
   });
 
   it("throws instead of reporting a seed that partly failed", async () => {
@@ -791,18 +678,18 @@ describe("seedDemoData hands its category work to one atomic script", () => {
     mocks.upstashPipeline.mockImplementation(async (cmds) =>
       cmds.map((c) => (c[0] === "EVAL" ? { error: "seed would take the category list to 52, over the limit of 50" } : { result: [] })),
     );
-    await expect(seedDemoData("alice")).rejects.toThrow(/over the limit of 50/);
+    await expect(seedDemoData(actor("alice"))).rejects.toThrow(/over the limit of 50/);
   });
 
   it("logs but does not throw when only the trailing audit LPUSH/LTRIM fail — the seed itself already succeeded", async () => {
     // The describe's own beforeEach already queued the settings-read
-    // response (call 1: "classic,ai"); this Once value lines up with the
+    // response (call 1: "classic"); this Once value lines up with the
     // SECOND pipeline call, the write batch.
     mocks.upstashPipeline.mockImplementationOnce(async (cmds) =>
       cmds.map((_, i) => (i >= cmds.length - 2 ? { error: "NOAUTH Authentication required." } : { result: "OK" })),
     );
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const result = await seedDemoData("alice");
+    const result = await seedDemoData(actor("alice"));
     expect(result.contestants).toBe(DEMO_CONTESTANTS.length);
     expect(spy).toHaveBeenCalledWith("[admin] seed audit write failed:", expect.stringContaining("NOAUTH"));
     spy.mockRestore();
@@ -845,7 +732,7 @@ describe("demo attachments (#186)", () => {
       const sha = (await import("node:crypto")).createHash("sha256").update(Buffer.from(a.base64, "base64")).digest("hex");
       return [{ id: `m-${item}`, kind: "upload", name: a.name, sha256: sha, missing: true }];
     });
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     expect(files.addUpload).not.toHaveBeenCalled();
     expect(files.fillMissingUpload).toHaveBeenCalledTimes(DEMO_CLASSIC_ATTACHMENTS.length);
     const [id, bytes] = files.fillMissingUpload.mock.calls[0] as unknown as [string, Uint8Array];
@@ -854,7 +741,7 @@ describe("demo attachments (#186)", () => {
   });
 
   it("uploads each artifact when classic is on", async () => {
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     expect(files.addUpload).toHaveBeenCalledTimes(DEMO_CLASSIC_ATTACHMENTS.length);
     const [module, item, name] = files.addUpload.mock.calls[0] as unknown as [string, string, string];
     expect(module).toBe("classic");
@@ -868,7 +755,7 @@ describe("demo attachments (#186)", () => {
       const sha = (await import("node:crypto")).createHash("sha256").update(Buffer.from(a.base64, "base64")).digest("hex");
       return [{ id: "a1", kind: "upload", name: a.name, sha256: sha }];
     });
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     expect(files.addUpload).not.toHaveBeenCalled();
   });
 
@@ -876,27 +763,26 @@ describe("demo attachments (#186)", () => {
   // logged, never turned into "the seed failed".
   it("still reports the seed when an artifact upload fails", async () => {
     files.addUpload.mockRejectedValueOnce(new Error("NOAUTH"));
-    const res = await seedDemoData("alice");
+    const res = await seedDemoData(actor("alice"));
     expect(res.contestants).toBeGreaterThan(0);
   });
 
   it("uploads nothing when classic is off", async () => {
     mockEnabledModules(["quiz"]);
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     expect(files.addUpload).not.toHaveBeenCalled();
   });
 
   // Each module's award-time hash is seeded with every demo login's
-  // LATEST row time, the same value GRADE_SCRIPT / SUBMIT_SCRIPT /
-  // AWARD_SCRIPT would have left behind, so the demo board's "whoever got
+  // LATEST row time, the same value GRADE_SCRIPT / SUBMIT_SCRIPT
+  // would have left behind, so the demo board's "whoever got
   // there first" tiebreak has something to order.
   it.each([
     ["quiz", "ctf:quiz:answers:", "ctf:quiz:lastAt"],
     ["classic", "ctf:classic:solves:", "ctf:classic:lastAt"],
-    ["ai", "ctf:ai:solves:", "ctf:ai:lastAt"],
   ])("seeds %s's award times from each login's latest row", async (module, rowPrefix, lastAtKey) => {
     mockEnabledModules([module]);
-    await seedDemoData("alice");
+    await seedDemoData(actor("alice"));
     const cmds = mocks.upstashPipeline.mock.calls.at(-1)![0];
 
     const latest = new Map<string, string>();

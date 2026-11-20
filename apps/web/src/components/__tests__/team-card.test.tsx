@@ -10,7 +10,14 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
-import TeamCard, { ExitConfirm, NeedsConfirmError, confirmExit, postTeam, requestExit } from "@/components/team-card";
+import TeamCard, {
+  ExitConfirm,
+  NeedsConfirmError,
+  confirmExit,
+  postTeam,
+  requestExit,
+  rosterLabels,
+} from "@/components/team-card";
 
 describe("TeamCard", () => {
   it("offers all three ways onto a team when the viewer has none", () => {
@@ -262,5 +269,72 @@ describe("exits after registration closes (#597)", () => {
     expect(html).toContain("won&#x27;t be able to join any team again");
     expect(html).toContain("Leave anyway");
     expect(html).toContain("Cancel");
+  });
+});
+
+describe("members sharing a display name", () => {
+  const A = "aaaaaaaa-1111-4111-8111-111111111111";
+  const B = "bbbbbbbb-2222-4222-8222-222222222222";
+  const C = "cccccccc-3333-4333-8333-333333333333";
+  const names = { [A]: "Sam", [B]: "sam", [C]: "Ada" };
+
+  it("suffixes a short id only on the names that collide", () => {
+    expect(rosterLabels([A, B, C], names)).toEqual(
+      new Map([
+        [A, "Sam (aaaaaaaa)"],
+        [B, "sam (bbbbbbbb)"],
+        [C, "Ada"],
+      ]),
+    );
+  });
+
+  it("tells them apart on the roster, the remove buttons and the transfer selector", () => {
+    const html = renderToStaticMarkup(
+      <TeamCard
+        team={{ slug: "red", name: "Red", members: [C, A, B] }}
+        writesEnabled
+        maxMembers={4}
+        isCaptain
+        captain={C}
+        joinCode="abc123"
+        memberNames={names}
+      />,
+    );
+    expect(html).toContain("Sam (aaaaaaaa)");
+    expect(html).toContain("sam (bbbbbbbb)");
+    expect(html).toContain('aria-label="Remove Sam (aaaaaaaa)"');
+    expect(html).toContain('aria-label="Remove sam (bbbbbbbb)"');
+    expect(html).toMatch(/<option value="aaaaaaaa-[^"]*">Sam \(aaaaaaaa\)<\/option>/);
+    expect(html).not.toContain("Ada (");
+  });
+
+  describe("when a display name equals a generated label", () => {
+    const D = "dddddddd-4444-4444-8444-444444444444";
+    const tricky = { [A]: "Sam", [B]: "Sam", [D]: "Sam (aaaaaaaa)" };
+
+    it("keeps every label distinct", () => {
+      const labels = [...rosterLabels([A, B, D], tricky).values()];
+      expect(new Set(labels.map((l) => l.toLowerCase())).size).toBe(3);
+    });
+
+    it("shows distinct labels on the roster, the remove confirmations and the transfer options", () => {
+      const labels = rosterLabels([A, B, D], tricky);
+      const html = renderToStaticMarkup(
+        <TeamCard
+          team={{ slug: "red", name: "Red", members: [C, A, B, D] }}
+          writesEnabled
+          maxMembers={5}
+          isCaptain
+          captain={C}
+          joinCode="abc123"
+          memberNames={{ ...tricky, [C]: "Ada" }}
+        />,
+      );
+      for (const m of [A, B, D]) {
+        expect(html).toContain(`aria-label="Remove ${labels.get(m)}"`);
+        expect(html).toContain(`<option value="${m}">${labels.get(m)}</option>`);
+        expect(html.split(`<bdi>${labels.get(m)}</bdi>`).length - 1).toBe(1);
+      }
+    });
   });
 });

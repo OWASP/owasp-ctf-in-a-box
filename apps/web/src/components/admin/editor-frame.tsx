@@ -1,7 +1,7 @@
 "use client";
 
 // The add/edit form's outer shell, shared by the module admin panels' forms
-// (quiz's QuestionForm, classic's ChallengeForm, ai's AiChallengeForm): the
+// (quiz's QuestionForm, classic's ChallengeForm): the
 // bordered card, its heading, the id block that is shown and never editable,
 // the error line a failed save lands on, and the Cancel/Submit footer. The
 // three forms used to repeat every line of this; only the nouns differed.

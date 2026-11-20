@@ -67,8 +67,8 @@ export default function HintButton({
       <button
         type="button"
         disabled
-        title={`Sign in with GitHub to unlock hints (−${price} pts each)`}
-        aria-label="Sign in with GitHub to unlock hints"
+        title={`Sign in to unlock hints (−${price} pts each)`}
+        aria-label="Sign in to unlock hints"
         className={`${CHIP} cursor-not-allowed border-white/10 text-zinc-600`}
       >
         🔒

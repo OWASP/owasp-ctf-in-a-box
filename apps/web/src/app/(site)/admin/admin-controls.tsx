@@ -34,6 +34,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import type { AdminSettings } from "@/lib/admin-store";
+import type { SignInProviderId } from "@/lib/sign-in-providers";
 import { phaseFromSettings } from "@/components/phase";
 import {
   ALL_MODULE_IDS,
@@ -45,7 +46,6 @@ import ConfirmModal from "@/components/confirm-modal";
 import type { ModuleInventory } from "@/components/admin-module-setup";
 import AdminQuizControls from "@/components/admin-quiz-controls";
 import AdminClassicControls from "@/components/admin-classic-controls";
-import AdminAiControls from "@/components/admin-ai-controls";
 import type { SyncStatus } from "@/lib/admin-store";
 import AdminSidebar from "./admin-sidebar";
 import AdminOverviewTab from "./admin-overview-tab";
@@ -112,9 +112,10 @@ export default function AdminControls({
   modules,
   setups,
   initialTab,
-  viewerLogin,
+  viewerId,
   sync = null,
   eventName,
+  configuredSignInProviders = [],
 }: {
   initial: AdminSettings;
   /** The module set this deployment starts with, when nothing is stored in
@@ -140,10 +141,10 @@ export default function AdminControls({
    *  on the server (see page.tsx) so the first render already has the right
    *  panel open; the organizer never sees it flip. */
   initialTab?: string;
-  /** The signed-in organizer's GitHub login, from the same `requireAdmin`
+  /** The signed-in organizer's player id, from the same `requireAdmin`
    *  gate that rendered this page. The Admins tab uses it to warn before
    *  someone revokes their own access. */
-  viewerLogin: string;
+  viewerId: string;
   /** The poller's own heartbeat — page.tsx already fetches this; Overview
    *  folds it into its "Sync" line instead. `null`
    *  when no poller has ever reported in (poll mode not configured, or push
@@ -154,6 +155,9 @@ export default function AdminControls({
    *  getSite(); a client bundle cannot read settings. Threaded through to the
    *  Event tab, which uses it for the master-reset confirmation phrase. */
   eventName: string;
+  /** The OAuth providers whose client id and secret are in .env, computed
+   *  server-side: a client bundle cannot read env. */
+  configuredSignInProviders?: readonly SignInProviderId[];
 }) {
   // The whole settings state machine in one call: stored settings, the nine
   // numeric drafts, pending/error/confirm/resetInfo, and the write path
@@ -172,6 +176,7 @@ export default function AdminControls({
     doReset,
     doSeed,
     doClearDemo,
+    doDeleteAllAccounts,
     apply,
     applyField,
     commitNumber,
@@ -188,8 +193,6 @@ export default function AdminControls({
     setQuizRetryAfterInput,
     classicCooldownSecInput,
     setClassicCooldownSecInput,
-    aiCooldownSecInput,
-    setAiCooldownSecInput,
     cooldownInput,
     setCooldownInput,
     teamMaxMembersInput,
@@ -278,12 +281,14 @@ export default function AdminControls({
                   pending={pending}
                   resetInfo={resetInfo}
                   eventName={currentEventName}
+                  configuredSignInProviders={configuredSignInProviders}
                   applyField={applyField}
                   statusOf={statusOf}
                   setConfirm={setConfirm}
                   doReset={doReset}
                   doSeed={doSeed}
                   doClearDemo={doClearDemo}
+                  doDeleteAllAccounts={doDeleteAllAccounts}
                   teamMaxMembersInput={teamMaxMembersInput}
                   setTeamMaxMembersInput={setTeamMaxMembersInput}
                   commitNumber={commitNumber}
@@ -306,7 +311,7 @@ export default function AdminControls({
                   setUnlockAfterInput={setUnlockAfterInput}
                 />
               ) : tab.id === ADMINS_TAB ? (
-                <AdminAdminsTab viewerLogin={viewerLogin} />
+                <AdminAdminsTab viewerId={viewerId} visible={active === ADMINS_TAB} />
               ) : tab.id === SPONSORS_TAB ? (
                 <AdminSponsorsTab
                   settings={settings}
@@ -373,16 +378,6 @@ export default function AdminControls({
                         timeZone={eventZone}
                         classicCooldownSecInput={classicCooldownSecInput}
                         setClassicCooldownSecInput={setClassicCooldownSecInput}
-                        commitNumber={commitNumber}
-                        statusOf={statusOf}
-                        onInventory={inventoryReporters[tab.id]}
-                        moduleSettings={moduleSettings}
-                      />
-                    ) : tab.id === "ai" ? (
-                      <AdminAiControls
-                        pending={pending}
-                        aiCooldownSecInput={aiCooldownSecInput}
-                        setAiCooldownSecInput={setAiCooldownSecInput}
                         commitNumber={commitNumber}
                         statusOf={statusOf}
                         onInventory={inventoryReporters[tab.id]}

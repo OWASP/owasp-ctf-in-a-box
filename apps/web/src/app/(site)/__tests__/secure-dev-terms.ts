@@ -99,9 +99,9 @@ export const SECURE_DEV_TERMS = [
   // term.
   "challenge",
   // "hint" was here, and is deliberately gone (#249). It stopped being
-  // secure-development vocabulary when classic (#209/#210) and ai began
+  // secure-development vocabulary when classic (#209/#210) began
   // selling hints through the same gate and the same four settings — so a
-  // classic-only or ai-only page naming one is describing ITS OWN game, and
+  // classic-only page naming one is describing ITS OWN game, and
   // is now REQUIRED to: the price of a hint reached those contestants only
   // from the reveal button. Unlike "challenge" just above, this cannot be
   // handled by scoping which surfaces are checked, because the term now

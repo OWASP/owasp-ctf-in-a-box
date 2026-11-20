@@ -3,7 +3,6 @@ import { assertPipelineOk, parseScanPage, upstashPipeline, type UpstashResult } 
 import { userKey, userHintCostsKey, userHintTimesKey, HINTS_SPENT_KEY } from "@/lib/team-keys";
 import { QUIZ_POINTS_KEY, QUIZ_QUESTIONS_KEY, quizAnswersKey, quizAttemptsKey } from "@/lib/quiz-keys";
 import { CLASSIC_CHALLENGES_KEY, CLASSIC_POINTS_KEY, classicAttemptsKey, classicOpenedKey, classicSolvesKey } from "@/lib/classic-keys";
-import { AI_CHALLENGES_KEY, AI_POINTS_KEY, aiAttemptsKey, aiOpenedKey, aiSolvesKey } from "@/lib/ai-keys";
 import { listTeams } from "@/lib/team-store";
 import { parseAttemptRow } from "@/lib/attempt-row";
 import { getLeaderboardSource, getLeaderboardSourceMode } from "@/lib/leaderboard/source";
@@ -17,14 +16,14 @@ import { parseHintPurchaseKey } from "@/lib/hint-ladder";
  *
  * There is no collection step and no new write path. Every number below is a
  * read over keys the modules already maintain: quiz answers and classic solves
- * carry `{points, at}` per item per login, Secure Development solves are
- * timestamped in `ctf:solves:<target>`, attempts are counted per login, and
+ * carry `{points, at}` per item per player, Secure Development solves are
+ * timestamped in `ctf:solves:<target>`, attempts are counted per player, and
  * `firstTeamAt` (ADR 49) supplies the funnel's conversion moment.
  *
  * The one figure that is not a Redis key of this app's own: Secure
  * Development POINTS. `ctf:solves:*` says who solved what and when, never for
  * how much — points are a rubric property the scorer applies — so the
- * per-login SD total is read from the leaderboard source (the scorer's own
+ * per-player SD total is read from the leaderboard source (the scorer's own
  * `GET /leaderboard`, or its ZSET), whose `entry.points` is exactly that
  * number before the module overlays add theirs (module-contributions.ts).
  * Without it every team here read lower than the board by
@@ -94,7 +93,7 @@ const MAX_CONTESTANTS = 2000;
 const BATCH = 200;
 
 export type ChallengeStat = {
-  module: "quiz" | "classic" | "ai";
+  module: "quiz" | "classic";
   id: string;
   /** What the organizer called it — a challenge's title, a question's prompt.
    *  `null` when the catalogue does not hold it (a challenge deleted after
@@ -118,14 +117,14 @@ export type ChallengeStat = {
   medianSecondsToSolve: number | null;
   /** What `medianSecondsToSolve` measures. `"open"`: from the contestant first
    *  opening the challenge's page to earning it, used whenever any solver has
-   *  that record (classic and ai, #616). `"first-miss"`: from their first
+   *  that record (classic, #616). `"first-miss"`: from their first
    *  submission, when no open was recorded. Contestants work offline and
    *  usually submit once they have the answer, so that figure is 0 for anyone
    *  right first time: when it is 0 for EVERY solver the row is null, not
    *  0s, because 0 there means "unknown", not "instant". */
   timeMeasure: "open" | "first-miss" | null;
-  /** Contestants who bought this item's hint before earning it. Classic and
-   *  ai are per-challenge contributors here;
+  /** Contestants who bought this item's hint before earning it. Classic is
+   *  the per-challenge contributor here;
    *  quiz has no hints by design, so this is always 0 there. */
   solvedAfterHint: number;
 };
@@ -133,9 +132,9 @@ export type ChallengeStat = {
 export type EventMetrics = {
   generatedAt: string;
   funnel: {
-    /** Distinct logins on a team right now. */
+    /** Distinct players on a team right now. */
     onATeam: number;
-    /** Distinct logins that have EVER been on a team — the conversion count,
+    /** Distinct players that have EVER been on a team — the conversion count,
      *  which survives leaving and switching (ADR 49). */
     everOnATeam: number;
     /** Made at least one submission in any module. */
@@ -147,12 +146,12 @@ export type EventMetrics = {
   };
   challenges: ChallengeStat[];
   /** Solves per bucket of `bucketMinutes`, ascending, every bucket from the
-   *  first solve to the last (empty ones at 0). Quiz, classic and ai only; see caveats. */
+   *  first solve to the last (empty ones at 0). Quiz and classic only; see caveats. */
   timeline: { at: string; solves: number }[];
   /** The timeline's bucket width: 10 minutes, wider on a long event. */
   bucketMinutes: number;
   teams: { slug: string; name: string; size: number; points: number }[];
-  modules: { quiz: number; classic: number; ai: number; secureDevelopment: number };
+  modules: { quiz: number; classic: number; secureDevelopment: number };
   hints: {
     buyers: number;
     totalSpend: number;
@@ -243,20 +242,20 @@ async function batched(commands: (string | number)[][]): Promise<UpstashResult[]
 }
 
 /**
- * Every Secure Development solve, as `<target>/<login>/<challengeId>` -> ISO.
+ * Every Secure Development solve, as `<target>/<playerId>/<challengeId>` -> ISO.
  *
  * The TARGET is kept in the key, not flattened away. Challenge ids are unique
  * within an app's catalogue but nothing makes them unique ACROSS apps, so a
  * hint bought on one target could otherwise be matched against a solve on
  * another that happens to share an id.
  */
-/** Every login with a user record (`ctf:user:<login>`), in its stored
- *  spelling. The only index that holds a player who joined a team, left it
+/** Every player id with a user record (`ctf:user:<playerId>`), as stored.
+ *  The only index that holds a player who joined a team, left it
  *  and scored nothing — no roster or points hash knows them, yet "ever on a
  *  team" exists to count them. The same pattern also matches each player's
- *  `ctf:user:<login>:hints` set, which is skipped. Throws on an unreadable
+ *  `ctf:user:<playerId>:hints` set, which is skipped. Throws on an unreadable
  *  page, like the SD sweep below, so the caller can say the funnel is short. */
-async function readUserLogins(): Promise<string[]> {
+async function readUserIds(): Promise<string[]> {
   let cursor = "0";
   const logins: string[] = [];
   do {
@@ -295,7 +294,7 @@ async function readSecureDevSolves(): Promise<Map<string, string>> {
   keys.forEach((key, i) => {
     const target = key.slice("ctf:solves:".length);
     for (const [field, at] of hashEntries(replies[i]?.result)) {
-      // field is `<login>:<challengeId>`
+      // field is `<playerId>:<challengeId>`
       const sep = field.indexOf(":");
       if (sep <= 0) continue;
       out.set(`${target}/${field.slice(0, sep).toLowerCase()}/${field.slice(sep + 1)}`, String(at));
@@ -314,7 +313,7 @@ async function readSecureDevSolves(): Promise<Map<string, string>> {
  * closing ceremony, while the quiz and challenge lists two tabs away have
  * shown titles all along.
  *
- * Quiz questions carry a `prompt` rather than a `title`; classic and ai carry
+ * Quiz questions carry a `prompt` rather than a `title`; classic carries
  * `title`. Both are read here so the caller never has to know which.
  *
  * Deliberately best-effort, and that has to be enforced here rather than
@@ -331,13 +330,12 @@ async function readTitles(): Promise<Map<string, string>> {
     replies = await upstashPipeline([
       ["HGETALL", QUIZ_QUESTIONS_KEY],
       ["HGETALL", CLASSIC_CHALLENGES_KEY],
-      ["HGETALL", AI_CHALLENGES_KEY],
     ]);
   } catch {
     return new Map();
   }
   const out = new Map<string, string>();
-  (["quiz", "classic", "ai"] as const).forEach((module, i) => {
+  (["quiz", "classic"] as const).forEach((module, i) => {
     for (const [id, raw] of hashEntries(replies[i]?.result)) {
       try {
         const parsed: unknown = typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -366,10 +364,9 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   // rows produces the same figure for EVERY module from one source. Reading
   // both would invite the two to disagree and leave no way to tell which was
   // right.
-  const [quizPointsRes, classicPointsRes, aiPointsRes, hintsSpentRes] = await upstashPipeline([
+  const [quizPointsRes, classicPointsRes, hintsSpentRes] = await upstashPipeline([
     ["HGETALL", QUIZ_POINTS_KEY],
     ["HGETALL", CLASSIC_POINTS_KEY],
-    ["HGETALL", AI_POINTS_KEY],
     ["HGETALL", HINTS_SPENT_KEY],
   ]);
 
@@ -377,10 +374,9 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   const classicPoints = new Map(
     hashEntries(classicPointsRes.result).map(([k, v]) => [k.toLowerCase(), Number(v) || 0]),
   );
-  const aiPoints = new Map(hashEntries(aiPointsRes.result).map(([k, v]) => [k.toLowerCase(), Number(v) || 0]));
   const hintsSpent = hashEntries(hintsSpentRes.result).map(([k, v]) => [k.toLowerCase(), Number(v) || 0] as const);
 
-  // Secure Development points per login, from the leaderboard
+  // Secure Development points per player, from the leaderboard
   // source — see the file header for why no Redis key of ours holds them.
   // Gated on the source MODE, not just on whether a fetch works:
   //   - "empty" is the source's own answer when the module is off; there is
@@ -402,13 +398,13 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       const data = await (await getLeaderboardSource()).getLeaderboard();
       for (const entry of data.entries) {
         const points = Number(entry.points);
-        if (Number.isFinite(points)) sdPoints.set(entry.login.toLowerCase(), points);
-        sdSpellings.push(entry.login);
+        if (Number.isFinite(points)) sdPoints.set(entry.playerId.toLowerCase(), points);
+        sdSpellings.push(entry.playerId);
       }
     } catch (err) {
       console.error("secure-development points unavailable for metrics:", errorLabel(err));
       caveats.push(
-        "Secure Development points could not be read — team points below hold Quiz, Jeopardy and AI points only.",
+        "Secure Development points could not be read — team points below hold Quiz and Jeopardy points only.",
       );
     }
   }
@@ -442,7 +438,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
 
   // The contestant set: anyone on a team, anyone who has scored in any module.
   // Cheaper than SCANning `ctf:user:*`, which also matches
-  // `ctf:user:<login>:hints` and would need filtering.
+  // `ctf:user:<playerId>:hints` and would need filtering.
   //
   // TEAM MEMBERSHIP IS WHAT FINDS THE STUCK. Someone who attempted everything
   // and solved nothing has no points row, so the aggregate keys do not know
@@ -454,18 +450,17 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     ...onATeam,
     ...quizPoints.keys(),
     ...classicPoints.keys(),
-    ...aiPoints.keys(),
     ...sdLogins,
     ...sdPoints.keys(),
   ]);
 
-  // Every per-login hash below is keyed on the login AS THE SESSION SPELLED IT
-  // (`ctf:classic:solves:ChrisZoc`); only the join between logins is
-  // case-insensitive. So each contestant is read under every spelling the box
-  // holds for them — team rosters, the points and hint-spend hashes, the
-  // scorer's entries — and their rows merged. Reading under the lowercased
-  // login alone found nothing for a mixed-case player, which at the RTS event
-  // hid 12 of 42 contestants from every figure on this panel.
+  // Every per-player hash below is keyed on the player id as stored
+  // (`ctf:classic:solves:<playerId>`), while contestants are joined
+  // case-insensitively. Kit ids are lowercase, so a contestant normally has
+  // one spelling; each is still read under every spelling the box holds for
+  // them (team rosters, the points and hint-spend hashes, the scorer's
+  // entries) and their rows merged, so a record stored under another case
+  // does not drop that contestant from every figure on this panel.
   const spellingsOf = new Map<string, Set<string>>();
   const addSpelling = (raw: string) => {
     const login = raw.toLowerCase();
@@ -474,14 +469,14 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     spellingsOf.set(login, set);
   };
   for (const t of teams) for (const m of t.members) addSpelling(m);
-  for (const res of [quizPointsRes, classicPointsRes, aiPointsRes, hintsSpentRes]) {
+  for (const res of [quizPointsRes, classicPointsRes, hintsSpentRes]) {
     for (const [k] of hashEntries(res.result)) addSpelling(k);
   }
   for (const raw of sdSpellings) addSpelling(raw);
   // Leavers who scored nothing are known only to their user record; without
   // this sweep "ever on a team" missed exactly the people it exists to count.
   try {
-    for (const raw of await readUserLogins()) {
+    for (const raw of await readUserIds()) {
       addSpelling(raw);
       contestants.add(raw.toLowerCase());
     }
@@ -497,25 +492,22 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     logins = logins.slice(0, MAX_CONTESTANTS);
   }
 
-  // Eleven reads per spelling: their earned items (quiz, classic, ai), their
-  // attempt rows (quiz, classic, ai), the firstTeamAt that anchors the funnel,
+  // Eight reads per spelling: their earned items (quiz, classic), their
+  // attempt rows (quiz, classic), the firstTeamAt that anchors the funnel,
   // when they bought each hint, what each hint actually cost, and when
-  // they first opened each classic and ai challenge.
-  const PER_LOGIN = 11;
+  // they first opened each classic challenge.
+  const PER_LOGIN = 8;
   const reads = logins.flatMap((login) => [...(spellingsOf.get(login) ?? [login])].map((spelling) => ({ login, spelling })));
   const replies = await batched(
     reads.flatMap(({ spelling: l }) => [
       ["HGETALL", quizAnswersKey(l)],
       ["HGETALL", classicSolvesKey(l)],
-      ["HGETALL", aiSolvesKey(l)],
       ["HGETALL", quizAttemptsKey(l)],
       ["HGETALL", classicAttemptsKey(l)],
-      ["HGETALL", aiAttemptsKey(l)],
       ["HMGET", userKey(l), "firstTeamAt"],
       ["HGETALL", userHintTimesKey(l)],
       ["HGETALL", userHintCostsKey(l)],
       ["HGETALL", classicOpenedKey(l)],
-      ["HGETALL", aiOpenedKey(l)],
     ]),
   );
 
@@ -523,17 +515,17 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   // empty hash it would drop that contestant's rows from every figure with
   // nothing saying so; failing the read sends the tab to its error state.
   const failed = replies.find((reply) => reply?.error);
-  if (failed) throw new Error(`metrics per-login read failed: ${failed.error}`);
+  if (failed) throw new Error(`metrics per-player read failed: ${failed.error}`);
 
   // One contestant's rows across their spellings. A single item held under
-  // two spellings of one login keeps its first row, which is enough: the
+  // two spellings of one player id keeps its first row, which is enough: the
   // figures below count an item once per contestant either way.
   const merged = new Map<string, { result: unknown }[]>();
   reads.forEach(({ login }, r) => {
     const slots = merged.get(login) ?? Array.from({ length: PER_LOGIN }, () => ({ result: [] as unknown[] }));
     for (let s = 0; s < PER_LOGIN; s++) {
       const reply = replies[r * PER_LOGIN + s]?.result;
-      if (s === 6) {
+      if (s === 4) {
         const first = Array.isArray(reply) ? reply[0] : null;
         const held = (slots[s].result as unknown[])[0];
         if (!held && typeof first === "string" && first) slots[s] = { result: [first] };
@@ -556,14 +548,14 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   const solveTimes: number[] = [];
   const solvesById = new Map<
     string,
-    { module: "quiz" | "classic" | "ai"; solvers: number; attemptSum: number; durations: number[]; openDurations: number[] }
+    { module: "quiz" | "classic"; solvers: number; attemptSum: number; durations: number[]; openDurations: number[] }
   >();
   const attemptsById = new Map<
     string,
-    { module: "quiz" | "classic" | "ai"; attempts: number; attempters: number }
+    { module: "quiz" | "classic"; attempts: number; attempters: number }
   >();
   // Per-challenge "solved after buying its hint" counts, keyed like
-  // solvesById (`classic:<id>` or `ai:<id>`) — fed by the hint-timing loop
+  // solvesById (`classic:<id>`) — fed by the hint-timing loop
   // below.
   const hintHelpedById = new Map<string, number>();
   const pointsByLogin = new Map<string, number>();
@@ -571,24 +563,21 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
   logins.forEach((login, i) => {
     const quizAnswers = hashEntries(perLogin[i * PER_LOGIN]?.result);
     const classicSolves = hashEntries(perLogin[i * PER_LOGIN + 1]?.result);
-    const aiSolves = hashEntries(perLogin[i * PER_LOGIN + 2]?.result);
-    const quizAttempts = hashEntries(perLogin[i * PER_LOGIN + 3]?.result);
-    const classicAttempts = hashEntries(perLogin[i * PER_LOGIN + 4]?.result);
-    const aiAttempts = hashEntries(perLogin[i * PER_LOGIN + 5]?.result);
-    const userFields = perLogin[i * PER_LOGIN + 6]?.result;
+    const quizAttempts = hashEntries(perLogin[i * PER_LOGIN + 2]?.result);
+    const classicAttempts = hashEntries(perLogin[i * PER_LOGIN + 3]?.result);
+    const userFields = perLogin[i * PER_LOGIN + 4]?.result;
     const firstTeamAt = Array.isArray(userFields) ? userFields[0] : null;
-    const hintTimes = hashEntries(perLogin[i * PER_LOGIN + 7]?.result);
-    const hintCosts = new Map(hashEntries(perLogin[i * PER_LOGIN + 8]?.result).map(([k, v]) => [String(k), Number(v)]));
+    const hintTimes = hashEntries(perLogin[i * PER_LOGIN + 5]?.result);
+    const hintCosts = new Map(hashEntries(perLogin[i * PER_LOGIN + 6]?.result).map(([k, v]) => [String(k), Number(v)]));
     const opened = {
-      classic: new Map(hashEntries(perLogin[i * PER_LOGIN + 9]?.result)),
-      ai: new Map(hashEntries(perLogin[i * PER_LOGIN + 10]?.result)),
+      classic: new Map(hashEntries(perLogin[i * PER_LOGIN + 7]?.result)),
     };
 
     // Did the hint arrive in time to help? A hint bought AFTER the solve
     // bought nothing, and counting the two together turns "hints are used"
     // into a claim that "hints help" — which the data would not support.
     // Secure-development slots compare against the scorer's solve times;
-    // classic and ai slots against this login's own solve rows, already
+    // classic slots against this player's own solve rows, already
     // loaded above. The target stays in the key so two targets sharing a
     // challenge id cannot cross-match.
     const helpedBeforeSolve = new Set<string>();
@@ -628,9 +617,6 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       if (target === "classic") {
         const row = classicSolves.find(([cid]) => cid === challengeId);
         solvedAt = row ? parseEarned(row[1])?.at : undefined;
-      } else if (target === "ai") {
-        const row = aiSolves.find(([cid]) => cid === challengeId);
-        solvedAt = row ? parseEarned(row[1])?.at : undefined;
       } else {
         solvedAt = sdSolves.get(`${target}/${login}/${challengeId}`);
       }
@@ -641,7 +627,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       if (boughtMs <= solvedMs) {
         hintsBeforeSolve += 1;
         if (levelStat) levelStat.boughtBeforeSolving += 1;
-        if (target === "classic" || target === "ai") {
+        if (target === "classic") {
           const key = `${target}:${challengeId}`;
           // A contestant who bought several rungs before solving still counts
           // once for this challenge; the per-level totals above count each
@@ -659,16 +645,15 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
 
     if (typeof firstTeamAt === "string" && firstTeamAt) everOnATeam += 1;
 
-    const hasAttempt = quizAttempts.length > 0 || classicAttempts.length > 0 || aiAttempts.length > 0;
-    const earnedRows: [("quiz" | "classic" | "ai"), [string, unknown][]][] = [
+    const hasAttempt = quizAttempts.length > 0 || classicAttempts.length > 0;
+    const earnedRows: [("quiz" | "classic"), [string, unknown][]][] = [
       ["quiz", quizAnswers],
       ["classic", classicSolves],
-      ["ai", aiSolves],
     ];
     // Secure Development counts as earned on EITHER record of it: a solve row
     // in ctf:solves:*, or points on the leaderboard source. The two are
     // written by different processes (the poller and the scorer) and can
-    // disagree for a login — a solves sweep that failed a page, an entry the
+    // disagree for a player — a solves sweep that failed a page, an entry the
     // scorer knows that the poller has not stored — and a contestant whose
     // points are in the team total below must not read as never having
     // scored in the funnel above it.
@@ -683,12 +668,11 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     // a point is, or a team of SD-only solvers reads as "scored" with 0.
     // Gross points throughout: the module hashes hold pre-penalty totals and
     // so does the source's `points`, so hint penalties are not applied here
-    // any more than they are to the other three.
+    // any more than they are to the other two.
     pointsByLogin.set(
       login,
       (quizPoints.get(login) ?? 0) +
         (classicPoints.get(login) ?? 0) +
-        (aiPoints.get(login) ?? 0) +
         (sdPoints.get(login) ?? 0),
     );
 
@@ -705,9 +689,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
         // them. The attempt row survives the solve, so both are available
         // after the fact — `firstAt` is what makes the duration
         // knowable at all; before it, only the LAST attempt had a time.
-        const attemptRow = (mod === "quiz" ? quizAttempts : mod === "classic" ? classicAttempts : aiAttempts).find(
-          ([aid]) => aid === id,
-        );
+        const attemptRow = (mod === "quiz" ? quizAttempts : classicAttempts).find(([aid]) => aid === id);
         const parsed = parseAttemptRow(attemptRow?.[1]);
         stat.attemptSum += Math.max(1, parsed.attempts);
         if (parsed.firstAt && !Number.isNaN(ms)) {
@@ -732,7 +714,6 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     for (const [mod, rows] of [
       ["quiz", quizAttempts],
       ["classic", classicAttempts],
-      ["ai", aiAttempts],
     ] as const) {
       for (const [id, raw] of rows) {
         const key = `${mod}:${id}`;
@@ -762,7 +743,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
       // floor that keeps the rate inside 0..1.
       const triers = Math.max(tried?.attempters ?? 0, solves);
       return {
-        module: mod as "quiz" | "classic" | "ai",
+        module: mod as "quiz" | "classic",
         id: rest.join(":"),
         title: titles.get(key) ?? null,
         solves,
@@ -770,7 +751,7 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
         solveRate: triers > 0 ? solves / triers : null,
         avgAttemptsToSolve: solves > 0 ? (solved as { attemptSum: number }).attemptSum / solves : null,
         ...timeToSolve(solved),
-        solvedAfterHint: hintHelpedById.get(key) ?? 0, // classic + ai per-challenge; quiz has no hints
+        solvedAfterHint: hintHelpedById.get(key) ?? 0, // classic per-challenge; quiz has no hints
       };
     })
     .sort((a, b) => a.solves - b.solves || a.id.localeCompare(b.id));
@@ -828,7 +809,6 @@ export async function computeEventMetrics(): Promise<EventMetrics> {
     modules: {
       quiz: [...quizPoints.values()].filter((p) => p > 0).length,
       classic: [...classicPoints.values()].filter((p) => p > 0).length,
-      ai: [...aiPoints.values()].filter((p) => p > 0).length,
       secureDevelopment: sdLogins.size,
     },
     hints: {

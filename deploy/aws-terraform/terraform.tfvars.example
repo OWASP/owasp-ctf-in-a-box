@@ -2,10 +2,11 @@
 #
 # Only two inputs have no default: domain and app_image.
 #
-# admin_logins and github_client_id are required too, through its validation block rather than
+# github_client_id is required too, through its validation block rather than
 # through a missing default: it defaults to "" so the refusal is a sentence
 # naming the problem instead of an interactive prompt in a non-interactive
-# plan, and a plan with no login in it is refused either way. github_org,
+# plan. Admins are not named here: deploy.sh writes the admin claim code's
+# hash to SSM and prints the code once (ADR 72). github_org,
 # github_app_id, scorer_image and sync_image are required on the same terms
 # whenever enable_secure_development is true (deploy.sh fills in the images).
 # Everything else below is optional and shown at its default.
@@ -61,15 +62,14 @@ acm_certificate_arn = ""
 # Development — the app then falls back to bare repo names.
 # github_org = "your-event-org"
 
-# REQUIRED. Comma-separated GitHub logins allowed into /admin. Read by the app
-# at runtime — the `.env`-equivalent of ADMIN_LOGINS. An empty list is refused
-# at plan time: it would forbid everyone from /admin, including you.
-admin_logins = "octocat,defunkt"
-
-# REQUIRED. The GitHub OAuth app's client id (public — the `.env`'s
-# GITHUB_CLIENT_ID). Its secret goes in SSM as GITHUB_CLIENT_SECRET. Without it
-# no one can sign in.
-github_client_id = "Iv1.0000000000000000"
+# The GitHub OAuth app's client id (public — the `.env`'s GITHUB_CLIENT_ID).
+# Its secret goes in SSM as GITHUB_CLIENT_SECRET. REQUIRED whenever
+# enable_secure_development is true (the variable's validation refuses a blank
+# one then); optional otherwise, where players sign in with a username and
+# password.
+# Leave it unset on an event without GitHub sign-in: any non-blank id puts
+# GITHUB_CLIENT_SECRET in the task, which cannot start without that parameter.
+# github_client_id = "Iv1.0000000000000000"
 
 # The GitHub App sync polls with — the `.env`'s GITHUB_APP_ID and
 # GITHUB_APP_INSTALLATION_ID. The app id is REQUIRED whenever

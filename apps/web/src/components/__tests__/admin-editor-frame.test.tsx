@@ -1,4 +1,4 @@
-// The add/edit form's outer shell, shared by the quiz, classic and ai admin
+// The add/edit form's outer shell, shared by the quiz and classic admin
 // panels: heading, the id block that is shown and never editable, the error
 // line and the Cancel/Submit footer. Rendered with `renderToStaticMarkup`
 // (this repo has no testing-library), so the scroll-into-view effect never

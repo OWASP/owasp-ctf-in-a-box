@@ -1,79 +1,77 @@
 "use client";
 
-// Runtime admin management (issue #147).
-//
-// `ADMIN_LOGINS` (config v2 — no more baked `event.yaml` `admins:` array) is
-// the bootstrap set: those logins always authorize and cannot be revoked
-// here, because they are the recovery path if a runtime grant goes wrong.
-// Everything added on this tab lives in Redis and takes effect immediately,
-// with no restart.
+// The admin roster (ADR 72): who holds a grant, removing one, and issuing a
+// one-time code that makes another kit account an admin at /admin/claim.
+// There is no "add by name" here on purpose: a code is the only way in.
 //
 // Self-contained on purpose: it owns its own fetch/pending/error state rather
-// than threading through admin-controls' `apply`, because it talks to a
-// different endpoint with a different shape (a set, not a settings patch) and
-// folding it into the shared helper would make that helper mean two things.
+// than threading through admin-controls' `apply`, because it talks to
+// different endpoints with a different shape (a set, not a settings patch).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ConfirmModal from "@/components/confirm-modal";
 
-type AdminRow = { login: string; baked: boolean };
+type AdminRow = { id: string; name: string; self: boolean };
 
-/** The badge and its explanatory text for a row backed by `ADMIN_LOGINS`,
- *  pulled out as named constants (rather than inlined in the JSX below) so
- *  the config-v2 copy is provable without rendering the loaded state — see
- *  `admin-admins-tab.test.tsx` for why a static render can't reach it (the
- *  rows are behind `useState`, same reason `admin-support-tab.test.tsx`
- *  tests its stateful content through exported pure values instead of
- *  markup). */
-export const ENV_ADMIN_BADGE = ".env";
-export const ENV_ADMIN_CHANGE_HINT = "restart to change";
+/** What the tab says around a freshly issued code. Exported so the copy is
+ *  provable without rendering the stateful view. */
+export const ISSUE_HELP =
+  "Give this code to the new organizer. They sign in, open /admin/claim and enter it. It works once and expires in 15 minutes.";
 
-// There is no "ADMIN_LOGINS is empty" notice on THIS tab, deliberately: an
-// empty env set means requireAdmin refuses every login (admin-auth.ts's
-// fail-closed check), so nobody — not even a runtime grant — can ever reach
-// this tab while it is empty. That warning belongs on the Forbidden wall
-// (admin-panel.tsx), the one surface an organizer in that state actually
-// sees.
+/** The line under an issued code. */
+export function codeNotice(expiresAt: string): string {
+  const at = new Date(expiresAt);
+  const when = Number.isNaN(at.getTime()) ? expiresAt : at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `This code works once and expires at ${when}. It is shown only here, now.`;
+}
 
-/** The confirmation for removing a runtime admin (audit F8).
- *
- *  Removing someone else used to fire on the click, with no gate at all: one
- *  misclick and a colleague lost the panel mid-event. Removing YOURSELF was
- *  gated — by `window.confirm`, the only native dialog in the panel, which
- *  skipped the focus-managed styled dialog every other destructive action here
- *  uses.
- *
- *  Both go through the same dialog now. The self-removal keeps its own
- *  sentence, which was always the sharper one and names the consequence the
- *  other admin deserves to have stated too.
- *
- *  No `requireType`: this is recoverable by any admin who still has access,
- *  and the `ADMIN_LOGINS` set can never be removed here at all — it is the
- *  lockout recovery path. Exported for direct testing. */
-export function adminRemoveConfirm(login: string, viewerLogin: string): { title: string; body: string; confirmLabel: string } {
-  const self = login.toLowerCase() === viewerLogin.toLowerCase();
+/** The confirmation for removing an admin. No `requireType`: another admin
+ *  can issue the removed one a new code, and the last admin cannot be removed
+ *  at all (the API refuses it). Exported for direct testing. */
+export function adminRemoveConfirm(
+  target: { id: string; name: string },
+  viewerId: string,
+): { title: string; body: string; confirmLabel: string } {
+  const self = target.id === viewerId;
   return {
-    title: self ? "Remove your own admin access?" : `Remove ${login} as an admin?`,
+    title: self ? "Remove your own admin access?" : `Remove ${target.name} as an admin?`,
     body: self
-      ? "You will lose this panel immediately. Another admin — or anyone in ADMIN_LOGINS — can grant it back."
-      : `${login} loses access to this panel immediately. Nothing they have done is undone, and you can grant it back at any time.`,
+      ? "You will lose this panel immediately. Another admin can issue you a new code."
+      : `${target.name} loses access to this panel immediately. Nothing they have done is undone, and you can issue them a new code at any time.`,
     confirmLabel: "Remove admin",
   };
 }
 
-export default function AdminAdminsTab({ viewerLogin }: { viewerLogin: string }) {
+export default function AdminAdminsTab({ viewerId, visible = true }: { viewerId: string; visible?: boolean }) {
   const [rows, setRows] = useState<AdminRow[] | null>(null);
-  const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  /** The login awaiting a removal confirmation, or null. */
-  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+  /** The admin awaiting a removal confirmation, or null. */
+  const [removeTarget, setRemoveTarget] = useState<AdminRow | null>(null);
+  /** The code just issued, shown once. Hidden tabs stay mounted, so leaving
+   *  the tab clears it below rather than relying on an unmount. */
+  const [issued, setIssued] = useState<{ code: string; expiresAt: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [wasVisible, setWasVisible] = useState(visible);
+  if (visible !== wasVisible) {
+    setWasVisible(visible);
+    if (!visible) {
+      setIssued(null);
+      setCopied(false);
+    }
+  }
 
-  // The one legitimate effect here: fetch the current list once, on mount.
-  // Every setState is inside a promise callback, never in the effect body —
-  // the distinction `react-hooks/set-state-in-effect` is drawing, and the
-  // reason this is not written as `void load()`.
+  /** Bumped whenever the tab is hidden. An issue request remembers the value
+   *  it started under and drops its code if that has changed, so a response
+   *  that lands after the organizer left never shows the code again. */
+  const issueGen = useRef(0);
+  useEffect(() => {
+    if (!visible) issueGen.current += 1;
+  }, [visible]);
+
+  // The other effect: fetch the current list once, on mount.
+  // Every setState is inside a promise callback, never in the effect body.
   useEffect(() => {
     let live = true;
     fetch("/api/admin/admins")
@@ -91,15 +89,15 @@ export default function AdminAdminsTab({ viewerLogin }: { viewerLogin: string })
     };
   }, []);
 
-  async function mutate(method: "POST" | "DELETE", login: string) {
+  async function remove(target: AdminRow) {
     setPending(true);
     setError(null);
     setNotice(null);
     try {
       const res = await fetch("/api/admin/admins", {
-        method,
+        method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ login }),
+        body: JSON.stringify({ id: target.id }),
       });
       const data = (await res.json().catch(() => ({}))) as { admins?: AdminRow[]; error?: string };
       if (!res.ok) {
@@ -107,8 +105,7 @@ export default function AdminAdminsTab({ viewerLogin }: { viewerLogin: string })
         return;
       }
       setRows(data.admins ?? []);
-      setInput("");
-      setNotice(method === "POST" ? `${login} is now an admin.` : `${login} is no longer an admin.`);
+      setNotice(`${target.name} is no longer an admin.`);
     } catch {
       setError("Request failed");
     } finally {
@@ -116,45 +113,70 @@ export default function AdminAdminsTab({ viewerLogin }: { viewerLogin: string })
     }
   }
 
-  const granted = rows?.filter((r) => !r.baked) ?? [];
-  const baked = rows?.filter((r) => r.baked) ?? [];
+  async function issue() {
+    const gen = issueGen.current;
+    setPending(true);
+    setError(null);
+    setNotice(null);
+    setCopied(false);
+    try {
+      const res = await fetch("/api/admin/codes", { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as { code?: string; expiresAt?: string; error?: string };
+      if (gen !== issueGen.current) return;
+      if (!res.ok || !data.code || !data.expiresAt) {
+        setError(data.error ?? "Could not issue a code");
+        return;
+      }
+      setIssued({ code: data.code, expiresAt: data.expiresAt });
+    } catch {
+      setError("Could not issue a code");
+    } finally {
+      setPending(false);
+    }
+  }
 
   return (
     <section className="flex flex-col gap-4">
       <div className="ds-card rounded-lg border border-white/[0.06] bg-[#16162a] p-5">
         <h3 className="font-mono text-sm text-white">Admins</h3>
         <p className="mt-1 text-sm text-zinc-400">
-          Grant or revoke organizer access without restarting. Changes take effect immediately.
+          Organizers are kit accounts that claimed a code. Issue a code to add one; remove one at any time, as long
+          as another admin remains.
         </p>
 
-        <form
-          className="mt-4 flex flex-wrap items-center gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const login = input.trim();
-            if (login) void mutate("POST", login);
-          }}
-        >
-          <label htmlFor="admin-login" className="sr-only">
-            GitHub login
-          </label>
-          <input
-            id="admin-login"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="github-login"
-            autoComplete="off"
-            spellCheck={false}
-            className="min-w-48 rounded-md border border-white/10 bg-[#12121e] px-3 py-1.5 font-mono text-sm text-zinc-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d4a017]"
-          />
-          <button
-            type="submit"
-            disabled={pending || input.trim() === ""}
-            className="rounded-md border border-white/10 bg-white/[0.03] px-3 py-1.5 font-mono text-xs text-zinc-200 transition-colors hover:border-[#2563eb]/45 hover:text-white disabled:opacity-40"
-          >
-            Add admin
-          </button>
-        </form>
+        <div className="mt-4 flex flex-col gap-3">
+          <div>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => void issue()}
+              className="rounded-md border border-white/10 bg-white/[0.03] px-3 py-1.5 font-mono text-xs text-zinc-200 transition-colors hover:border-[#2563eb]/45 hover:text-white disabled:opacity-40"
+            >
+              Issue admin code
+            </button>
+          </div>
+          {issued && (
+            <div className="rounded-md border border-white/10 bg-[#12121e] p-3">
+              <p className="text-sm text-zinc-300">{ISSUE_HELP}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <code className="break-all font-mono text-sm text-white">{issued.code}</code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard
+                      ?.writeText(issued.code)
+                      .then(() => setCopied(true))
+                      .catch(() => setCopied(false));
+                  }}
+                  className="rounded-md border border-white/10 px-2 py-1 font-mono text-xs text-zinc-400 transition-colors hover:text-white"
+                >
+                  {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-muted">{codeNotice(issued.expiresAt)}</p>
+            </div>
+          )}
+        </div>
 
         {error && (
           <p role="alert" className="mt-3 text-sm text-[#e53e3e]">
@@ -164,49 +186,39 @@ export default function AdminAdminsTab({ viewerLogin }: { viewerLogin: string })
         {notice && !error && <p className="mt-3 text-sm text-[#22c55e]">{notice}</p>}
 
         <ul className="mt-4 flex flex-col gap-1">
-          {baked.map((row) => (
-            <li key={row.login} className="flex items-center justify-between gap-3 py-1">
-              <span className="font-mono text-sm text-zinc-200">
-                {row.login}
-                <span className="ml-2 rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-xs uppercase text-zinc-400">
-                  {ENV_ADMIN_BADGE}
-                </span>
+          {(rows ?? []).map((row) => (
+            <li key={row.id} className="flex items-center justify-between gap-3 py-1">
+              <span className="text-sm text-zinc-200">
+                {row.name}
+                {row.self && (
+                  <span className="ml-2 rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-xs uppercase text-zinc-400">
+                    you
+                  </span>
+                )}
               </span>
-              {/* Deliberately no remove control: this is the lockout recovery
-                  path. The API refuses it too, so the missing button is a
-                  courtesy, not the enforcement. */}
-              <span className="font-mono text-xs text-muted">{ENV_ADMIN_CHANGE_HINT}</span>
-            </li>
-          ))}
-          {granted.map((row) => (
-            <li key={row.login} className="flex items-center justify-between gap-3 py-1">
-              <span className="font-mono text-sm text-zinc-200">{row.login}</span>
               <button
                 type="button"
                 disabled={pending}
-                onClick={() => setRemoveTarget(row.login)}
+                onClick={() => setRemoveTarget(row)}
                 className="rounded-md border border-white/10 px-2 py-1 font-mono text-xs text-zinc-400 transition-colors hover:border-[#e53e3e]/50 hover:text-[#e53e3e] disabled:opacity-40"
               >
                 Remove
               </button>
             </li>
           ))}
-          {rows !== null && granted.length === 0 && (
-            <li className="py-1 text-sm text-muted">No runtime admins yet.</li>
-          )}
           {rows === null && !error && <li className="py-1 text-sm text-muted">Loading…</li>}
         </ul>
       </div>
 
       {removeTarget !== null && (
         <ConfirmModal
-          {...adminRemoveConfirm(removeTarget, viewerLogin)}
+          {...adminRemoveConfirm(removeTarget, viewerId)}
           danger
           pending={pending}
           onConfirm={() => {
-            const login = removeTarget;
+            const target = removeTarget;
             setRemoveTarget(null);
-            void mutate("DELETE", login);
+            void remove(target);
           }}
           onCancel={() => setRemoveTarget(null)}
         />

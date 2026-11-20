@@ -79,3 +79,30 @@ describe("moduleToggleConfirm", () => {
     expect(c.body).toMatch(/Nothing is deleted/);
   });
 });
+
+// ADR 69: a module on its way out carries a deprecation notice, which
+// reaches both switches through the choice. No registered module carries one,
+// so the rules are pinned against a hand-built choice.
+describe("a deprecated module", () => {
+  const notice = { note: "Deprecated: removed in a later release.", guide: { href: "https://example.org/guide#jeopardy", label: "Guide" } };
+  const old = { id: "classic", label: "Jeopardy", toggleable: true, deprecated: notice };
+
+  it("no registered module is marked deprecated", () => {
+    for (const c of moduleChoices(true)) expect(c.deprecated).toBeUndefined();
+  });
+
+  it("hands the notice to the switch whether it is on or off, beside an unchanged help line", () => {
+    expect(moduleToggleState(old, new Set(["classic"]))).toEqual({ on: true, disabled: false, help: undefined, deprecated: notice });
+    expect(moduleToggleState(old, new Set(["quiz"]))).toEqual({ on: false, disabled: false, help: undefined, deprecated: notice });
+  });
+
+  it("keeps a lock reason as the help line and still hands over the notice", () => {
+    const locked = { ...secdev, deprecated: notice };
+    expect(moduleToggleState(locked, new Set(["quiz"]))).toMatchObject({ help: secdev.reason, deprecated: notice });
+  });
+
+  it("carries the notice in the enable confirmation, not the disable one", () => {
+    expect(moduleToggleConfirm(old, true, new Set(["quiz"])).deprecated).toEqual(notice);
+    expect(moduleToggleConfirm(old, false, new Set(["classic", "quiz"])).deprecated).toBeUndefined();
+  });
+});

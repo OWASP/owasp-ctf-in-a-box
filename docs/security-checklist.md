@@ -25,15 +25,15 @@ submitted code is the product.
 | 4 | Org's scorer image private, forks granted Read | Scoring fails on every PR; a private rubric leaks |
 | 5 | Sync GitHub App is private and least-privilege | Third parties can install your event's App |
 | 6 | No leftover `LEADERBOARD_URL` / `LEADERBOARD_TOKEN` org secrets | A score-writing token sits in org secrets that contestant-triggered runs can read |
-| 7 | `ADMIN_LOGINS` lists only real organizers | `/admin` can freeze scoring and wipe the event |
+| 7 | You claimed the admin seat before sharing the URL, and only organizers hold one | `/admin` can freeze scoring and wipe the event |
 | 8 | Treat `better-auth` bumps as security changes | The login-identity denylist can regress |
 
 ---
 
 ## 1. `EVENT_URL` must be HTTPS
 
-The session cookie is only marked `Secure` over HTTPS, and this app keeps
-**no server-side session store** — the cookie *is* the identity. Sniffing an
+The session cookie is only marked `Secure` over HTTPS, and a captured
+session cookie is the account until it expires or is revoked. Sniffing an
 organizer's cookie on the venue wifi is a full admin takeover, not a
 nuisance.
 
@@ -56,10 +56,11 @@ on its own.
 
 ## 2. Use the generated `BETTER_AUTH_SECRET`
 
-Sessions are stateless JWE cookies; their integrity rests entirely on this
-value. `./setup/ctf-setup.sh secrets` generates one. Do not hand-set a short
-or memorable value, and do not reuse one across events — a leaked secret from
-a past event forges identities in the current one.
+Sessions are server-side records in Redis behind a 5-minute JWE cookie cache;
+the cookie's integrity rests on this value. `./setup/ctf-setup.sh secrets`
+generates one. Do not hand-set a short or memorable value, and do not reuse
+one across events — a leaked secret from a past event forges identities in
+the current one.
 
 Rotating it invalidates every live session, which is the correct response to
 a suspected leak mid-event.
@@ -133,24 +134,24 @@ reporting them in v0.7 (#503). Keep rotating
 `SCORER_TOKEN` between events regardless: it is the bearer `sync` presents to
 the one writer.
 
-## 7. Audit `ADMIN_LOGINS` before you open registration
+## 7. Claim the admin seat before you share the URL
 
-Anyone named in `.env`'s `ADMIN_LOGINS` — and anyone granted admin from the
-panel's Admins tab — can freeze scoring, rewrite module settings, seed demo
-data, and **wipe the event**. Matching is case-insensitive on the GitHub
-login.
+Every account on the Admins tab can freeze scoring, rewrite module settings,
+seed demo data, and **wipe the event**. An account becomes an admin only by
+entering an admin claim code at `/admin/claim`.
 
 Three failure modes worth checking for explicitly:
 
-- **An empty or unset `ADMIN_LOGINS` locks everyone out**, including you:
-  the check fails closed, so `/admin` 403s for every login. It is read at
-  container start, so a fix is an `.env` edit plus a restart, never a
-  rebuild. See [Hosting](hosting.md).
-- A leftover login from a previous event still has full control — check the
-  env list *and* the panel's runtime grants, which survive in Redis across
-  restarts.
-- **A bootstrap admin cannot be revoked from the panel**, by design (it is
-  the lock-out recovery path). Removing one means editing `.env`.
+- **The bootstrap code is a secret until you use it.** Whoever enters it first
+  becomes an admin, so claim it yourself before the URL goes anywhere, and
+  never paste it into chat or a ticket. Only its SHA-256 is in `.env`.
+- **A leftover admin from a previous event still has full control.** Grants
+  survive restarts and master resets; check the Admins tab and remove anyone
+  who should not be there (the last admin cannot be removed). Removing an
+  admin also voids every code they issued that nobody has claimed yet, even
+  if they are made an admin again.
+- **Codes you issue from the Admins tab work once and expire after 15
+  minutes.** Issue one only when the new organizer is ready to enter it.
 
 ## 8. Treat `better-auth` upgrades as security changes
 
@@ -199,9 +200,9 @@ Security aside, the checks that save an event, in the order to run them:
   bundles anyway** (each module's admin tab) — the export is the
   disaster-recovery path, and it contains every answer in plaintext, so
   treat the file like `/admin` access.
-- [ ] Sign in as each organizer and confirm `/admin` loads — this catches a
-  misspelled `ADMIN_LOGINS` entry and a container still running the previous
-  value in one step.
+- [ ] Sign in as each organizer and confirm `/admin` loads — this catches an
+  organizer who never claimed a code, and confirms the Admins tab lists only
+  the people you expect.
 
 **The morning of:**
 

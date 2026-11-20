@@ -1,5 +1,5 @@
 // #188 against a live Redis: first blood is read off the members' real
-// `ctf:classic:solves:<login>` hashes, and the Support tab's progress reset
+// `ctf:classic:solves:<player>` hashes, and the Support tab's progress reset
 // (RESET_MODULE_SOLVES_SCRIPT, run for real) takes it away with the rows —
 // no stored marker is left behind to name a contestant whose solves are gone.
 // The mocked team-solve-counts suite pins the fold; this one pins it against
@@ -7,7 +7,7 @@
 // deletes. See live-redis.ts for the harness.
 //
 // The team list is mocked (it is a SCAN over every team on the box); the
-// logins are run-unique, so the real solves keys never meet another suite's.
+// player keys are run-unique, so the real solves keys never meet another suite's.
 
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { RUN, freshId, liveConfigured, liveKey } from "./live-redis";
@@ -40,10 +40,10 @@ describe.skipIf(!liveConfigured)("first blood against a live Redis", () => {
   });
 
   /** A solve row exactly as SUBMIT_SCRIPT writes it. */
-  async function solve(login: string, id: string, at: string) {
+  async function solve(playerId: string, id: string, at: string) {
     const { classicSolvesKey, upstashPipeline } = await load();
-    touched.push(classicSolvesKey(login));
-    const [r] = await upstashPipeline([["HSET", classicSolvesKey(login), id, `{"points":10,"at":"${at}"}`]]);
+    touched.push(classicSolvesKey(playerId));
+    const [r] = await upstashPipeline([["HSET", classicSolvesKey(playerId), id, `{"points":10,"at":"${at}"}`]]);
     expect(r.error).toBeUndefined();
   }
 
@@ -57,7 +57,12 @@ describe.skipIf(!liveConfigured)("first blood against a live Redis", () => {
     await solve(bob, c1, "2026-10-01T12:00:02.000Z");
 
     const before = await teamSolveBoard("classic");
-    expect(before?.firstBlood.get(c1)).toEqual({ login: ada, at: "2026-10-01T12:00:01.000Z" });
+    expect(before?.firstBlood.get(c1)).toEqual({
+      playerId: ada,
+      // No auth row for a run-unique key: the id fallback name.
+      name: `player ${ada.slice(0, 8)}`,
+      at: "2026-10-01T12:00:01.000Z",
+    });
     expect(before?.counts.get(c1)).toBe(1);
 
     touched.push(classicAttemptsKey(ada));
@@ -68,7 +73,7 @@ describe.skipIf(!liveConfigured)("first blood against a live Redis", () => {
     );
 
     const after = await teamSolveBoard("classic");
-    expect(after?.firstBlood.get(c1)).toEqual({ login: bob, at: "2026-10-01T12:00:02.000Z" });
+    expect(after?.firstBlood.get(c1)).toEqual({ playerId: bob, name: `player ${bob.slice(0, 8)}`, at: "2026-10-01T12:00:02.000Z" });
   });
 
   it("drops the first blood entirely when its only solver is reset", async () => {

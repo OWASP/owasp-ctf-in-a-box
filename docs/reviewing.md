@@ -39,8 +39,7 @@ that weakens one layer "because another layer still catches it" is a
 finding — the four layers are deliberate redundancy.
 
 **2. Lua is the scoring authority.** The grading scripts (`SUBMIT_SCRIPT`
-in `classic-store.ts`, `GRADE_SCRIPT` in `quiz-store.ts`, `AWARD_SCRIPT` in
-`ai-store.ts`) decide points; the JS pre-checks are advisory early-outs.
+in `classic-store.ts`, `GRADE_SCRIPT` in `quiz-store.ts`) decide points; the JS pre-checks are advisory early-outs.
 Review implications: moving an already-solved guard, attempt cap, cooldown
 check, or price read out of the script into JS is a correctness regression,
 not a refactor. A change to script text needs tests that pin the *semantics*
@@ -67,7 +66,7 @@ row's shared corpus (`test/fixtures/window-corpus.json`) is what closed it.
 |---|---|---|---|
 | Freeze / scoring-window reads (app, scorer, sync) | **OPEN** | a Redis blip must not drop live submissions (ADR 32) | `classic-store.ts` + `quiz-store.ts` gate reads · `classic-store.grade.test.ts` / `quiz-store.grade.test.ts` fail-OPEN pins; `sync/src/redis.js` and `scorer/src/store.js` `isPaused` both log the failure and fail open · `redis.test.js` / `store.test.js` |
 | Grading lookups (does this challenge/question exist, what is its key) | **CLOSED** | don't grade what you can't verify | `classic-store.ts` `submitFlag` / `quiz-store.ts` `answerQuestion` lookup paths · error paths exercised in the grade test files |
-| Admin allowlist reads (`requireAdmin`) | **CLOSED** | an unreachable datastore denies, never grants | `admin-auth.ts` (the fail-closed branch is commented) · `admin-auth.test.ts` |
+| Admin grant reads (`requireAdmin`) and the admin claim | **CLOSED** | an unreachable datastore denies, never grants; the claim's rate limit refuses on doubt and a claim error answers 503 | `admin-auth.ts` (the fail-closed branch is commented), `api/me/admin/claim/route.ts`, `rate-limit-store.ts` `failClosed` · `admin-auth.test.ts`, `admin-claim-route.test.ts` |
 | Jeopardy visibility (is this challenge hidden, ADR 68) | **CLOSED** | a challenge that cannot be proven visible is treated as not existing: a hidden one must never be graded, sold a hint, or have its bought hint text returned | `classic-store.ts` `submitFlag` and `hint-store.ts` `revealHint` (a failed records read is `unavailable` / a failed reveal, before the script runs); `SUBMIT_SCRIPT` / `REVEAL_SCRIPT` decide from the record they read; `/api/hints` withholds Jeopardy text on a failed read · `classic-store.grade.test.ts` ("fails closed when the records cannot be read"), `hint-store.test.ts` ("refuses (closed) when the records cannot be read…"), `app/api/hints/__tests__/route.test.ts` ("returns no Jeopardy text when the challenges cannot be read") |
 | Hint purchase (spend) | **CLOSED** | never charge on uncertainty | `hint-store.ts` `revealHint` (comments its direction) · `hint-store.test.ts` ("fails CLOSED (rejects, never charges) when the settings read errors") |
 | Team registration window read | **OPEN** | a Redis blip must not itself block registration; the join/create Lua script still validates every real invariant atomically | `team-store.ts` `isRegistrationClosed` (comments its direction, logs and fails open on both a thrown transport error and a resolved per-command error) · `team-store.test.ts` ("fails OPEN … and logs when … transport failure" / "… per-command error") |
@@ -131,15 +130,19 @@ features past green tests three times.
 
 **10. The app reads no build-time config.** Config v2 (#386) deleted
 `event.yaml` and its `EVENT_CONFIG_B64` bake: the app now reads its two
-bootstrap identities, `GITHUB_ORG` and `ADMIN_LOGINS`, from the process
+bootstrap values, `GITHUB_ORG` and `ADMIN_CLAIM_CODE_HASH`, from the process
 environment at runtime (`bootstrap-env.ts`), and everything else — the
 event's name and branding, which Secure Development targets run — is a
 runtime `/admin` setting in the `ctf:admin:settings` hash. A review should
 verify: no `process.env` read reaches a client component (a client bundle
-must never see who the admins are, and `process.env` there is empty or
-misleading anyway); an empty `ADMIN_LOGINS` fails CLOSED in
-`admin-auth.ts`/`isAdminLogin` — nobody is an admin, not "no allowlist
-configured, let runtime grants decide"; an empty `GITHUB_ORG` degrades
+must never see the claim-code hash, and `process.env` there is empty or
+misleading anyway); admin-ness is decided by the player id in
+`ctf:admin:grants` (`admin-auth.ts`/`isAdminPlayer`, ADR 72), never by a
+GitHub login, and a grant read that errors denies; an empty or malformed
+`ADMIN_CLAIM_CODE_HASH` means nobody can claim with a bootstrap code (codes an admin issued still work), never "anyone may"; a claim
+code or its full hash is never logged or audited, the hash is never
+rendered, and a code is rendered only once, to the admin who just issued it (the Admins tab clears it when they
+leave); an empty `GITHUB_ORG` degrades
 gracefully in the app (`apps.ts` renders a bare repo name instead of a fork
 link) but sync's `loadConfig(env)` throws on it instead, because for sync a
 missing org is a genuine misconfiguration, not "nothing to poll" — the two
@@ -156,32 +159,30 @@ carries path instructions for `bootstrap-env.ts` and the snapshot readers, and
 for `apps/web/src/**/*.tsx` (the client-bundle read and the prerendered `/`).
 
 **11. The public surface is a named list, not a shape.** Exactly eight routes
-under `/api` answer without a session or a verified launch token, and each is
+under `/api` answer without a session, and each is
 on the list for its own stated reason — a ninth does not inherit an exemption
-by resembling one that has it; it needs its own case. Seven are read-only,
+by resembling one that has it; it needs its own case. Six are read-only,
 policy or public-by-design content out and never facts in, nothing secret in
-the response: `GET /api/public/scoring`, `GET /api/ai/launch-key`, `GET
+the response: `GET /api/public/scoring`, `GET
 /api/board/items`, `GET /api/sponsors/logo/[id]`, `GET
-/api/attachments/[id]`, `GET /api/event/logo` and `GET /api/event/icon`. One is a POST that exists
+/api/attachments/[id]`, `GET /api/event/logo` and `GET /api/event/icon`. Two are POSTs that exist
 *before* identity: `POST /api/stats/visit` (the approximate, no-PII
 per-country reach counter, always `204`, whose own header comment documents
-that it is not a security boundary). The pre-event password check
+that it is not a security boundary) and `POST /api/reset-password` (a signed-out
+player redeems the password reset code an organizer handed them: a single-use
+128-bit code consumed in Lua before any write, one uniform answer for every
+invalid code, a per-address rate limit charged fail-closed, the proxy's origin
+check, and `no-store` on every answer). The pre-event password check
 (`POST /api/gate`) that used to be the second is gone (#464); a route that
 brings back a pre-identity credential check is a new case, not a
 restoration. `/api/auth/*` is better-auth's and is outside this list. Anything else under `/api` that answers without
-`getSession`, `requireAdmin` or a verified launch token is the finding.
+`getSession` or `requireAdmin` is the finding.
 `board/items` (from the #207 redesign) serves the public leaderboard's row
 expansion, and like the board it is public only once the event is launched —
 before that it answers `403 not-launched` to anyone but an admin. Who
 solved what is already on the board as counts, the items are built only from the contestant-safe listers (ids, labels, banked points —
 never a flag, hint, or key), and the login list is capped at a team roster's
-size so it reads like the board, not like a scrape. `launch-key` is the
-sharpest test of the "nothing secret" half: it exists to publish the launch
-token's public key, `kid`, and algorithm so an external integrator can verify
-a token without holding a credential, and the finding to watch for is the
-private half (or any per-challenge signing key) drifting into that same
-payload — the ai contract test's import ban is what makes that a compile-time
-impossibility rather than a promise. `sponsors/logo/[id]` (issue #405, ADR 57)
+size so it reads like the board, not like a scrape. `sponsors/logo/[id]` (issue #405, ADR 57)
 is the newest, and its own reason is a privacy one rather than a launch-time
 one: it exists so a contestant's browser NEVER fetches a sponsor's logo from
 the sponsor's own CDN, which would leak that contestant's IP to the sponsor on
@@ -190,7 +191,7 @@ command, serves only PNG/WebP bytes that already passed the store's
 magic-byte sniff at upload (never SVG, which could execute script if opened
 directly), and carries nothing an organizer did not deliberately upload to be
 shown publicly — no flag, key, or contestant data has anywhere to ride in this
-payload. The finding to watch for here is the same shape as `launch-key`'s:
+payload. The finding to watch for here is
 anything beyond those bytes and their content-type metadata leaking into the
 response, or the id check moving after a Redis read. `attachments/[id]` (issue #186, ADR 61) serves a classic
 challenge's uploaded file to exactly the viewers who can read that
@@ -215,12 +216,11 @@ metadata in the response.
 are the one carve-out, and it's narrow.** A route returning points,
 attempts, hint spend, team membership, answer keys, flags, or metrics needs
 `requireAdmin` unless it reads *only* the row belonging to the caller who is
-asking — and "the caller" has to be established cryptographically, not
-trusted from the request: a verified launch token's `sub`, or a session
-login, never a client-supplied id, header, or query parameter standing in
-for one. `GET /api/ai/state` is the shape that qualifies — it derives its
-subject from a signature-verified token (`verifyLaunchToken(...).claims.sub`)
-before it reads anything. A route that reads "my own row" by trusting an
+asking — and "the caller" has to be established by the session, not
+trusted from the request: the session login, never a client-supplied id,
+header, or query parameter standing in for one. `GET /api/hints` is the
+shape that qualifies — it derives its subject from the session before it
+reads anything. A route that reads "my own row" by trusting an
 unverified field isn't self-service; it's the admin gate with the identity
 check removed, and it still needs `requireAdmin` or a real bound identity to
 pass review.
@@ -319,7 +319,12 @@ ADR, not the code.
   logs, behavior changes ship a test). Two of the six — secrecy boundary and
   unpinned dependencies — run at `mode: error` with the request-changes
   workflow on, so a violation blocks rather than warns; the other four stay
-  warnings. "Behavior changes ship a test" (#483) started on 2026-09-28 as a
+  warnings. The unpinned-dependency rule covers only the fields that install a
+  package — `dependencies`, `devDependencies`, `optionalDependencies`,
+  `peerDependencies`, `pnpm.overrides`, `overrides` and `resolutions` — and
+  excludes `engines` and `packageManager`: a caret range in `engines` is a
+  compatibility declaration, not an installed dependency, and `packageManager`
+  stays exact. "Behavior changes ship a test" (#483) started on 2026-09-28 as a
   one-week `warning` trial and is meant to move to `error` once its false
   positives are reviewed. The dividing line
   is that a check blocks only when it judges CODE against a mechanical rule:

@@ -8,6 +8,17 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+- **Security: refuse v2 startup against recognizable v1 Redis data (#743).**
+  The web app, scorer and sync service now check Redis compatibility before
+  starting. When `ctf:meta:schema-version` is absent, they scan known v1
+  event-data fingerprints; recognizable legacy data causes startup refusal
+  instead of allowing v2 to operate on an incompatible dataset. Unsupported
+  schema versions and compatibility-check failures also fail closed. A
+  compatible unmarked database is initialized as schema version `2`
+  automatically. Setup's `doctor` performs a read-only compatibility check.
+  **Upgrade requirement:** export the v1 event, run the master reset on the
+  v1 box, then deploy v2. See [Upgrading from v1](docs/hosting.md#upgrading-from-v1).
+
 - **Added: username and password accounts (#737).** Players sign up on the
   box at `/sign-in` with a username (3 to 30 of letters, digits, `_` and
   `.`, unique ignoring case) and a password (12 to 128, no composition

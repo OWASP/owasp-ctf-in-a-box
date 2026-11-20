@@ -429,6 +429,33 @@ test("redis ensureCompatible: refuses recognizable v1 data", async () => {
   });
 });
 
+test("redis ensureCompatible: accepts a v2 marker created during fingerprint scanning", async () => {
+  let markerReads = 0;
+  const store = createRedisStore({
+    url: "http://srh:80",
+    token: "t",
+    fetchImpl: async (_url, opts) => {
+      const command = JSON.parse(opts.body)[0];
+      let result;
+
+      if (command[0] === "GET") {
+        markerReads++;
+        result = markerReads === 1 ? null : "2";
+      } else if (command[0] === "SCAN") {
+        result = [
+          "0",
+          command[3] === "ctf:sd:held:*" ? ["ctf:sd:held:by:alice"] : [],
+        ];
+      }
+
+      return new Response(JSON.stringify([{ result }]), { status: 200 });
+    },
+  });
+
+  await store.ensureCompatible();
+  assert.equal(markerReads, 2);
+});
+
 test("redis ensureCompatible: accepts a v2 marker created concurrently", async () => {
   const calls = [];
   let markerReads = 0;

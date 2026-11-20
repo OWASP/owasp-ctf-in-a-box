@@ -24,6 +24,7 @@ import { isChallengeVisible, isReleaseInstant } from "@/lib/classic-release";
 import { foldTeamItems } from "@/lib/leaderboard/team-fold";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
+import { ANNOUNCE_FIRST_KEY } from "@/lib/announce/keys";
 import { ATTEMPT_ROW_LUA, parseCounterHash, parseHashEntries, parseJsonValue } from "@/lib/redis-decode";
 import {
   CLASSIC_CHALLENGES_KEY as CHALLENGES_KEY,
@@ -1221,16 +1222,16 @@ if not dry and classicHidden(cRaw) then return {'missing'} end
 if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 1 then return {'already'} end
 -- STORY LOCK (#463): ARGV[9] names this step's prerequisite ("" when the
 -- challenge is not a later story step). It is open only if some TEAMMATE
--- holds it, and made that solve while on this team (#602): KEYS[9..] are
+-- holds it, and made that solve while on this team (#602): KEYS[10..] are
 -- (solves hash, user record) pairs, ARGV[10] the viewer's team slug. See
--- storyLockLua in classic-team.ts. (KEYS[8] is the lastAt hash, #522: never
--- part of this loop.)
+-- storyLockLua in classic-team.ts. (KEYS[8] is the lastAt hash, #522; KEYS[9]
+-- is the first-solver hash: never part of this loop.)
 -- Checked FIRST, before the flag hash is read and before any read or write
 -- of attempts: a locked step touches no secret, spends no attempt and cannot
 -- be used to test a flag. The store reports it exactly like an unknown
 -- challenge (no oracle). A dry-run preview skips it.
 if not dry and ARGV[9] and ARGV[9] ~= '' then
-${storyLockLua(9, 9, 10)}
+${storyLockLua(10, 9, 10)}
   if not open then return {'locked'} end
 end
 local target = redis.call('HGET', KEYS[3], ARGV[1])
@@ -1287,6 +1288,10 @@ local prevAt = redis.call('HGET', KEYS[8], ARGV[4])
 if not prevAt or not string.match(prevAt, '^%d%d%d%d%-%d%d%-%d%dT') or prevAt < ARGV[3] then
   redis.call('HSET', KEYS[8], ARGV[4], ARGV[3])
 end
+-- Name the first SOLVER in the same atomic award that banks the solve. The
+-- announcer reads this record instead of racing its own claim, so a later
+-- notification can never hand first blood to a slower solver.
+redis.call('HSETNX', KEYS[9], ARGV[11], cjson.encode({playerId = ARGV[4], at = ARGV[3]}))
 return {'correct', tostring(points)}`;
 
 export type SubmitResult =
@@ -1422,7 +1427,8 @@ export async function submitFlag(
         SOLVECOUNT_KEY, // KEYS[6]
         SOLVED_KEY, // KEYS[7]
         LAST_AT_KEY, // KEYS[8] — login -> latest award time
-        ...lockKeys, // KEYS[9..] — (solves hash, user record) per teammate, for the story lock
+        ANNOUNCE_FIRST_KEY, // KEYS[9] — first-solver record for the announcer
+        ...lockKeys, // KEYS[10..] — (solves hash, user record) per teammate, for the story lock
       ],
       // BOTH comparison forms go in, and the script picks. Normalizing on this
       // side is non-negotiable (Lua's string.lower is ASCII-only — see the
@@ -1440,6 +1446,7 @@ export async function submitFlag(
         dryRun ? "1" : "0", // ARGV[8] — dry run: grade, write nothing
         prereq, // ARGV[9] — story prerequisite, "" when none
         lockTeam, // ARGV[10] — the viewer's team slug, "" for a team of one
+        `classic:${challengeId}`, // ARGV[11] — first-solver ledger field
       ],
     );
   } catch (err) {

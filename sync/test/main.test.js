@@ -17,11 +17,12 @@ import { main } from "../src/index.js";
 const STOP = new Error("stop-the-poll-loop");
 
 function spyDeps(overrides = {}) {
-  const calls = { readState: 0, makeRedis: 0, tick: [], writeState: [], pollState: [], sleep: [], log: [], logErr: [], exit: [] };
+  const calls = { order: [], compatibility: 0, readState: 0, makeRedis: 0, tick: [], writeState: [], pollState: [], sleep: [], log: [], logErr: [], exit: [] };
   const deps = {
     log: (m) => calls.log.push(m),
     logErr: (m) => calls.logErr.push(m),
     readState: (p) => {
+      calls.order.push("readState");
       calls.readState++;
       calls.statePath = p;
       return { repos: {} };
@@ -32,6 +33,10 @@ function spyDeps(overrides = {}) {
       // readState and writes it back before the first tick (ADR 64).
       return {
         fake: "redis",
+        ensureCompatible: async () => {
+          calls.order.push("ensureCompatible");
+          calls.compatibility++;
+        },
         readPollState: async () => null,
         writePollState: async (s) => calls.pollState.push(s),
       };
@@ -83,6 +88,8 @@ test("a valid config proceeds: state, redis, then the poll loop", async () => {
 
   await assert.rejects(() => main(deps), (err) => err === STOP);
 
+  assert.equal(calls.compatibility, 1);
+  assert.deepEqual(calls.order, ["ensureCompatible", "readState"]);
   assert.equal(calls.readState, 1);
   assert.equal(calls.statePath, "/state/state.json");
   assert.equal(calls.makeRedis, 1);
@@ -129,4 +136,28 @@ test("refuses to start without a Redis client", async () => {
   );
   assert.deepEqual(exits, [1]);
   assert.deepEqual(logErrLines, ["ctf-sync: Secure Development needs Redis to attribute PRs to players"]);
+});
+
+
+test("refuses startup when Redis compatibility validation fails, before loading state or polling", async () => {
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    makeRedisImpl: () => ({
+      ensureCompatible: async () => {
+        calls.compatibility++;
+        throw new Error("incompatible Redis data detected");
+      },
+    }),
+  });
+
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+
+  assert.equal(calls.compatibility, 1);
+  assert.equal(calls.readState, 0);
+  assert.deepEqual(calls.tick, []);
+  assert.deepEqual(calls.sleep, []);
+  assert.deepEqual(calls.exit, [1]);
+  assert.deepEqual(calls.logErr, [
+    "ctf-sync: Redis compatibility check failed: incompatible Redis data detected",
+  ]);
 });

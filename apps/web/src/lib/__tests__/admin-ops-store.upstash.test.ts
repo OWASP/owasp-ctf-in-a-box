@@ -526,6 +526,90 @@ describe.skipIf(!liveConfigured)("deleteUser against a live Redis", () => {
     }
   });
 
+  it("a player who switches team mid-delete leaves no member entry on either team (#765)", async () => {
+    const { ctx, pipeline, ops } = await load();
+    const id = await makePlayer(`vt9${tag}`.slice(0, 39));
+    const from = `vt9a-${tag}`.slice(0, 40);
+    const to = `vt9b-${tag}`.slice(0, 40);
+    await pipeline([
+      ["HSET", `ctf:team:${from}`, "name", "A", "captain", mate],
+      ["SADD", `ctf:team:${from}:members`, mate, id],
+      ["HSET", `ctf:team:${to}`, "name", "B", "captain", mate],
+      ["SADD", `ctf:team:${to}:members`, mate],
+      ["HSET", `ctf:user:${id}`, "team", from, "joinedAt", at],
+    ]);
+    // The switch lands after deleteUser's lookup read the old team, as a
+    // contestant's join script would write it: off the old set, onto the new
+    // one, the record pointing at the new team.
+    const original = ctx.internalAdapter.deleteUserSessions.bind(ctx.internalAdapter);
+    const spy = vi.spyOn(ctx.internalAdapter, "deleteUserSessions").mockImplementationOnce(async (userId: string) => {
+      await pipeline([
+        ["SREM", `ctf:team:${from}:members`, userId],
+        ["SADD", `ctf:team:${to}:members`, userId],
+        ["HSET", `ctf:user:${userId}`, "team", to],
+      ]);
+      return original(userId);
+    });
+    try {
+      const result = await ops.deleteUser(id, { id: crypto.randomUUID(), name: "organizer" });
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(result.leftTeam).toBe(to);
+      const [inFrom, inTo, record, marker] = await pipeline([
+        ["SISMEMBER", `ctf:team:${from}:members`, id],
+        ["SISMEMBER", `ctf:team:${to}:members`, id],
+        ["EXISTS", `ctf:user:${id}`],
+        ["EXISTS", `ctf:admin:deleting:${id}`],
+      ]);
+      expect([inFrom.result, inTo.result, record.result, marker.result]).toEqual([0, 0, 0, 0]);
+    } finally {
+      spy.mockRestore();
+      await pipeline([["DEL", `ctf:team:${from}`, `ctf:team:${from}:members`, `ctf:team:${to}`, `ctf:team:${to}:members`]]);
+    }
+  });
+
+  it("a player who becomes captain mid-delete is refused, and a re-run after the transfer finishes (#765)", async () => {
+    const { ctx, pipeline, ops } = await load();
+    const id = await makePlayer(`vta${tag}`.slice(0, 39));
+    const team = `vta-${tag}`.slice(0, 40);
+    const actor = { id: crypto.randomUUID(), name: "organizer" };
+    await pipeline([
+      ["HSET", `ctf:team:${team}`, "name", "C", "captain", mate],
+      ["SADD", `ctf:team:${team}:members`, mate, id],
+      ["HSET", `ctf:user:${id}`, "team", team, "joinedAt", at],
+    ]);
+    // The captain leaves after the lookup's captain check and the role passes
+    // to the player being deleted.
+    const original = ctx.internalAdapter.deleteUserSessions.bind(ctx.internalAdapter);
+    const spy = vi.spyOn(ctx.internalAdapter, "deleteUserSessions").mockImplementationOnce(async (userId: string) => {
+      await pipeline([["HSET", `ctf:team:${team}`, "captain", userId]]);
+      return original(userId);
+    });
+    try {
+      await expect(ops.deleteUser(id, actor)).rejects.toThrow(/became captain/);
+      // Nothing of the team was touched, and the record and marker are what
+      // the re-run finds the player by.
+      const [captain, member, record, marker] = await pipeline([
+        ["HGET", `ctf:team:${team}`, "captain"],
+        ["SISMEMBER", `ctf:team:${team}:members`, id],
+        ["HGET", `ctf:user:${id}`, "team"],
+        ["EXISTS", `ctf:admin:deleting:${id}`],
+      ]);
+      expect([captain.result, member.result, record.result, marker.result]).toEqual([id, 1, team, 1]);
+
+      await ops.forceTransferCaptain(team, mate, actor);
+      await expect(ops.deleteUser(id, actor)).resolves.toMatchObject({ leftTeam: team });
+      const [memberAfter, recordAfter, markerAfter] = await pipeline([
+        ["SISMEMBER", `ctf:team:${team}:members`, id],
+        ["EXISTS", `ctf:user:${id}`],
+        ["EXISTS", `ctf:admin:deleting:${id}`],
+      ]);
+      expect([memberAfter.result, recordAfter.result, markerAfter.result]).toEqual([0, 0, 0]);
+    } finally {
+      spy.mockRestore();
+      await pipeline([["DEL", `ctf:team:${team}`, `ctf:team:${team}:members`, `ctf:admin:deleting:${id}`]]);
+    }
+  });
+
   it("a retry removes a grant a failed run left on the deleted account", async () => {
     const { ctx, pipeline, ops } = await load();
     const gh = `vt5${tag}`.slice(0, 39);

@@ -8,8 +8,10 @@
 // solve that already banked its points.
 //
 // The dedup discipline is record-then-notify, on purpose:
-//   configured+switch off → no read, nothing (enabling later does not
-//     replay history; only solves from then on can be first bloods);
+//   configured+switch off → no claim, nothing (enabling later does not
+//     replay history; a solve banked while off can only announce if the
+//     switch flips in the brief window before this notifier reads the
+//     config);
 //   configured+switch on  → read the first-solver record the award script
 //     wrote atomically with the solve, and proceed only when it names this
 //     caller. The announcement claim is then checked and written in the

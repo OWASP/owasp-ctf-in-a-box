@@ -228,6 +228,8 @@ controls sit behind a **left sidebar** in three groups (it collapses to a
   size, the schedule, then demo seed and the master reset at the bottom),
   **Hints**, **Admins**, **Sponsors**.
 
+![The admin panel's Event tab: the per-module switches, the freeze and team-registration toggles, the players-per-team cap, and the schedule fields with a live "right now: scoring is live" readout](assets/admin-event.jpg)
+
 **Overview is the default** on load, regardless of how many modules are
 enabled — unless the URL names another destination (see the deep links
 below). It answers "is scoring on, how many teams, is anything stuck" in one
@@ -1040,7 +1042,7 @@ Integrations → Webhooks**. **Clear** deletes it (the panel cannot show it to
 you again). Nothing is posted until at least one type is switched on: saving a
 webhook turns nothing on by itself.
 
-![The Event tab's Discord announcements card, below the projector QR setting: a write-only Webhook URL field with Save, Clear and Send test buttons; switches for First blood, Event launch, Scoring paused / resumed and Remaining-time checks; a Marks before close field; and a live-format preview of the paused message](assets/admin-event.jpg)
+![The Event tab's Discord announcements card, below the projector QR setting: a write-only Webhook URL field with Save, Clear and Send test buttons; switches for First blood, Event launch, Scoring paused / resumed and Remaining-time checks; a Marks before close field; and a live-format preview of the paused message](assets/admin-event-discord.jpg)
 
 The four switches cover five announcement kinds:
 
@@ -1101,8 +1103,8 @@ outbox, leases and the delivery status — so a reset event starts silent: no
 old launch is replayed, a fresh first blood is claimable again, and retained
 posts are cancelled. The webhook and the per-kind switches/marks live outside
 that prefix and **survive the reset**, like the event's other organizer-set
-things. The reset also advances the webhook generation, so an entry produced
-from a pre-reset snapshot cannot be delivered afterwards.
+things. The reset also advances the webhook generation, so a pre-reset entry that
+no sender had already claimed cannot be delivered afterwards.
 
 **The webhook is a secret.** It is stored in its own Redis key
 (`ctf:admin:discord:webhook`), not in the settings hash and not in any event

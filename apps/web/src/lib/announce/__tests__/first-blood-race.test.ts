@@ -56,6 +56,7 @@ vi.mock("@/lib/classic-store", () => ({
 }));
 vi.mock("@/lib/quiz-store", () => ({ listQuestions: async () => [] }));
 vi.mock("@/lib/ai-store", () => ({ listAiChallenges: async () => [] }));
+vi.mock("@/lib/player", () => ({ getPlayerProfiles: async () => new Map() }));
 vi.mock("@/lib/story-lock", () => ({ storyPositions: () => new Map(), isLocked: () => false }));
 
 import { notifyFirstBlood } from "@/lib/announce/notify";

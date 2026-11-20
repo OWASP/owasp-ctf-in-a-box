@@ -99,7 +99,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     await load();
     return upstashEval(
       script,
-      [attemptsKeyFor(login), solvesKeyFor(login), K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt, ...lockKeys, K.first],
+      [attemptsKeyFor(login), solvesKeyFor(login), K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt, K.first, ...lockKeys],
       [
         id,
         keys.normalizeFlag(flag),
@@ -111,7 +111,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
         dry ? "1" : "0",
         prereq, // ARGV[9] — #463 story prerequisite ("" = none)
         team, // ARGV[10] — #602 the viewer's team slug ("" = team of one)
-        `classic:${id}`, // last ARGV — first-solver ledger field
+        `classic:${id}`, // ARGV[11] — first-solver ledger field
       ],
     );
   }
@@ -148,10 +148,10 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     expect(await submit(id, "flag{one}", { cooldownMs: 0, dry: true })).toEqual(["correct", "20", "dry"]);
     expect(await hget(K.first, `classic:${id}`)).toBeNull();
     expect(await submit(id, "flag{one}", { cooldownMs: 0 })).toEqual(["correct", "20"]);
-    expect(JSON.parse(String(await hget(K.first, `classic:${id}`)))).toEqual({ login: LOGIN, playerId: LOGIN, at: iso(T0) });
+    expect(JSON.parse(String(await hget(K.first, `classic:${id}`)))).toEqual({ playerId: LOGIN, at: iso(T0) });
     expect(await submit(id, "flag{one}", { nowMs: T0 + 1_000, cooldownMs: 0 })).toEqual(["already"]);
     expect(await submit(id, "flag{one}", { nowMs: T0 + 2_000, cooldownMs: 0, login: other })).toEqual(["correct", "20"]);
-    expect(JSON.parse(String(await hget(K.first, `classic:${id}`)))).toEqual({ login: LOGIN, playerId: LOGIN, at: iso(T0) });
+    expect(JSON.parse(String(await hget(K.first, `classic:${id}`)))).toEqual({ playerId: LOGIN, at: iso(T0) });
   });
 
   it("returns missing for an unknown challenge and writes no attempts row", async () => {

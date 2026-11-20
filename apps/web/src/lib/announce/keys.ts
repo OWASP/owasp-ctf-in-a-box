@@ -33,10 +33,10 @@ export const ANNOUNCE_WEBHOOK_GENERATION_KEY = "ctf:admin:discord:webhook-genera
 // --- announcement state (all wiped by the master reset) ---------------------
 
 /** Per-challenge first SOLVER records: field `<module>:<challengeId>` → JSON
- *  `{login, playerId, at}` (login and playerId are the same player id;
- *  the notifier reads `playerId`). The awarding Lua script writes this with HSETNX in the same
- *  script that banks the solve, so the record names the true first solver
- *  rather than whichever notification happened to run first. */
+ *  `{playerId, at}` (the notifier reads `playerId`). The awarding Lua script
+ *  writes this with HSETNX in the same script that banks the solve, so the
+ *  record names the true first solver rather than whichever notification
+ *  happened to run first. */
 export const ANNOUNCE_FIRST_KEY = "ctf:announce:first";
 
 /** Per-challenge first-blood ANNOUNCEMENT claims: field

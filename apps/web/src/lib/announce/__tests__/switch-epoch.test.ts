@@ -37,12 +37,12 @@ import {
   DISCORD_WEBHOOK_KEY,
 } from "@/lib/announce/keys";
 import {
+  CLAIM_LEDGER_AND_ENQUEUE_SCRIPT,
+  claimLedgerFieldsAndEnqueue,
   CONFIG_PATCH_SCRIPT,
   getAnnounceConfig,
   outboxClaim,
-  outboxEnqueue,
   OUTBOX_CLAIM_SCRIPT,
-  OUTBOX_ENQUEUE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
   WEBHOOK_TARGET_SCRIPT,
   updateAnnounceConfig,
@@ -119,14 +119,14 @@ beforeEach(() => {
   mocks.upstashPipeline.mockImplementation(pipelineFor(state));
   mocks.upstashEval.mockImplementation(async (script, keys, args) => {
     if (script === WEBHOOK_TARGET_SCRIPT) return [URL, "0"];
-    if (script === OUTBOX_ENQUEUE_SCRIPT) {
-      const [outboxKey, configKey] = keys;
+    if (script === CLAIM_LEDGER_AND_ENQUEUE_SCRIPT) {
+      const [, outboxKey, configKey] = keys;
       expect(outboxKey).toBe(ANNOUNCE_OUTBOX_KEY);
       expect(configKey).toBe(DISCORD_CONFIG_KEY);
-      const enabled = state.config.get(String(args[4]));
-      const currentEpoch = Number(state.config.get(String(args[5])) ?? 0);
-      if (enabled !== "1" || Number(args[3]) !== currentEpoch || Number(args[2]) !== 0) return 0;
-      state.outbox.set(String(args[0]), JSON.parse(String(args[1])) as OutboxEntry);
+      const enabled = state.config.get(String(args[6]));
+      const currentEpoch = Number(state.config.get(String(args[7])) ?? 0);
+      if (enabled !== "1" || Number(args[8]) !== currentEpoch || Number(args[1]) !== 0) return 0;
+      state.outbox.set(String(args[4]), JSON.parse(String(args[5])) as OutboxEntry);
       return 1;
     }
     if (script === CONFIG_PATCH_SCRIPT) {
@@ -186,7 +186,15 @@ describe("switch epochs", () => {
 
     // A producer that read its config before the disable resumes now: the
     // switch is ON again, so only the epoch check can reject it.
-    const staleAccepted = await outboxEnqueue("race", "first-blood", { embeds: [] }, after.webhookGeneration, before.kindEpochs["first-blood"]);
+    const staleAccepted = await claimLedgerFieldsAndEnqueue(
+      "ctf:announce:first-announced",
+      ["classic:chal-1"],
+      after.webhookGeneration,
+      "first-blood",
+      before.kindEpochs["first-blood"],
+      "race",
+      { embeds: [] },
+    );
     expect(staleAccepted).toBe(false);
     expect(state.outbox.has("race")).toBe(false);
 
@@ -194,7 +202,15 @@ describe("switch epochs", () => {
     expect(fetchMock).not.toHaveBeenCalled();
 
     // The same enqueue carrying the CURRENT epoch is accepted.
-    const freshAccepted = await outboxEnqueue("race-current", "first-blood", { embeds: [] }, after.webhookGeneration, after.kindEpochs["first-blood"]);
+    const freshAccepted = await claimLedgerFieldsAndEnqueue(
+      "ctf:announce:first-announced",
+      ["classic:chal-1"],
+      after.webhookGeneration,
+      "first-blood",
+      after.kindEpochs["first-blood"],
+      "race-current",
+      { embeds: [] },
+    );
     expect(freshAccepted).toBe(true);
     expect(state.outbox.get("race-current")?.kindEpoch).toBe(1);
   });

@@ -25,7 +25,7 @@
 
 import "server-only";
 import { errorLabel } from "@/lib/error-label";
-import { kindEnabled, type AnnouncementKind } from "@/lib/discord-config";
+import type { AnnouncementKind } from "@/lib/discord-config";
 import type { DiscordMessage } from "./messages";
 import { compareOutboxOrder } from "./order";
 import {
@@ -37,7 +37,6 @@ import {
   newOutboxId,
   outboxClaim,
   outboxComplete,
-  outboxEnqueue,
   outboxPending,
   outboxPrune,
   outboxRelease,
@@ -58,52 +57,8 @@ const SEND_TIMEOUT_MS = 5_000;
  *  a lifecycle edge plus its first blood) leave in one flush pass. */
 const FLUSH_COALESCE_MS = 250;
 
-/** In-process bound on how many not-yet-flushed entries THIS replica may
- *  hold. Older entries are dropped (counted) rather than growing the queue
- *  without limit — a Discord outage must not become a memory leak. */
-const MAX_QUEUE = 100;
-
-let queue: string[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushing = false;
-let droppedCount = 0;
-
-/** How many enqueues were dropped by the bound. Admin-facing cosmetic. */
-export function droppedEnqueues(): number {
-  return droppedCount;
-}
-
-/** Enqueues one announcement, if its switch is on and a webhook is
- *  configured. A disabled kind or an unconfigured box is a NO-OP (no entry,
- *  no timer) — the announcer never accumulates work it will not send.
- *
- *  `captured` carries the generation and switch epoch a producer read BEFORE
- *  its asynchronous lookups. When given, those exact counters are stamped
- *  and the store rejects the write atomically if the stream was disabled,
- *  re-enabled or the webhook was cleared meanwhile — a late notification
- *  never borrows a fresh counter it did not observe. Replacing a configured
- *  URL is a plain SET that keeps the generation, so it is deliberately not
- *  fenced: pending entries follow the new URL instead of being dropped. */
-export async function enqueueAnnouncement(
-  kind: AnnouncementKind,
-  message: DiscordMessage,
-  captured?: { webhookGeneration: number; kindEpoch: number },
-): Promise<void> {
-  let webhookGeneration: number;
-  let kindEpoch: number;
-  if (captured) {
-    webhookGeneration = captured.webhookGeneration;
-    kindEpoch = captured.kindEpoch;
-  } else {
-    const config = await getAnnounceConfig();
-    if (!config.webhookConfigured || !kindEnabled(config, kind)) return;
-    webhookGeneration = config.webhookGeneration;
-    kindEpoch = config.kindEpochs[kind];
-  }
-  const id = newOutboxId(kind);
-  if (!(await outboxEnqueue(id, kind, message, webhookGeneration, kindEpoch))) return;
-  await trackEnqueued(id);
-}
 
 /** Enqueues a ledger-driven announcement and claims its ledger fields in ONE
  *  atomic script. The switch/epoch/generation checks live inside that script,
@@ -127,19 +82,8 @@ export async function enqueueLedgerAnnouncement(
     message,
   );
   if (!written) return false;
-  await trackEnqueued(id);
-  return true;
-}
-
-/** Bounds and flushes a freshly written entry. Shared by both enqueue paths
- *  so the drop policy and coalescing timer cannot drift apart. */
-async function trackEnqueued(id: string): Promise<void> {
-  queue.push(id);
-  while (queue.length > MAX_QUEUE) {
-    queue.shift();
-    droppedCount += 1;
-  }
   scheduleFlush();
+  return true;
 }
 
 /** Arms the coalescing flush (one per replica; unref'd so it cannot hold a
@@ -185,28 +129,20 @@ export async function flush(): Promise<void> {
     // until Discord's retry instant. Both sweeps share this gate so a retry
     // sweep cannot slip past the cooldown the fresh flush just recorded.
     if ((await announceCooldownMs()) > 0) return;
-    queue = queue.filter((id) => id !== ""); // defensive; ids are never ""
     const config = await getAnnounceConfig();
-    if (!config.webhookConfigured) {
-      queue = [];
-      return;
-    }
+    if (!config.webhookConfigured) return;
     let url: string | null;
     let generation: number;
     try {
       ({ url, generation } = await getWebhookDeliveryTarget());
     } catch (err) {
-      // A failed read is not "no webhook" or "generation 0": leave the local
-      // queue and every outbox entry untouched so the next pass (or the
-      // ticker's retry sweep) delivers them instead of marking them sent or
-      // skipped.
+      // A failed read is not "no webhook" or "generation 0": leave every
+      // outbox entry untouched so the next pass (or the ticker's retry
+      // sweep) delivers them instead of marking them sent or skipped.
       console.error("[announce] webhook target read failed, leaving announcements queued:", errorLabel(err));
       return;
     }
-    if (!url) {
-      queue = [];
-      return;
-    }
+    if (!url) return;
     const pending = await deliveryCandidates();
     const candidates: { id: string; entry: OutboxEntry }[] = [];
     // An entry is stale if the webhook was cleared after it was enqueued
@@ -234,9 +170,6 @@ export async function flush(): Promise<void> {
       // dropping a fresh entry that an enable raced into this pass.
       candidates.push(item);
     }
-    // The local queue has served its purpose (bounded ids for the drop
-    // policy); the outbox is the source of truth from here.
-    queue = [];
 
     for (let i = 0; i < candidates.length; i += PACK_EMBEDS) {
       const candidateBatch = candidates.slice(i, i + PACK_EMBEDS);

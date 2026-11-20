@@ -148,7 +148,7 @@ export function markKey(endsAtMs: number, markMs: number): string {
   return `${endsAtMs}:${markMs}`;
 }
 
-/** Whether `markMs` of scoring-close lies in the announbable band at
+/** Whether `markMs` of scoring-close lies in the announceable band at
  *  `nowMs`: remaining has reached the mark, but scoring is not over yet.
  *  The ledger claim (`ctf:announce:milestone`) makes it fire at most once. */
 export function markCrossed(nowMs: number, endsAtMs: number, markMs: number): boolean {

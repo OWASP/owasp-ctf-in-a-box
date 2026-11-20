@@ -20,9 +20,9 @@ vi.mock("server-only", () => ({}));
 
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
 import {
+  CLAIM_LEDGER_AND_ENQUEUE_SCRIPT,
   OUTBOX_CLAIM_SCRIPT,
   OUTBOX_COMPLETE_SCRIPT,
-  OUTBOX_ENQUEUE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
   SET_ANNOUNCE_COOLDOWN_SCRIPT,
   STATE_CAS_ENQUEUE_SCRIPT,
@@ -31,8 +31,6 @@ import {
   CONFIG_PATCH_SCRIPT,
   WEBHOOK_CLEAR_SCRIPT,
   WEBHOOK_TARGET_SCRIPT,
-  claimLedgerField,
-  claimLedgerFields,
 } from "@/lib/announce/store";
 
 const STATE_KEY = liveKey("announce-cas", "state");
@@ -78,17 +76,6 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     // A replica that already matches the current value gets 0, not a re-announce.
     const same = (await upstashEval(STATE_CAS_SCRIPT, [STATE_KEY, SEQ_KEY], ["v1|L1P1", "v1|L1P1"])) as [number, number, string];
     expect(same[0]).toBe(0);
-  });
-
-  it("HSETNX claims are won exactly once across concurrent callers", async () => {
-    const results = await Promise.all([
-      claimLedgerField(LEDGER_KEY, "classic:web-1"),
-      claimLedgerField(LEDGER_KEY, "classic:web-1"),
-      claimLedgerField(LEDGER_KEY, "classic:web-1"),
-    ]);
-    expect(results.filter(Boolean)).toHaveLength(1);
-    const bulk = await claimLedgerFields(LEDGER_KEY, ["classic:web-1", "classic:web-2"]);
-    expect([...bulk]).toEqual(["classic:web-2"]);
   });
 
   it("the delivery lease is held by exactly one claimer", async () => {
@@ -205,50 +192,206 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     await upstashPipeline([["DEL", boxKey, leaseKey, cfgKey, genKey]]);
   });
 
-  it("OUTBOX_ENQUEUE_SCRIPT writes only when the switch is on and the captured epoch and generation are current", async () => {
-    const generationKey = liveKey("announce-enqueue", "generation");
-    const seqKey = liveKey("announce-enqueue", "seq");
-    const id = `${RUN}-enqueue`;
-    const entry = JSON.stringify({ kind: "first-blood", payload: {}, at: new Date().toISOString(), seq: -1, n: 0, status: "pending", kindEpoch: 2 });
-    const keys = [OUTBOX_KEY, SWITCH_KEY, generationKey, seqKey];
+  it("CLAIM_LEDGER_AND_ENQUEUE_SCRIPT claims fresh field and enqueues entry", async () => {
+    const ledger = liveKey("announce-claim-script", "ledger");
+    const outbox = liveKey("announce-claim-script", "outbox");
+    const config = liveKey("announce-claim-script", "config");
+    const gen = liveKey("announce-claim-script", "generation");
+    const keys = [ledger, outbox, config, gen];
 
     await upstashPipeline([
-      ["DEL", OUTBOX_KEY, SWITCH_KEY, generationKey, seqKey],
-      ["SET", generationKey, "3"],
-      ["HSET", SWITCH_KEY, "firstBlood", "1", "epoch:first-blood", "2"],
+      ["DEL", ledger, outbox, config, gen],
+      ["SET", gen, "3"],
+      ["HSET", config, "firstBlood", "1", "epoch:first-blood", "2"],
     ]);
 
-    // Stale epoch: the switch was disabled and re-enabled after this
-    // producer's config read.
-    const staleEpoch = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, keys, [`${id}-stale-epoch`, entry, 3, 1, "firstBlood", "epoch:first-blood"]);
-    expect(staleEpoch).toBe(0);
+    const at = new Date().toISOString();
+    const entry = JSON.stringify({ kind: "first-blood", at, status: "pending" });
+    const res = await upstashEval(
+      CLAIM_LEDGER_AND_ENQUEUE_SCRIPT,
+      keys,
+      ["1", "3", at, "classic:chal-1", `${RUN}-fresh-entry`, entry, "firstBlood", "epoch:first-blood", "2"],
+    );
+    expect(res).toBe(1);
+    const [claimed, outboxEntry] = await upstashPipeline([
+      ["HGET", ledger, "classic:chal-1"],
+      ["HGET", outbox, `${RUN}-fresh-entry`],
+    ]);
+    expect(claimed.result).toBe(at);
+    expect(outboxEntry.result).toBe(entry);
 
-    // Stale generation: the webhook rotated after this producer's read.
-    const staleGeneration = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, keys, [`${id}-stale-gen`, entry, 2, 2, "firstBlood", "epoch:first-blood"]);
-    expect(staleGeneration).toBe(0);
+    await upstashPipeline([["DEL", ledger, outbox, config, gen]]);
+  });
 
-    // Disabled switch: the captured epoch alone is not enough.
-    await upstashPipeline([["HSET", SWITCH_KEY, "firstBlood", "0"]]);
-    const disabled = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, keys, [`${id}-disabled`, entry, 3, 2, "firstBlood", "epoch:first-blood"]);
-    expect(disabled).toBe(0);
+  it("CLAIM_LEDGER_AND_ENQUEUE_SCRIPT writes nothing on repeat call", async () => {
+    const ledger = liveKey("announce-claim-repeat", "ledger");
+    const outbox = liveKey("announce-claim-repeat", "outbox");
+    const config = liveKey("announce-claim-repeat", "config");
+    const gen = liveKey("announce-claim-repeat", "generation");
+    const keys = [ledger, outbox, config, gen];
 
-    // A refused write must not burn a sequence number: the ordering counter
-    // moves only with the entry it orders.
-    const [seqAfterRefusals] = await upstashPipeline([["GET", seqKey]]);
-    expect(seqAfterRefusals.result).toBeNull();
+    await upstashPipeline([
+      ["DEL", ledger, outbox, config, gen],
+      ["SET", gen, "3"],
+      ["HSET", config, "firstBlood", "1", "epoch:first-blood", "2"],
+    ]);
 
-    // Current switch, epoch and generation: the write lands, and the
-    // "-1" placeholder is replaced by the sequence this script just took.
-    await upstashPipeline([["HSET", SWITCH_KEY, "firstBlood", "1"]]);
-    const accepted = await upstashEval(OUTBOX_ENQUEUE_SCRIPT, keys, [id, entry, 3, 2, "firstBlood", "epoch:first-blood"]);
-    expect(accepted).toBe(1);
-    const [raw, seq] = await upstashPipeline([["HGET", OUTBOX_KEY, id], ["GET", seqKey]]);
-    const stored = JSON.parse(raw.result as string);
-    expect(stored.seq).toBe(1);
-    expect(seq.result).toBe("1");
-    expect({ ...stored, seq: -1 }).toEqual(JSON.parse(entry));
+    const at1 = new Date().toISOString();
+    const entry1 = JSON.stringify({ kind: "first-blood", at: at1, status: "pending" });
+    const first = await upstashEval(
+      CLAIM_LEDGER_AND_ENQUEUE_SCRIPT,
+      keys,
+      ["1", "3", at1, "classic:chal-repeat", `${RUN}-first-entry`, entry1, "firstBlood", "epoch:first-blood", "2"],
+    );
+    expect(first).toBe(1);
 
-    await upstashPipeline([["DEL", OUTBOX_KEY, SWITCH_KEY, generationKey, seqKey]]);
+    const at2 = new Date(Date.now() + 1000).toISOString();
+    const entry2 = JSON.stringify({ kind: "first-blood", at: at2, status: "pending" });
+    const repeat = await upstashEval(
+      CLAIM_LEDGER_AND_ENQUEUE_SCRIPT,
+      keys,
+      ["1", "3", at2, "classic:chal-repeat", `${RUN}-repeat-entry`, entry2, "firstBlood", "epoch:first-blood", "2"],
+    );
+    expect(repeat).toBe(0);
+
+    const [claimed, repeatOutbox] = await upstashPipeline([
+      ["HGET", ledger, "classic:chal-repeat"],
+      ["HGET", outbox, `${RUN}-repeat-entry`],
+    ]);
+    expect(claimed.result).toBe(at1);
+    expect(repeatOutbox.result).toBeNull();
+
+    await upstashPipeline([["DEL", ledger, outbox, config, gen]]);
+  });
+
+  it("CLAIM_LEDGER_AND_ENQUEUE_SCRIPT writes neither claim nor entry when switch is off", async () => {
+    const ledger = liveKey("announce-claim-off", "ledger");
+    const outbox = liveKey("announce-claim-off", "outbox");
+    const config = liveKey("announce-claim-off", "config");
+    const gen = liveKey("announce-claim-off", "generation");
+    const keys = [ledger, outbox, config, gen];
+
+    await upstashPipeline([
+      ["DEL", ledger, outbox, config, gen],
+      ["SET", gen, "3"],
+      ["HSET", config, "firstBlood", "0", "epoch:first-blood", "2"],
+    ]);
+
+    const at = new Date().toISOString();
+    const entry = JSON.stringify({ kind: "first-blood", at, status: "pending" });
+    const res = await upstashEval(
+      CLAIM_LEDGER_AND_ENQUEUE_SCRIPT,
+      keys,
+      ["1", "3", at, "classic:chal-disabled", `${RUN}-disabled-entry`, entry, "firstBlood", "epoch:first-blood", "2"],
+    );
+    expect(res).toBe(0);
+    const [claimed, outboxEntry] = await upstashPipeline([
+      ["HGET", ledger, "classic:chal-disabled"],
+      ["HGET", outbox, `${RUN}-disabled-entry`],
+    ]);
+    expect(claimed.result).toBeNull();
+    expect(outboxEntry.result).toBeNull();
+
+    await upstashPipeline([["DEL", ledger, outbox, config, gen]]);
+  });
+
+  it("CLAIM_LEDGER_AND_ENQUEUE_SCRIPT writes neither on stale epoch", async () => {
+    const ledger = liveKey("announce-claim-epoch", "ledger");
+    const outbox = liveKey("announce-claim-epoch", "outbox");
+    const config = liveKey("announce-claim-epoch", "config");
+    const gen = liveKey("announce-claim-epoch", "generation");
+    const keys = [ledger, outbox, config, gen];
+
+    await upstashPipeline([
+      ["DEL", ledger, outbox, config, gen],
+      ["SET", gen, "3"],
+      ["HSET", config, "firstBlood", "1", "epoch:first-blood", "2"],
+    ]);
+
+    const at = new Date().toISOString();
+    const entry = JSON.stringify({ kind: "first-blood", at, status: "pending" });
+    const res = await upstashEval(
+      CLAIM_LEDGER_AND_ENQUEUE_SCRIPT,
+      keys,
+      ["1", "3", at, "classic:chal-stale-epoch", `${RUN}-stale-epoch-entry`, entry, "firstBlood", "epoch:first-blood", "1"],
+    );
+    expect(res).toBe(0);
+    const [claimed, outboxEntry] = await upstashPipeline([
+      ["HGET", ledger, "classic:chal-stale-epoch"],
+      ["HGET", outbox, `${RUN}-stale-epoch-entry`],
+    ]);
+    expect(claimed.result).toBeNull();
+    expect(outboxEntry.result).toBeNull();
+
+    await upstashPipeline([["DEL", ledger, outbox, config, gen]]);
+  });
+
+  it("CLAIM_LEDGER_AND_ENQUEUE_SCRIPT writes neither on stale generation", async () => {
+    const ledger = liveKey("announce-claim-gen", "ledger");
+    const outbox = liveKey("announce-claim-gen", "outbox");
+    const config = liveKey("announce-claim-gen", "config");
+    const gen = liveKey("announce-claim-gen", "generation");
+    const keys = [ledger, outbox, config, gen];
+
+    await upstashPipeline([
+      ["DEL", ledger, outbox, config, gen],
+      ["SET", gen, "3"],
+      ["HSET", config, "firstBlood", "1", "epoch:first-blood", "2"],
+    ]);
+
+    const at = new Date().toISOString();
+    const entry = JSON.stringify({ kind: "first-blood", at, status: "pending" });
+    const res = await upstashEval(
+      CLAIM_LEDGER_AND_ENQUEUE_SCRIPT,
+      keys,
+      ["1", "2", at, "classic:chal-stale-gen", `${RUN}-stale-gen-entry`, entry, "firstBlood", "epoch:first-blood", "2"],
+    );
+    expect(res).toBe(0);
+    const [claimed, outboxEntry] = await upstashPipeline([
+      ["HGET", ledger, "classic:chal-stale-gen"],
+      ["HGET", outbox, `${RUN}-stale-gen-entry`],
+    ]);
+    expect(claimed.result).toBeNull();
+    expect(outboxEntry.result).toBeNull();
+
+    await upstashPipeline([["DEL", ledger, outbox, config, gen]]);
+  });
+
+  it("CLAIM_LEDGER_AND_ENQUEUE_SCRIPT with two fields and one already claimed still writes exactly one entry", async () => {
+    const ledger = liveKey("announce-claim-two", "ledger");
+    const outbox = liveKey("announce-claim-two", "outbox");
+    const config = liveKey("announce-claim-two", "config");
+    const gen = liveKey("announce-claim-two", "generation");
+    const keys = [ledger, outbox, config, gen];
+
+    const at1 = new Date().toISOString();
+    await upstashPipeline([
+      ["DEL", ledger, outbox, config, gen],
+      ["SET", gen, "3"],
+      ["HSET", config, "milestones", "1", "epoch:milestone", "0"],
+      ["HSET", ledger, "mark:100", at1],
+    ]);
+
+    const at2 = new Date(Date.now() + 500).toISOString();
+    const entry = JSON.stringify({ kind: "milestone", at: at2, status: "pending" });
+
+    const res = await upstashEval(
+      CLAIM_LEDGER_AND_ENQUEUE_SCRIPT,
+      keys,
+      ["2", "3", at2, "mark:100", "mark:200", `${RUN}-partial-entry`, entry, "milestones", "epoch:milestone", "0"],
+    );
+    expect(res).toBe(1);
+
+    const [claimA, claimB, outboxEntry] = await upstashPipeline([
+      ["HGET", ledger, "mark:100"],
+      ["HGET", ledger, "mark:200"],
+      ["HGET", outbox, `${RUN}-partial-entry`],
+    ]);
+    expect(claimA.result).toBe(at1);
+    expect(claimB.result).toBe(at2);
+    expect(outboxEntry.result).toBe(entry);
+
+    await upstashPipeline([["DEL", ledger, outbox, config, gen]]);
   });
 
   it("OUTBOX_COMPLETE_SCRIPT writes only for the current lease owner", async () => {

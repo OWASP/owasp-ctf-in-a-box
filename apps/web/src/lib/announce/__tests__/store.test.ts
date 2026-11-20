@@ -27,23 +27,16 @@ import {
   announceCooldownMs,
   bumpStatus,
   CLAIM_LEDGER_AND_ENQUEUE_SCRIPT,
-  CLAIM_LEDGER_SCRIPT,
-  claimLedgerField,
-  claimLedgerFields,
   claimLedgerFieldsAndEnqueue,
   getAnnounceConfig,
   getWebhookDeliveryTarget,
-  getWebhookGeneration,
   getWebhookUrl,
-  ledgerFields,
   OUTBOX_CLAIM_SCRIPT,
   OUTBOX_COMPLETE_SCRIPT,
-  OUTBOX_ENQUEUE_SCRIPT,
   OUTBOX_RELEASE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
   outboxClaim,
   outboxComplete,
-  outboxEnqueue,
   outboxPending,
   outboxPrune,
   outboxRelease,
@@ -51,7 +44,6 @@ import {
   outboxSkip,
   publicConfig,
   readLedgerField,
-  readStatePack,
   readStatus,
   SET_ANNOUNCE_COOLDOWN_SCRIPT,
   setAnnounceCooldown,
@@ -67,11 +59,9 @@ import {
 } from "@/lib/announce/store";
 import {
   ANNOUNCE_COOLDOWN_KEY,
-  ANNOUNCE_FIRST_KEY,
   ANNOUNCE_LIFECYCLE_KEY,
   ANNOUNCE_LIFECYCLE_REV_KEY,
   ANNOUNCE_OUTBOX_KEY,
-  ANNOUNCE_SEQ_KEY,
   ANNOUNCE_WEBHOOK_GENERATION_KEY,
   DISCORD_CONFIG_KEY,
   DISCORD_WEBHOOK_KEY,
@@ -481,25 +471,6 @@ describe("getWebhookUrl", () => {
   });
 });
 
-describe("getWebhookGeneration", () => {
-  it("reads an absent generation as 0 and a stored counter as its number", async () => {
-    mocks.upstashPipeline.mockImplementation(async () => [{ result: null }]);
-    expect(await getWebhookGeneration()).toBe(0);
-    mocks.upstashPipeline.mockImplementation(async () => [{ result: "12" }]);
-    expect(await getWebhookGeneration()).toBe(12);
-  });
-
-  it("THROWS on a failed read instead of guessing a generation", async () => {
-    mocks.upstashPipeline.mockImplementation(async () => [{ error: "NOAUTH" }]);
-    await expect(getWebhookGeneration()).rejects.toThrow(/webhook generation read failed/);
-  });
-
-  it("THROWS on a malformed generation instead of reading it as 0", async () => {
-    mocks.upstashPipeline.mockImplementation(async () => [{ result: "not-a-counter" }]);
-    await expect(getWebhookGeneration()).rejects.toThrow(/invalid webhook generation/);
-  });
-});
-
 describe("getWebhookDeliveryTarget", () => {
   it("reads the URL and generation in one atomic EVAL, so a clear cannot pair the retired URL with a new generation", async () => {
     let calls = 0;
@@ -541,29 +512,6 @@ describe("getWebhookDeliveryTarget", () => {
 });
 
 describe("ledger claims", () => {
-  it("reports the atomic claim winner and treats an error as NOT won", async () => {
-    mocks.upstashEval.mockResolvedValue(["classic:a"]);
-    expect(await claimLedgerField(ANNOUNCE_FIRST_KEY, "classic:a")).toBe(true);
-    mocks.upstashEval.mockResolvedValue([]);
-    expect(await claimLedgerField(ANNOUNCE_FIRST_KEY, "classic:a")).toBe(false);
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mocks.upstashEval.mockRejectedValue(new Error("down"));
-    expect(await claimLedgerField(ANNOUNCE_FIRST_KEY, "classic:a")).toBe(false);
-    expect(errorSpy).toHaveBeenCalledWith("[announce] ledger claim failed:", "down");
-    errorSpy.mockRestore();
-  });
-
-  it("claims a bulk batch in one script and passes the captured generation as the fence", async () => {
-    mocks.upstashEval.mockResolvedValue(["b"]);
-    const won = await claimLedgerFields("led", ["a", "b", "c"], 7);
-    expect([...won]).toEqual(["b"]);
-    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
-    expect(script).toBe(CLAIM_LEDGER_SCRIPT);
-    expect(keys).toEqual(["led", ANNOUNCE_WEBHOOK_GENERATION_KEY]);
-    expect(args.slice(0, 2)).toEqual(["3", "7"]);
-    expect(args.slice(3)).toEqual(["a", "b", "c"]);
-  });
-
   it("claims and enqueues in one script, so a won claim can never lose its announcement", async () => {
     mocks.upstashEval.mockResolvedValue(1);
     expect(await claimLedgerFieldsAndEnqueue("led", ["a", "b"], 4, "milestone", 2, "id-1", { embeds: [] })).toBe(true);
@@ -589,16 +537,9 @@ describe("ledger claims", () => {
     expect(errorSpy).toHaveBeenCalledWith("[announce] ledger read failed:", "NOAUTH");
     errorSpy.mockRestore();
   });
-
-  it("reads HKEYS as a set, failing open to empty", async () => {
-    mocks.upstashPipeline.mockImplementation(async () => [{ result: ["a", "b"] }]);
-    expect([...(await ledgerFields("led"))]).toEqual(["a", "b"]);
-    mocks.upstashPipeline.mockRejectedValue(new Error("down"));
-    expect((await ledgerFields("led")).size).toBe(0);
-  });
 });
 
-describe("stateCompareSet / readStatePack", () => {
+describe("stateCompareSet", () => {
   it("maps the Lua reply to code/seq/prev", async () => {
     mocks.upstashEval.mockResolvedValue([1, 7, "v1|L0P0"]);
     const cas = await stateCompareSet("ctf:announce:lifecycle", "v1|L0P0", "v1|L1P0");
@@ -641,43 +582,9 @@ describe("stateCompareSet / readStatePack", () => {
     expect(keys).toEqual(["ctf:announce:lifecycle", "ctf:announce:seq", ANNOUNCE_LIFECYCLE_REV_KEY]);
     expect(args).toEqual(["v1|L0P0", "v1|L1P0", "9"]);
   });
-
-  it("reads the pack, null on miss or error", async () => {
-    mocks.upstashPipeline.mockImplementation(async () => [{ result: "v1|L1P0" }]);
-    expect(await readStatePack("ctf:announce:lifecycle")).toBe("v1|L1P0");
-    mocks.upstashPipeline.mockImplementation(async () => [{ result: null }]);
-    expect(await readStatePack("ctf:announce:lifecycle")).toBeNull();
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mocks.upstashPipeline.mockImplementation(async () => [{ error: "NOAUTH" }]);
-    expect(await readStatePack("ctf:announce:lifecycle")).toBeNull();
-    expect(errorSpy).toHaveBeenCalledWith("[announce] state read failed:", expect.any(String));
-    errorSpy.mockRestore();
-  });
 });
 
 describe("outbox", () => {
-  it("enqueues a pending entry stamped with the observed webhook generation and switch epoch, atomically", async () => {
-    mocks.upstashEval.mockResolvedValue(1);
-    expect(await outboxEnqueue("id-1", "first-blood", { embeds: [] }, 7, 3)).toBe(true);
-    const [script, keys, args] = mocks.upstashEval.mock.calls[0];
-    expect(script).toBe(OUTBOX_ENQUEUE_SCRIPT);
-    expect(keys).toEqual([ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY, ANNOUNCE_SEQ_KEY]);
-    expect(args[0]).toBe("id-1");
-    expect(String(args[1])).toContain('"status":"pending"');
-    expect(String(args[1])).toContain('"seq":-1');
-    expect(String(args[1])).toContain('"webhookGeneration":7');
-    expect(String(args[1])).toContain('"kindEpoch":3');
-    expect(args[2]).toBe(7);
-    expect(args[3]).toBe(3);
-    expect(args[4]).toBe("firstBlood");
-    expect(args[5]).toBe("epoch:first-blood");
-  });
-
-  it("reports a rejected enqueue when a captured counter is stale or the switch is off", async () => {
-    mocks.upstashEval.mockResolvedValue(0);
-    expect(await outboxEnqueue("id-1", "first-blood", { embeds: [] }, 7, 3)).toBe(false);
-  });
-
   it("claims the lease atomically when status, attempts, switch and epoch match, returning its owner token", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ result: 1 }]);
     const token = await outboxClaim("id-1", { status: "pending", n: 0, kind: "first-blood" });

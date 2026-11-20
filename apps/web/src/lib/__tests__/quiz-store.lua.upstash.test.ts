@@ -116,10 +116,10 @@ describe.skipIf(!liveConfigured)("quiz GRADE_SCRIPT against a live Redis", () =>
     expect(await answer(id, CORRECT, { dry: true })).toEqual(["correct", "20", "dry"]);
     expect(await hget(K.first, `quiz:${id}`)).toBeNull();
     expect(await answer(id, CORRECT)).toEqual(["correct", "20"]);
-    expect(JSON.parse(String(await hget(K.first, `quiz:${id}`)))).toEqual({ login: LOGIN, playerId: LOGIN, at: iso(T0) });
+    expect(JSON.parse(String(await hget(K.first, `quiz:${id}`)))).toEqual({ playerId: LOGIN, at: iso(T0) });
     expect(await answer(id, CORRECT, { nowMs: T0 + 1 })).toEqual(["already"]);
     expect(await answer(id, CORRECT, { nowMs: T0 + 2, login: other })).toEqual(["correct", "20"]);
-    expect(JSON.parse(String(await hget(K.first, `quiz:${id}`)))).toEqual({ login: LOGIN, playerId: LOGIN, at: iso(T0) });
+    expect(JSON.parse(String(await hget(K.first, `quiz:${id}`)))).toEqual({ playerId: LOGIN, at: iso(T0) });
   });
 
   it("returns missing for an unknown question", async () => {

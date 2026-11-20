@@ -24,7 +24,6 @@ vi.mock("@/lib/admin-store", () => ({ getAdminSettings: mocks.getAdminSettings }
 vi.mock("@/lib/announce/store", () => ({
   getAnnounceConfig: mocks.getAnnounceConfig,
   newOutboxId: mocks.newOutboxId,
-  readStatePack: mocks.readStatePack,
   readStatePackWithRev: async () => ({ pack: await mocks.readStatePack(), rev: 0 }),
   stateCompareSet: mocks.stateCompareSet,
   outboxPrune: mocks.outboxPrune,

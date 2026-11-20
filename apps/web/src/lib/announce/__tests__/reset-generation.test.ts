@@ -37,9 +37,9 @@ import {
   DISCORD_WEBHOOK_KEY,
 } from "@/lib/announce/keys";
 import {
+  CLAIM_LEDGER_AND_ENQUEUE_SCRIPT,
+  claimLedgerFieldsAndEnqueue,
   getAnnounceConfig,
-  outboxEnqueue,
-  OUTBOX_ENQUEUE_SCRIPT,
   OUTBOX_SKIP_SCRIPT,
   WEBHOOK_TARGET_SCRIPT,
   type OutboxEntry,
@@ -102,10 +102,10 @@ beforeEach(() => {
       return [1, 1, "", 0];
     }
     if (script === WEBHOOK_TARGET_SCRIPT) return [URL, String(state.generation)];
-    if (script === OUTBOX_ENQUEUE_SCRIPT) {
-      expect(keys).toEqual([ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY]);
-      if (Number(args[2]) !== state.generation) return 0;
-      state.outbox.set(String(args[0]), JSON.parse(String(args[1])) as OutboxEntry);
+    if (script === CLAIM_LEDGER_AND_ENQUEUE_SCRIPT) {
+      expect(keys).toEqual(["ctf:announce:milestone", ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY]);
+      if (Number(args[1]) !== state.generation) return 0;
+      state.outbox.set(String(args[4]), JSON.parse(String(args[5])) as OutboxEntry);
       return 1;
     }
     return 1;
@@ -145,13 +145,29 @@ describe("reset and the webhook generation", () => {
     // The producer's outbox write lands after the reset advanced the
     // generation, but it still carries the generation its config read
     // observed — the atomic enqueue check rejects it outright.
-    const accepted = await outboxEnqueue("race", "launch", { embeds: [] }, before.webhookGeneration, before.kindEpochs.launch);
+    const accepted = await claimLedgerFieldsAndEnqueue(
+      "ctf:announce:milestone",
+      ["mark-1"],
+      before.webhookGeneration,
+      "milestone",
+      before.kindEpochs.milestone,
+      "race",
+      { embeds: [] },
+    );
     expect(accepted).toBe(false);
     expect(state.outbox.has("race")).toBe(false);
 
     // So does the mid-reset observation: generation 1 with the OLD
     // event's settings read, which the post-wipe increment exists to fence.
-    const midReset = await outboxEnqueue("mid-race", "launch", { embeds: [] }, 1, before.kindEpochs.launch);
+    const midReset = await claimLedgerFieldsAndEnqueue(
+      "ctf:announce:milestone",
+      ["mark-1"],
+      1,
+      "milestone",
+      before.kindEpochs.milestone,
+      "mid-race",
+      { embeds: [] },
+    );
     expect(midReset).toBe(false);
     expect(state.outbox.has("mid-race")).toBe(false);
 

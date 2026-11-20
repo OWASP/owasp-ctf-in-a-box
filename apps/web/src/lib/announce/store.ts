@@ -357,14 +357,6 @@ export async function getWebhookUrl(): Promise<string | null> {
   return typeof res.result === "string" && res.result !== "" ? res.result : null;
 }
 
-/** The current webhook generation. A failed read THROWS: a sweep must not
- *  guess a generation and deliver stale work. */
-export async function getWebhookGeneration(): Promise<number> {
-  const [res] = await upstashPipeline([["GET", ANNOUNCE_WEBHOOK_GENERATION_KEY]]);
-  if (res.error) throw new Error(`webhook generation read failed: ${res.error}`);
-  return parseWebhookGeneration(res.result);
-}
-
 /** Reads the webhook URL and its generation in one atomic snapshot. A Lua
  *  EVAL is required, not two GETs in a pipeline: a clear can run between
  *  separate commands (and even between pipelined ones), deleting the URL and
@@ -404,69 +396,6 @@ export async function getWebhookDeliveryTarget(): Promise<{ url: string | null; 
 }
 
 // --- dedup ledgers -----------------------------------------------------------
-
-/** Claims fields in a dedup ledger with the webhook generation captured by
- *  the producer, in one atomic script: a claim is refused outright when the
- *  generation has moved since the producer read its config, so a claim
- *  cannot survive a webhook clear or master reset and then authorize a post
- *  against the new URL. The ledger key is a parameter (not a closed union)
- *  so the live-Redis suite can claim against run-unique keys. */
-export const CLAIM_LEDGER_SCRIPT = `
-local captured = ARGV[2]
-if captured ~= '' then
-  local current = redis.call('GET', KEYS[2]) or '0'
-  if current ~= captured then return {} end
-end
-local n = tonumber(ARGV[1])
-local at = ARGV[3]
-local won = {}
-for i = 1, n do
-  local field = ARGV[3 + i]
-  if redis.call('HSETNX', KEYS[1], field, at) == 1 then won[#won + 1] = field end
-end
-return won
-`;
-
-/** Claims one ledger field. `true` = this caller won the claim and should
- *  announce; `false` = already claimed, the webhook generation moved, or the
- *  claim could not be recorded (fail closed, never double-post). */
-export async function claimLedgerField(
-  ledgerKey: string,
-  field: string,
-  webhookGeneration?: number,
-): Promise<boolean> {
-  return (await claimLedgerFields(ledgerKey, [field], webhookGeneration)).size > 0;
-}
-
-/** Bulk-claims many fields atomically, returning which ones this caller
- *  won. Used by the remaining-time mark sweep and first-blood delivery. */
-export async function claimLedgerFields(
-  ledgerKey: string,
-  fields: readonly string[],
-  webhookGeneration?: number,
-): Promise<Set<string>> {
-  if (fields.length === 0) return new Set();
-  try {
-    const raw = await upstashEval(
-      CLAIM_LEDGER_SCRIPT,
-      [ledgerKey, ANNOUNCE_WEBHOOK_GENERATION_KEY],
-      [
-        String(fields.length),
-        webhookGeneration === undefined ? "" : String(webhookGeneration),
-        new Date().toISOString(),
-        ...fields,
-      ],
-    );
-    const won = new Set<string>();
-    if (Array.isArray(raw)) {
-      for (const field of raw) if (typeof field === "string") won.add(field);
-    }
-    return won;
-  } catch (err) {
-    console.error("[announce] ledger claim failed:", adminErrorLabel(err));
-    return new Set(); // a claim we cannot record must not double-post
-  }
-}
 
 /** Reads one ledger field's stored value, or null when absent/unreadable.
  *  Used by the announcer to find the first solver the award script recorded;
@@ -547,19 +476,6 @@ export async function claimLedgerFieldsAndEnqueue(
   } catch (err) {
     console.error("[announce] ledger claim/enqueue failed:", adminErrorLabel(err));
     return false;
-  }
-}
-
-/** The currently-claimed fields of a ledger, as a set. */
-export async function ledgerFields(ledgerKey: string): Promise<Set<string>> {
-  try {
-    const [res] = await upstashPipeline([["HKEYS", ledgerKey]]);
-    if (res.error) throw new Error(res.error);
-    const flat = Array.isArray(res.result) ? (res.result as string[]) : [];
-    return new Set(flat.filter((f): f is string => typeof f === "string"));
-  } catch (err) {
-    console.error("[announce] ledger read failed:", adminErrorLabel(err));
-    return new Set();
   }
 }
 
@@ -829,18 +745,6 @@ function parseCasReply(raw: unknown): StateCasResult {
   };
 }
 
-/** The current observed-state pack, or null when the key is absent. */
-export async function readStatePack(stateKey: typeof ANNOUNCE_LIFECYCLE_KEY): Promise<string | null> {
-  try {
-    const [res] = await upstashPipeline([["GET", stateKey]]);
-    if (res.error) throw new Error(res.error);
-    return typeof res.result === "string" ? res.result : null;
-  } catch (err) {
-    console.error("[announce] state read failed:", adminErrorLabel(err));
-    return null;
-  }
-}
-
 function parseRevision(raw: unknown): number {
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : 0;
@@ -954,13 +858,6 @@ export type OutboxEntry = {
   kindEpoch: number;
 };
 
-/** The outbox id for one announcement. `seq` comes from the CAS bump (or a
- *  timestamp+counter for ledger-driven kinds), so pause → resume → pause
- *  yields three distinct ids rather than one key overwriting the last. */
-export function outboxId(seq: number, kind: string): string {
-  return `${Date.now()}-${seq}-${kind}`;
-}
-
 let outboxCounter = 0;
 
 /** A collision-resistant outbox id for producers that must build the entry
@@ -970,60 +867,6 @@ let outboxCounter = 0;
 export function newOutboxId(kind: string): string {
   outboxCounter += 1;
   return `${Date.now()}-${outboxCounter}-${randomUUID().slice(0, 8)}-${kind}`;
-}
-
-/** Appends an entry to the outbox with the webhook generation and switch
- *  epoch its enqueue observed, but ONLY while those captured counters still
- *  match what is stored and the kind's switch is on. A producer that read
- *  its config before a disable, a re-enable or a webhook clear must not
- *  stamp an older notification with the newer state: the check and the write
- *  are one Lua script, so no concurrent admin write can interleave between
- *  them. Returns whether the entry was written. */
-export const OUTBOX_ENQUEUE_SCRIPT = `
-local enabled = redis.call('HGET', KEYS[2], ARGV[5])
-if enabled ~= '1' then return 0 end
-local currentEpoch = tonumber(redis.call('HGET', KEYS[2], ARGV[6])) or 0
-if currentEpoch ~= tonumber(ARGV[4]) then return 0 end
-local currentGeneration = tonumber(redis.call('GET', KEYS[3])) or 0
-if currentGeneration ~= tonumber(ARGV[3]) then return 0 end
-local seq = redis.call('INCR', KEYS[4])
-local entry = ARGV[2]
-local p = string.find(entry, '"seq":-1', 1, true)
-if p then
-  entry = string.sub(entry, 1, p - 1) .. '"seq":' .. tostring(seq) .. string.sub(entry, p + 8)
-end
-redis.call('HSET', KEYS[1], ARGV[1], entry)
-return 1
-`;
-
-export async function outboxEnqueue(
-  id: string,
-  kind: AnnouncementKind,
-  payload: unknown,
-  webhookGeneration: number,
-  kindEpoch: number,
-): Promise<boolean> {
-  const entry: OutboxEntry = {
-    kind,
-    payload,
-    at: new Date().toISOString(),
-    seq: -1,
-    n: 0,
-    status: "pending",
-    webhookGeneration,
-    kindEpoch,
-  };
-  try {
-    const res = await upstashEval(
-      OUTBOX_ENQUEUE_SCRIPT,
-      [ANNOUNCE_OUTBOX_KEY, DISCORD_CONFIG_KEY, ANNOUNCE_WEBHOOK_GENERATION_KEY, ANNOUNCE_SEQ_KEY],
-      [id, JSON.stringify(entry), webhookGeneration, kindEpoch, KIND_SWITCH_FIELDS[kind], KIND_EPOCH_FIELDS[kind]],
-    );
-    return res === 1;
-  } catch (err) {
-    console.error("[announce] outbox enqueue failed:", adminErrorLabel(err));
-    return false;
-  }
 }
 
 /** Atomically claims the delivery lease for an outbox entry iff its status

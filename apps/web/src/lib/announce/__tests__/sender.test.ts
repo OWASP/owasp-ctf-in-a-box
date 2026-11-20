@@ -31,7 +31,6 @@ vi.mock("@/lib/announce/store", () => ({
   getAnnounceConfig: mocks.getAnnounceConfig,
   getWebhookDeliveryTarget: mocks.getWebhookDeliveryTarget,
   newOutboxId: mocks.newOutboxId,
-  outboxEnqueue: mocks.outboxEnqueue,
   outboxPending: mocks.outboxPending,
   outboxRetryable: mocks.outboxRetryable,
   outboxClaim: mocks.outboxClaim,
@@ -43,7 +42,7 @@ vi.mock("@/lib/announce/store", () => ({
   bumpStatus: mocks.bumpStatus,
 }));
 
-import { enqueueAnnouncement, enqueueLedgerAnnouncement, flush, flushRetries, postToDiscord } from "@/lib/announce/sender";
+import { enqueueLedgerAnnouncement, flush, flushRetries, postToDiscord } from "@/lib/announce/sender";
 import type { DiscordMessage } from "@/lib/announce/messages";
 
 const URL = "https://discord.com/api/webhooks/1/aaaaaaaaaaaaaaaaaaaaaa";
@@ -95,42 +94,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
-});
-
-describe("enqueueAnnouncement", () => {
-  it("writes nothing when unconfigured or the kind's switch is off", async () => {
-    mocks.getAnnounceConfig.mockResolvedValue(configured({ webhookConfigured: false }));
-    await enqueueAnnouncement("first-blood", message);
-    expect(mocks.outboxEnqueue).not.toHaveBeenCalled();
-
-    mocks.getAnnounceConfig.mockResolvedValue(configured({ firstBlood: false }));
-    await enqueueAnnouncement("first-blood", message);
-    expect(mocks.outboxEnqueue).not.toHaveBeenCalled();
-  });
-
-  it("enqueues and arms a coalesced flush when armed", async () => {
-    await enqueueAnnouncement("first-blood", message);
-    expect(mocks.outboxEnqueue).toHaveBeenCalledTimes(1);
-    expect(mocks.outboxEnqueue).toHaveBeenCalledWith(expect.any(String), "first-blood", message, 0, 0);
-    await vi.advanceTimersByTimeAsync(300);
-    expect(mocks.outboxPending).toHaveBeenCalled();
-  });
-
-  it("generates an outbox id containing an 8-character random component", async () => {
-    await enqueueAnnouncement("first-blood", message);
-    const id = mocks.outboxEnqueue.mock.calls[0][0] as string;
-    expect(id).toMatch(/^\d+-\d+-[0-9a-f]{8}-first-blood$/);
-    await vi.advanceTimersByTimeAsync(300);
-  });
-
-  it("stamps the producer's captured counters and drops a write the store rejects as stale", async () => {
-    mocks.outboxEnqueue.mockResolvedValue(false);
-    await enqueueAnnouncement("first-blood", message, { webhookGeneration: 3, kindEpoch: 1 });
-    expect(mocks.outboxEnqueue).toHaveBeenCalledWith(expect.any(String), "first-blood", message, 3, 1);
-    // A stale write never enters the local queue, so no flush is armed for it.
-    expect(mocks.outboxPending).not.toHaveBeenCalled();
-    expect(mocks.getAnnounceConfig).not.toHaveBeenCalled();
-  });
 });
 
 describe("enqueueLedgerAnnouncement", () => {
@@ -414,7 +377,7 @@ describe("flushRetries", () => {
   });
 
   it("delivers a pending entry stranded by a restart or interrupted flush", async () => {
-    // Seeded straight into the outbox, never through enqueueAnnouncement, so
+    // Seeded straight into the outbox, never through an enqueue script, so
     // this process has no local queue id and no coalescing timer to rely on.
     mocks.outboxPending.mockResolvedValue([{ id: "p1", entry: entry("launch", "pending") }]);
     await flushRetries();

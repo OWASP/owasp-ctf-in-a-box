@@ -88,7 +88,7 @@ their **Status** line; the record itself is never rewritten.
 - [ADR 70 — Unattributed Secure Development scores are held, not dropped](#adr-70-unattributed-secure-development-scores-are-held-not-dropped)
 - [ADR 71 — The AI module is retired in v2.0.0](#adr-71-the-ai-module-is-retired-in-v200)
 - [ADR 72 — Admins are claimed with a one-time code, not named in `.env`](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env)
-- [ADR 73 — Discord announcements are app-scheduled, outbox-delivered, and claim-first](#adr-73-discord-announcements-are-app-scheduled-outbox-delivered-and-claim-first)
+- [ADR 73 — Discord announcements are app-scheduled, outbox-delivered, and record-first](#adr-73-discord-announcements-are-app-scheduled-outbox-delivered-and-record-first)
 - [ADR 74 — Players are kit accounts; GitHub is needed only for Secure Development](#adr-74-players-are-kit-accounts-github-is-needed-only-for-secure-development)
 
 ## ADR 1. Keep the GitHub fork/PR/Action flow — it is the pedagogy
@@ -4224,6 +4224,7 @@ the board shows the challenge on the next read. The reveal script's lock
 keys move from `KEYS[8..]` to `KEYS[9..]`. A future reader of the challenge
 list has to filter, and the source scan says so if it does not.
 
+
 ## ADR 69. The AI module is retired; AI security challenges run as Jeopardy challenges with flags
 
 **Status.** Accepted (#728, #730). Its v2.0.0 deletion is carried out 2026-11-15 by [ADR 71](#adr-71-the-ai-module-is-retired-in-v200), which supersedes the v2.0.0 half of the decision below. The link to the integrator's document points at its v1.1.0 copy, the last release that ships it.
@@ -4471,7 +4472,9 @@ race on a public URL. Admins named by username in `.env`: usernames are
 self-chosen at open sign-up, so the name can be taken first. A slow password
 hash for the code: there is no low entropy for it to protect.
 
-## ADR 73. Discord announcements are app-scheduled, outbox-delivered, and claim-first
+## ADR 73. Discord announcements are app-scheduled, outbox-delivered, and record-first
+
+**Status.** Accepted (#590, #639).
 
 **Context.** Issue #590. Event organizers run their community on Discord:
 first bloods, the event's own launch/pause/resume edges and time-remaining
@@ -4548,8 +4551,10 @@ work an event without the feature must never pay for.
   notification proceeds. The announcement claim on
   `ctf:announce:first-announced` is checked and written in the same Lua
   script that enqueues the post, so replicas, retries and races produce one
-  post, and a box with the feature off never claims — enabling later cannot
-  replay history. Lifecycle edges advance through one tiny Lua
+  post, and a box with the feature off does not claim past the immediate
+  post-solve notification window (a solve banked while off can only be
+  announced if the switch flips in the round trip before its notifier reads the
+  config) — enabling later cannot replay history. Lifecycle edges advance through one tiny Lua
   compare-and-swap (read pack and its revision, swap-if-expected, bump a seq
   id and the revision): the revision matters because a pause/resume cycle
   restores the same pack string, so the pack alone cannot fence a delayed
@@ -4580,10 +4585,22 @@ work an event without the feature must never pay for.
   bounds that window to a crashed owner's lease expiry. The kind switch is
   re-checked atomically in the claim script: turning a type off stops every
   unclaimed pending post immediately, without draining them; a post already
-  claimed by a sender may still reach Discord. The in-process queue is
-  bounded independently and drops only its own queue ids on overflow; the
-  Redis entry stays pending for the retry sweep, so the bound never weakens
-  the at-least-once guarantee.
+  claimed by a sender may still reach Discord.
+
+- **Counters, fences and reconciliation close concurrent configuration races.**
+  Every outbox entry carries the webhook generation and kind epoch it was
+  produced under. Clearing a webhook or turning a switch off advances those
+  counters atomically, and enqueue scripts, outbox claim and the lifecycle
+  CAS all refuse stale counters so a producer cannot borrow a newly re-enabled
+  state it did not observe. The master reset increments the webhook generation
+  twice: once before the wipe (failing closed against concurrent enqueues) and
+  a second time inside `RESET_SCRIPT` after the wipe, closing the race where a
+  ticker reads the bumped generation but the old event settings before the
+  script clears them. A Discord 429 response parks both delivery sweeps on a
+  shared `max()` cooldown without spending an attempt. When a cleared webhook
+  is re-armed, the route reconciles the stored lifecycle observation with current
+  event state first, so a closed or past edge is never replayed against the
+  fresh URL.
 
 - **Failure isolation is total on the background path.** State readers
   fail toward no-announcement (an unavailable Redis means no post); the
@@ -4641,6 +4658,7 @@ organizer need that justifies their per-tick observation cost), per-
 contestant DMs (needs a bot, not a webhook), richer widgets (buttons,
 threads), and announcing Secure Development's per-PR scores — the poller
 already has its own cadence and the scorer owns that story.
+
 ## ADR 74. Players are kit accounts; GitHub is needed only for Secure Development
 
 **Status.** Accepted (#731, built in #736–#744). Amended 2026-11-17 (#798): GitHub is the one OAuth provider; Google and Discord were dropped before release. Amends [ADR 19](#adr-19-organizer-admin-panel-runtime-override-layer), [ADR 40](#adr-40-csrf-assertion-in-the-proxy-rate-limits-keyed-on-the-login), [ADR 47](#adr-47-a-team-is-required-to-score-enforced-at-the-route-and-signposted-at-the-page), [ADR 48](#adr-48-per-contestant-support-actions-and-why-they-refuse-some-things), [ADR 49](#adr-49-firstteamat-records-the-funnels-conversion-moment-joinedat-does-not) and [ADR 50](#adr-50-metrics-are-computed-from-stored-data-forks-report-nothing): wherever they key a record on, or identify a player by, a GitHub login, read the player id. Admin access is [ADR 72](#adr-72-admins-are-claimed-with-a-one-time-code-not-named-in-env).

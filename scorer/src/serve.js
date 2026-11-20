@@ -466,7 +466,7 @@ function parsePort(raw) {
 /** Process entry for `score serve`: validates env, loads the rubric, picks
  *  the store (Redis via SRH when UPSTASH_REDIS_REST_URL is set, memory
  *  otherwise) and listens. `log` is injectable so tests can boot it quietly. */
-export async function serve(env = process.env, { log = console.error } = {}) {
+export async function serve(env = process.env, { log = console.error, fetchImpl } = {}) {
   const token = env.CTF_SCORE_BEARER_TOKEN ?? env.SCORER_TOKEN;
   if (!token) throw new Error("refusing to start: set CTF_SCORE_BEARER_TOKEN or SCORER_TOKEN");
   const port = parsePort(env.PORT);
@@ -476,7 +476,8 @@ export async function serve(env = process.env, { log = console.error } = {}) {
   const { loadRubric } = await import("./rubric.js");
   const rubric = loadRubric(env.RUBRIC_DIR);
   const useRedis = Boolean(env.UPSTASH_REDIS_REST_URL);
-  const store = useRedis ? createRedisStore({ log }) : createMemoryStore();
+  const store = useRedis ? createRedisStore({ url: env.UPSTASH_REDIS_REST_URL, token: env.UPSTASH_REDIS_REST_TOKEN, log, ...(fetchImpl ? { fetchImpl } : {}) }) : createMemoryStore();
+  if (useRedis) await store.ensureCompatible();
   const server = await startServer({ rubric, store, token, port });
   log(
     `ctf-score-engine: serving on :${server.address().port} ` +

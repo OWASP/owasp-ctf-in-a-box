@@ -698,27 +698,38 @@ events, not during one.
 
 1. **Export the v1 event** from the v1 box: `/admin` → Event →
    [Event archive](operations.md#archiving-and-replaying-an-event) →
-   **Export**. Keep the file as the record of that event. It is the event's
-   settings and content, with no player data; v2 does not migrate it.
-2. **Update `.env`.** Delete the `ADMIN_LOGINS` line (nothing reads it).
+   **Export**. Keep the file as the record of that event. It contains the
+   event's settings and content, with no player data; v2 does not migrate it.
+
+2. **Run the master reset on the v1 box** (`/admin` → Event → danger zone).
+   This must happen before deploying v2. It removes the recognizable v1 event
+   data that would otherwise prevent v2 services from starting. The reset is
+   destructive; export anything you need first.
+
+3. **Update `.env`.** Delete the `ADMIN_LOGINS` line (nothing reads it).
    The `GITHUB_CLIENT_*` keys stay required with Secure Development; without
    it they are optional ([Sign-in providers](#sign-in-providers)).
-3. **Deploy v2 and generate the admin claim code.** Each command below prints
+
+4. **Deploy v2 and generate the admin claim code.** Each command below prints
    the code once and stores only its hash in `ADMIN_CLAIM_CODE_HASH`.
-   - Compose: `./setup/ctf-setup.sh admin-code`, then bring the box up as
-     for v1.
+   - Compose: `./setup/ctf-setup.sh admin-code`, then bring the box up.
    - Fly: `deploy.sh --new-admin-code`, which deploys and sets the code.
    - AWS: the code lives in an SSM parameter that only `terraform apply`
      creates, so follow [the AWS upgrade order](aws.md#deploy): remove
      `admin_logins`, run `deploy.sh` to build and push, `terraform apply`,
      then `deploy.sh --skip-build --new-admin-code`.
-4. **Claim `/admin`**: create an account at `/sign-in`, then enter the code
+
+5. **Claim `/admin`**: create an account at `/sign-in`, then enter the code
    at `/admin/claim`.
-5. **Run the master reset** (`/admin` → Event → danger zone). It wipes the
-   v1 progress left in Redis and keeps the accounts made in step 4.
+
 6. **Set the event up again** in `/admin` (identity, schedule, modules,
    content), and have players create accounts. With Secure Development on,
    each player links GitHub from `/profile` so their PRs score.
+
+**Redis compatibility:** v2 checks Redis before starting. If it finds
+recognizable v1 event data, startup is refused. Do not manually create, modify
+or delete `ctf:meta:schema-version` to bypass this check. Runtime services
+initialize the schema marker automatically after confirming compatibility.
 
 ## Monitoring
 

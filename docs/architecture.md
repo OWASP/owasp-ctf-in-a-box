@@ -872,6 +872,37 @@ readable and writable while the stack is running, without a restart:
   other progress keys; distinct from `ctf:admin:audit`, which records what
   *organizers* changed.
 
+- **Discord announcements split organizer configuration from run state**
+  (`apps/web/src/lib/announce/keys.ts`, #590). **`ctf:admin:discord`** is a
+  hash of the non-secret per-kind switches and options, including the
+  milestone marks and the per-kind switch epochs an outbox entry fences
+  against.
+  **`ctf:admin:discord:webhook`** holds the webhook URL alone. The server-side
+  config read (`getAnnounceConfig`) includes it in its internal result, and
+  `publicConfig` strips it before any API response, so the secret never crosses
+  the client boundary. **`ctf:admin:discord:webhook-generation`** is a counter
+  advanced when the webhook is cleared and around a master reset (once before
+  the sweep, once after it), so an outbox entry enqueued from a pre-change
+  config snapshot cannot be delivered to a later URL. Replacing a configured
+  URL without clearing it preserves the generation: pending entries follow the
+  new URL, and only a clear or reset fences them. **`ctf:announce:*`** is the run
+  state — first-solver records and first-blood/milestone claims, the
+  lifecycle observation, `ctf:announce:seq`, the delivery outbox with its
+  per-id leases and rate-limit cooldown, and the status counters. The master
+  reset wipes that family so a fresh event starts silent, while the
+  organizer's webhook and switches survive.
+
+  **An event archive carries neither the announcement state nor the Discord
+  configuration.** `exportEventBundle` is an allowlist — `EVENT_POLICY_FIELDS`
+  plus event metadata, images, and each content module's own bundle — so it
+  reads no `ctf:admin:discord*` key and no `ctf:announce:*` key; the webhook
+  URL is never exported. `importEventBundle` likewise applies only
+  `EVENT_POLICY_FIELDS` and the event identity, so it never imports a webhook
+  or a switch, and the target box keeps its own. The import does call
+  `resetEvent`, which wipes `ctf:announce:*` and advances the webhook
+  generation, so the imported event starts with no carried-over claims,
+  lifecycle state, or queued posts.
+
 ### Support operations (ADR 48)
 
 `POST`/`DELETE /api/admin/ops/user` and `/api/admin/ops/team`, behind
@@ -1088,11 +1119,16 @@ all event data — `SCAN`+`DEL` of `ctf:solves:*`, `ctf:team:*`, `ctf:user:*`,
 `ctf:classic:solved`/`ctf:classic:solvecount`/`ctf:classic:lastAt`/
 `ctf:classic:opened:*` (the first-open times
 Insights measures from, #616), the activity log
-(`ctf:activity:log`), both sponsor hashes (`ctf:sponsors` and
+(`ctf:activity:log`), the announcement run state (`ctf:announce:*` — the
+first-solver records and claims, lifecycle observation, outbox, leases,
+cooldown and status, so a fresh run announces its own launches and first
+bloods), both sponsor hashes (`ctf:sponsors` and
 `ctf:sponsors:logo` — a sponsor list belongs to one event run, and deleting
 it is the only off switch) and the organizer's score adjustments
-(`ctf:adjustments`) — keeps `ctf:admin:settings`
-and (deliberately) the organizer's authored content,
+(`ctf:adjustments`) — keeps `ctf:admin:settings`, the Discord configuration
+(`ctf:admin:discord*`, including the webhook; its generation is advanced
+around the sweep so stale queued posts are fenced) and (deliberately) the
+organizer's authored content,
 `ctf:quiz:questions`/`ctf:quiz:key`, `ctf:classic:challenges`/
 `ctf:classic:flag`/`ctf:classic:flagnorm`/`ctf:classic:categories`, and
 appends a reset audit line. The prefix list is walked unconditionally: the
@@ -1321,6 +1357,17 @@ build.
   at all, so nothing needs to reach the box from the internet for a score to
   land: `sync` fetches comments outbound and submits them over the compose
   network. The kit has no machine-to-machine inbound surface.
+- **The Discord webhook is a posting credential, kept apart from the
+  config.** It lives alone at `ctf:admin:discord:webhook`, not in the
+  `ctf:admin:discord` hash, so the read that serves `/admin` never carries
+  it; writes go through their own `/api/admin/announcements/webhook` route,
+  and the audit line records only `set`/`cleared`, never the URL. A client
+  sees `webhookConfigured`, never the value, and the URL is never exported or
+  imported by an event archive. Validation is the SSRF boundary as well as a
+  sanity check: https only, no credentials, port, query or fragment, a
+  `discord.com`/`discordapp.com`/`ptb`/`canary` host, and an
+  `/api/webhooks/<id>/<token>` path, with fixed refusal messages that do not
+  echo the submitted URL.
 - **Per-event scorer image mirror.** The stock rubric ships public (ADR 18
   reversed ADR 17's private-by-default posture): the in-repo engine
   `scorer/` bakes the vendored `rubric.owasp/` unless you build with your

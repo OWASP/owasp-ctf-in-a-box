@@ -28,12 +28,29 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     solvecount: liveKey("classic", "solvecount"),
     solved: liveKey("classic", "solved"),
     lastAt: liveKey("classic", "lastAt"),
+    first: liveKey("classic", "first"),
   };
   // Per test, so no total asserted here can be inflated by an earlier test.
   let LOGIN = "";
   beforeEach(() => {
     LOGIN = freshId("alice");
   });
+  // Production keys solves/attempts by player id. The default login uses the
+  // fixed keys above so the assertions stay readable; another login gets its
+  // own hashes and must not see the first solver's rows.
+  const extraKeys = new Set<string>();
+  function attemptsKeyFor(login: string): string {
+    if (login === LOGIN) return K.attempts;
+    const key = liveKey("classic", `attempts-${login}`);
+    extraKeys.add(key);
+    return key;
+  }
+  function solvesKeyFor(login: string): string {
+    if (login === LOGIN) return K.solves;
+    const key = liveKey("classic", `solves-${login}`);
+    extraKeys.add(key);
+    return key;
+  }
 
   let script: string;
   let upstashEval: (typeof import("@/lib/upstash"))["upstashEval"];
@@ -48,7 +65,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
   }
 
   afterAll(async () => {
-    if (pipeline) await pipeline([["DEL", ...Object.values(K)]]);
+    if (pipeline) await pipeline([["DEL", ...Object.values(K), ...extraKeys]]);
   });
 
   /** Seeds a challenge the way `upsertChallenge` does: the comparison form of
@@ -82,7 +99,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     await load();
     return upstashEval(
       script,
-      [K.attempts, K.solves, K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt, ...lockKeys],
+      [attemptsKeyFor(login), solvesKeyFor(login), K.flagnorm, K.challenges, K.points, K.solvecount, K.solved, K.lastAt, K.first, ...lockKeys],
       [
         id,
         keys.normalizeFlag(flag),
@@ -94,6 +111,7 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
         dry ? "1" : "0",
         prereq, // ARGV[9] — #463 story prerequisite ("" = none)
         team, // ARGV[10] — #602 the viewer's team slug ("" = team of one)
+        `classic:${id}`, // ARGV[11] — first-solver ledger field
       ],
     );
   }
@@ -119,6 +137,21 @@ describe.skipIf(!liveConfigured)("classic SUBMIT_SCRIPT against a live Redis", (
     expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0));
     expect(await submit(second, "flag{two}", { nowMs: T0 + 4_000, cooldownMs: 0 })).toEqual(["correct", "10"]);
     expect(await hget(K.lastAt, LOGIN)).toBe(iso(T0 + 4_000));
+  });
+
+  it("records the first solver atomically, and only the first correct solve writes it", async () => {
+    const id = freshId("first");
+    const other = freshId("bob");
+    await seed(id, "flag{one}", 20);
+    expect(await hget(K.first, `classic:${id}`)).toBeNull();
+    expect(await submit(id, "flag{nope}", { cooldownMs: 0 })).toEqual(["incorrect", "1"]);
+    expect(await submit(id, "flag{one}", { cooldownMs: 0, dry: true })).toEqual(["correct", "20", "dry"]);
+    expect(await hget(K.first, `classic:${id}`)).toBeNull();
+    expect(await submit(id, "flag{one}", { cooldownMs: 0 })).toEqual(["correct", "20"]);
+    expect(JSON.parse(String(await hget(K.first, `classic:${id}`)))).toEqual({ playerId: LOGIN, at: iso(T0) });
+    expect(await submit(id, "flag{one}", { nowMs: T0 + 1_000, cooldownMs: 0 })).toEqual(["already"]);
+    expect(await submit(id, "flag{one}", { nowMs: T0 + 2_000, cooldownMs: 0, login: other })).toEqual(["correct", "20"]);
+    expect(JSON.parse(String(await hget(K.first, `classic:${id}`)))).toEqual({ playerId: LOGIN, at: iso(T0) });
   });
 
   it("returns missing for an unknown challenge and writes no attempts row", async () => {

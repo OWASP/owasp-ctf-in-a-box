@@ -31,6 +31,14 @@ describe("errorLabel", () => {
     expect(errorLabel(new Error("x".repeat(1000)))).toHaveLength(200);
   });
 
+  it("redacts named secrets before the length cap", () => {
+    const url = "https://discord.com/api/webhooks/1/aaaaaaaaaaaaaaaaaaaaaa";
+    const label = errorLabel(new Error(`${"x".repeat(150)}${url}`), [url]);
+    expect(label).not.toContain("aaaaaaaa");
+    expect(label).toContain("[redacted]");
+    expect(label.length).toBeLessThanOrEqual(200);
+  });
+
   it("never stringifies a non-Error throw — a thrown string could BE the flag", () => {
     expect(errorLabel("CTF{thrown-as-string}")).toBe("non-Error throw");
     expect(errorLabel({ flag: "CTF{obj}" })).toBe("non-Error throw");

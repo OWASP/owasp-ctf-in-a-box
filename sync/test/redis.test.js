@@ -400,6 +400,35 @@ test("ensureCompatible: Redis errors fail closed", async () => {
   await assert.rejects(redis.ensureCompatible(), /NOAUTH/);
 });
 
+test("ensureCompatible: accepts a v2 marker created during fingerprint scanning", async () => {
+  let markerReads = 0;
+  const scannedPatterns = [];
+  const redis = makeRedis(env, async (_url, init) => {
+    const commands = JSON.parse(init.body);
+    return new Response(JSON.stringify(commands.map((command) => {
+      if (command[0] === "GET") {
+        markerReads++;
+        return { result: markerReads === 1 ? null : "2" };
+      }
+      if (command[0] === "SCAN") {
+        scannedPatterns.push(command[3]);
+        return {
+          result: [
+            "0",
+            command[3] === "ctf:sd:held:*" ? ["ctf:sd:held:by:alice"] : [],
+          ],
+        };
+      }
+      return { result: null };
+    })), { status: 200 });
+  });
+
+  await redis.ensureCompatible();
+
+  assert.equal(markerReads, 2);
+  assert.ok(scannedPatterns.includes("ctf:sd:held:*"));
+});
+
 test("ensureCompatible: concurrent marker initialization succeeds when another process writes v2", async () => {
   let getCount = 0;
   const sent = [];

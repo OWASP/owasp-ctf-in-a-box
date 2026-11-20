@@ -2943,7 +2943,7 @@ EOF2
 
 @test "doctor refuses Redis compatibility check without a Redis password" {
   _redis_doctor_env
-  sed -i '/^REDIS_PASSWORD=/d' .env
+  awk '!/^REDIS_PASSWORD=/' .env > .env.tmp && mv .env.tmp .env
   _stub_redis_docker
 
   run env PATH="$BATS_TEST_TMPDIR/redis-stub:$PATH" NO_COLOR=1 \

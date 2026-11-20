@@ -410,6 +410,15 @@ export function createRedisStore({
       for (const pattern of V1_FINGERPRINT_PATTERNS) {
         const legacyKeys = await this.findKeysByPatterns([pattern]);
         if (legacyKeys.length > 0) {
+          // Another v2 service may have initialized the marker while this
+          // fingerprint scan was running. Only a confirmed v2 marker makes
+          // the matching key safe to ignore.
+          const concurrentVersion = await readVersion();
+          if (concurrentVersion === CURRENT_SCHEMA_VERSION) return;
+          if (concurrentVersion !== null) {
+            throw new Error(`unsupported Redis schema version: ${concurrentVersion}`);
+          }
+
           throw new Error(
             `incompatible Redis data detected (matching fingerprint: ${pattern}). Export required data and perform a master reset before starting the v2 scorer.`,
           );

@@ -30,6 +30,48 @@ SCORE_IMAGE=
 EOF
 }
 
+# App-only doctor environment with Redis configured, but no org-scoped checks.
+_redis_doctor_env() {
+  cat > .env <<'EOF'
+GITHUB_ORG=
+ADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9
+SCORE_IMAGE=
+REDIS_PASSWORD=test-password
+EOF
+}
+
+# Mock only Docker commands used by the Redis compatibility doctor check.
+# Configure behavior through REDIS_MARKER, REDIS_SCAN_KEY, REDIS_FAIL_GET,
+# and REDIS_FAIL_SCAN environment variables.
+_stub_redis_docker() {
+  mkdir -p "$BATS_TEST_TMPDIR/redis-stub"
+  cat > "$BATS_TEST_TMPDIR/redis-stub/docker" <<'DOCKER'
+#!/usr/bin/env bash
+echo "docker $*" >> "$BATS_TEST_TMPDIR/docker.calls"
+
+case "$*" in
+  *"GET ctf:meta:schema-version"*)
+    [ "${REDIS_FAIL_GET:-0}" = 1 ] && exit 1
+    if [ -n "${REDIS_MARKER:-}" ]; then
+      printf '%s\n' "$REDIS_MARKER"
+    fi
+    exit 0
+    ;;
+  *"--scan --pattern"*)
+    [ "${REDIS_FAIL_SCAN:-0}" = 1 ] && exit 1
+    if [ -n "${REDIS_SCAN_KEY:-}" ]; then
+      printf '%s\n' "$REDIS_SCAN_KEY"
+    fi
+    exit 0
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+DOCKER
+  chmod +x "$BATS_TEST_TMPDIR/redis-stub/docker"
+}
+
 @test "org --dry-run plans the full idempotent sequence per target" {
   run env SCORE_IMAGE=ghcr.io/myorg/custom-score:v2 bash "$SCRIPT" org --dry-run
   [ "$status" -eq 0 ]
@@ -662,11 +704,12 @@ EOF
 # the org's Actions secrets.
 
 @test "doctor says nothing about leftover SCORE_INGEST or CHALLENGES_GATE_* keys (#503)" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\nSCORE_INGEST=push\nCHALLENGES_GATE_ENABLED=true\nCHALLENGES_GATE_PASSWORD=open-sesame\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\nSCORE_INGEST=push\nCHALLENGES_GATE_ENABLED=true\nCHALLENGES_GATE_PASSWORD=open-sesame\nREDIS_PASSWORD=test-password\n' > .env
+  _stub_redis_docker
   mkdir -p stubs
   printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
   chmod +x stubs/gh
-  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
+  run env REDIS_MARKER=2 PATH="$BATS_TEST_TMPDIR/redis-stub:$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
   if [ "$status" -ne 0 ]; then
     echo "doctor failed on an .env with only unknown extra keys (status $status)" >&2
     return 1
@@ -675,7 +718,8 @@ EOF
 }
 
 @test "doctor no longer reads the org's Actions secrets (#503)" {
-  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\n' > .env
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nGITHUB_APP_ID=42\nREDIS_PASSWORD=test-password\n' > .env
+  _stub_redis_docker
   mkdir -p stubs
   cat > stubs/gh <<EOF
 #!/usr/bin/env bash
@@ -686,7 +730,7 @@ case "\$*" in
 esac
 EOF
   chmod +x stubs/gh
-  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
+  run env REDIS_MARKER=2 PATH="$BATS_TEST_TMPDIR/redis-stub:$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
   # The stub was reached at all, so an absent secrets call is not vacuous.
   if ! grep -qF 'packages/container/score' "$BATS_TEST_TMPDIR/gh.calls"; then
     echo 'doctor never reached the org-level checks; the assertion below would be vacuous' >&2
@@ -702,12 +746,13 @@ EOF
 # #464: doctor reads the box's launch state from /health/deep (public). A
 # stubbed curl stands in for the box; gh fails so nothing org-scoped runs.
 doctor_with_box() {
-  printf 'GITHUB_ORG=\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\nEVENT_URL=https://box.example\n' > .env
+  printf 'GITHUB_ORG=\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\nEVENT_URL=https://box.example\nREDIS_PASSWORD=test-password\n' > .env
+  _stub_redis_docker
   mkdir -p stubs
   printf '#!/usr/bin/env bash\nexit 1\n' > stubs/gh
   printf '#!/usr/bin/env bash\n%s\n' "$1" > stubs/curl
   chmod +x stubs/gh stubs/curl
-  run env PATH="$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
+  run env REDIS_MARKER=2 PATH="$BATS_TEST_TMPDIR/redis-stub:$BATS_TEST_TMPDIR/stubs:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor
 }
 
 @test "doctor warns when the box reports it is not launched (#464)" {
@@ -1083,7 +1128,7 @@ _stub_prereqs() {
 # it reached GitHub over the network and offered to bring the stack up.
 @test "bare invocation runs the wizard (the default), not a usage error" {
   _stub_prereqs
-  run env CTF_NO_BROWSER=1 PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT"
+  run bash -c 'env CTF_NO_BROWSER=1 PATH="$1:$PATH" bash "$2" </dev/null' _ "$BATS_TEST_TMPDIR/stubbin" "$SCRIPT"
   echo "$output" | grep -q "OWASP CTF in a Box setup wizard"
   [ -z "$(echo "$output" | grep -F 'usage: ctf-setup.sh')" ]
 }
@@ -1182,7 +1227,7 @@ _stub_prereqs() {
   printf '#!/bin/sh\n[ "$1" = auth ] && exit 0\nexit 1\n' > "$BATS_TEST_TMPDIR/stubbin/gh"
   chmod +x "$BATS_TEST_TMPDIR/stubbin/gh"
   printf 'GITHUB_ORG=\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=\n' > .env
-  run env CTF_NO_BROWSER=1 PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" wizard
+  run env CTF_NO_BROWSER=1 PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" bash "$SCRIPT" wizard </dev/null
   [ "$status" -eq 0 ]
   [ -z "$(echo "$output" | grep -F "Still can't see org")" ]
   echo "$output" | grep -qF "7/9  Event org"
@@ -1727,7 +1772,7 @@ EOF2
   printf '#!/bin/sh\necho "STUB-XDG $*"\n' > stubs/xdg-open
   printf '#!/bin/sh\nexit 0\n' > stubs/gh
   chmod +x stubs/open stubs/xdg-open stubs/gh
-  PATH="$(pwd)/stubs:$PATH" run bash "$SCRIPT" oauth-app
+  PATH="$(pwd)/stubs:$PATH" run bash "$SCRIPT" oauth-app </dev/null
   [ -z "$(printf '%s' "$output" | grep -F 'STUB-OPEN')" ]
   printf '%s' "$output" | grep -qF 'open this manually:'
 }
@@ -2561,6 +2606,7 @@ patched() {
 }
 
 @test "launch flips every fork public, waits for Launch, and reports it" {
+  need_jq
   vis_env
   echo true > state/launched
   for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
@@ -2573,6 +2619,7 @@ patched() {
 }
 
 @test "a re-run of launch is a no-op" {
+  need_jq
   vis_env
   echo true > state/launched
   run_vis launch
@@ -2581,6 +2628,7 @@ patched() {
 }
 
 @test "launch reports the exact state when a flip fails partway, and a re-run completes it" {
+  need_jq
   vis_env
   echo true > state/launched
   for r in juice-shop WebGoat DVWA VAmPI SecurityShepherd VulnerableApp; do echo private > "state/vis_$r"; done
@@ -2816,6 +2864,126 @@ EOF2
   run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor --dry-run
   printf '%s' "$output" | grep -qF -- "DRY-RUN: would check"
   [ ! -s "$BATS_TEST_TMPDIR/gh.calls" ]
+}
+
+@test "doctor accepts Redis schema version 2 without scanning fingerprints" {
+  _redis_doctor_env
+  _stub_redis_docker
+
+  run env PATH="$BATS_TEST_TMPDIR/redis-stub:$PATH" \
+    REDIS_MARKER=2 NO_COLOR=1 bash "$SCRIPT" doctor
+
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | grep -qF 'Redis schema: version 2'
+  grep -qF 'GET ctf:meta:schema-version' "$BATS_TEST_TMPDIR/docker.calls"
+  ! grep -qF -- '--scan --pattern' "$BATS_TEST_TMPDIR/docker.calls"
+}
+
+@test "doctor refuses an unsupported Redis schema version" {
+  _redis_doctor_env
+  _stub_redis_docker
+
+  run env PATH="$BATS_TEST_TMPDIR/redis-stub:$PATH" \
+    REDIS_MARKER=1 NO_COLOR=1 bash "$SCRIPT" doctor
+
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF 'unsupported version 1'
+  ! grep -qF -- '--scan --pattern' "$BATS_TEST_TMPDIR/docker.calls"
+}
+
+@test "doctor refuses Redis containing recognizable legacy v1 event data" {
+  _redis_doctor_env
+  _stub_redis_docker
+
+  run env PATH="$BATS_TEST_TMPDIR/redis-stub:$PATH" \
+    REDIS_SCAN_KEY=ctf:user:legacy-player NO_COLOR=1 \
+    bash "$SCRIPT" doctor
+
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF 'recognizable legacy v1 event data'
+  grep -qF -- '--scan --pattern ctf:solves:*' "$BATS_TEST_TMPDIR/docker.calls"
+}
+
+@test "doctor accepts unmarked Redis with no recognizable legacy data" {
+  _redis_doctor_env
+  _stub_redis_docker
+
+  run env PATH="$BATS_TEST_TMPDIR/redis-stub:$PATH" NO_COLOR=1 \
+    bash "$SCRIPT" doctor
+
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | grep -qF 'no recognizable v1 event data'
+  [ "$(grep -cF -- '--scan --pattern' "$BATS_TEST_TMPDIR/docker.calls")" -eq 23 ]
+  ! grep -qF 'SET ctf:meta:schema-version' "$BATS_TEST_TMPDIR/docker.calls"
+}
+
+@test "doctor fails closed when Redis schema marker cannot be read" {
+  _redis_doctor_env
+  _stub_redis_docker
+
+  run env PATH="$BATS_TEST_TMPDIR/redis-stub:$PATH" \
+    REDIS_FAIL_GET=1 NO_COLOR=1 bash "$SCRIPT" doctor
+
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF 'could not read the schema marker'
+  ! grep -qF -- '--scan --pattern' "$BATS_TEST_TMPDIR/docker.calls"
+}
+
+@test "doctor fails closed when a Redis fingerprint scan fails" {
+  _redis_doctor_env
+  _stub_redis_docker
+
+  run env PATH="$BATS_TEST_TMPDIR/redis-stub:$PATH" \
+    REDIS_FAIL_SCAN=1 NO_COLOR=1 bash "$SCRIPT" doctor
+
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF 'fingerprint scan failed'
+  grep -qF -- '--scan --pattern ctf:solves:*' "$BATS_TEST_TMPDIR/docker.calls"
+}
+
+@test "doctor refuses Redis compatibility check without a Redis password" {
+  _redis_doctor_env
+  sed -i '/^REDIS_PASSWORD=/d' .env
+  _stub_redis_docker
+
+  run env PATH="$BATS_TEST_TMPDIR/redis-stub:$PATH" NO_COLOR=1 \
+    bash "$SCRIPT" doctor
+
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF 'cannot inspect Redis without REDIS_PASSWORD'
+  [ ! -s "$BATS_TEST_TMPDIR/docker.calls" ]
+}
+
+@test "doctor fails closed when the Redis fingerprint fixture is missing" {
+  _redis_doctor_env
+  _stub_redis_docker
+
+  local fixture="$BATS_TEST_DIRNAME/../../test/fixtures/v1-fingerprints.json"
+  local backup="$BATS_TEST_TMPDIR/v1-fingerprints.json"
+
+  mv "$fixture" "$backup"
+
+  run env PATH="$BATS_TEST_TMPDIR/redis-stub:$PATH" NO_COLOR=1 \
+    bash "$SCRIPT" doctor
+
+  mv "$backup" "$fixture"
+
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF 'could not load the v1 fingerprint fixture'
+  grep -qF "GET ctf:meta:schema-version" "$BATS_TEST_TMPDIR/docker.calls"
+  ! grep -qF -- "--scan --pattern" "$BATS_TEST_TMPDIR/docker.calls"
+}
+@test "doctor --dry-run does not invoke Docker for Redis compatibility" {
+  printf 'GITHUB_ORG=test-event-org\nADMIN_CLAIM_CODE_HASH=3eb1bd439947eb762998e566ccc2e099c791118b2f40579cc4f7da2b5061b7f9\nSCORE_IMAGE=ghcr.io/fixture/score:latest\nREDIS_PASSWORD=test-password\nGITHUB_APP_ID=42\nEVENT_URL=https://box.example\n' > .env
+  mkdir -p "$BATS_TEST_TMPDIR/stubbin"
+  printf '#!/usr/bin/env bash\necho "docker $*" >> "%s/docker.calls"\nexit 1\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/stubbin/docker"
+  chmod +x "$BATS_TEST_TMPDIR/stubbin/docker"
+
+  run env PATH="$BATS_TEST_TMPDIR/stubbin:$PATH" NO_COLOR=1 bash "$SCRIPT" doctor --dry-run
+
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | grep -qF 'DRY-RUN: would inspect Redis schema compatibility'
+  [ ! -s "$BATS_TEST_TMPDIR/docker.calls" ]
 }
 
 # CLI review of #536: an unreadable fork count must not become advice. It is

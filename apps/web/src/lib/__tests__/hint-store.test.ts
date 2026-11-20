@@ -1386,6 +1386,20 @@ describe("classic hint lookups never read the text hash", () => {
     const commands = mocks.upstashPipeline.mock.calls.flatMap(([batch]) => batch);
     expectNoTextRead(commands);
   });
+
+  it("falls back to the event-wide price when per-rung cost is unpriced, and preserves price 0", async () => {
+    const store = await loadStore();
+    const reads: { result?: unknown; error?: string }[] = [];
+    for (let level = 1; level <= 10; level += 1) {
+      reads.push({ result: level <= 2 ? 1 : 0 });
+      reads.push({ result: level === 1 ? [null] : level === 2 ? ["0"] : [null] });
+    }
+    mocks.upstashPipeline.mockResolvedValueOnce(reads);
+    await expect(store.getClassicHintLadder("web-robots-only", 15)).resolves.toEqual([
+      { level: 1, price: 15 },
+      { level: 2, price: 0 },
+    ]);
+  });
 });
 
 describe("the story lock on classic hints (#463)", () => {
@@ -1497,17 +1511,17 @@ describe("hidden challenges", () => {
     classicHintRead();
     mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
     await store.revealHint("octocat", "classic", "web-robots-only");
-    expect(mocks.upstashEval.mock.calls[0][2][13]).toBe("1");
+    expect(mocks.upstashEval.mock.calls[0][2][13]).toBe("web-robots-only");
     mocks.upstashEval.mockResolvedValueOnce(["charged", "text", 10]);
     await store.revealHint("octocat", "juice-shop", "Challenge-5-Admin-Section");
-    expect(mocks.upstashEval.mock.calls[1][2][13]).toBe("0");
+    expect(mocks.upstashEval.mock.calls[1][2][13]).toBe("");
   });
 
   it("checks visibility first in the script: before the lock, the hint read and every write, skipped on a preview", async () => {
     const { REVEAL_SCRIPT } = await loadStore();
-    const check = REVEAL_SCRIPT.indexOf("classicHidden(redis.call('HGET', KEYS[8], ARGV[1]))");
+    const check = REVEAL_SCRIPT.indexOf("classicHidden(redis.call('HGET', KEYS[8], ARGV[14]))");
     expect(check).toBeGreaterThan(-1);
-    expect(REVEAL_SCRIPT.slice(0, check)).toContain("ARGV[6] ~= '1' and ARGV[14] == '1'");
+    expect(REVEAL_SCRIPT.slice(0, check)).toContain("ARGV[6] ~= '1' and ARGV[14] and ARGV[14] ~= ''");
     for (const later of ["for i = 11, #KEYS", "HEXISTS', KEYS[3]", "HGET', KEYS[3]", "SADD", "HINCRBY"]) {
       expect(check).toBeLessThan(REVEAL_SCRIPT.indexOf(later));
     }

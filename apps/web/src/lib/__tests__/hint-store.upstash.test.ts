@@ -591,7 +591,7 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     const k = (n: string) => `ctf-test:hint-hidden:${RUN}:${n}`;
     const [set, spent, hints, at, rev, lowering, cfg, recs, costs, costrec] = ["set", "spent", "hints", "at", "rev", "lowering", "cfg", "recs", "costs", "costrec"].map(k);
     const call = (dry = "0") =>
-      upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering, cfg, recs, costs, costrec], ["web", "classic/web", "alice", 10, "2026-10-01T00:00:00Z", dry, "", "", "", "", "", "", "", "1"]);
+      upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering, cfg, recs, costs, costrec], ["web", "classic/web", "alice", 10, "2026-10-01T00:00:00Z", dry, "", "", "", "", "", "", "", "web"]);
     try {
       await pipeline([
         ["HSET", hints, "web", "look at the cookie"],
@@ -622,7 +622,7 @@ describe.skipIf(!liveConfigured)("hint store against a live Redis (throwaway key
     const k = (n: string) => `ctf-test:hint-release:${RUN}:${n}`;
     const [set, spent, hints, at, rev, lowering, cfg, recs, costs, costrec] = ["set", "spent", "hints", "at", "rev", "lowering", "cfg", "recs", "costs", "costrec"].map(k);
     const call = () =>
-      upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering, cfg, recs, costs, costrec], ["web", "classic/web", "alice", 10, "2026-10-01T00:00:00Z", "0", "", "", "", "", "", "", "", "1"]);
+      upstashEval(REVEAL_SCRIPT, [set, spent, hints, at, rev, lowering, cfg, recs, costs, costrec], ["web", "classic/web", "alice", 10, "2026-10-01T00:00:00Z", "0", "", "", "", "", "", "", "", "web"]);
     const record = (releaseAtMs: number) =>
       JSON.stringify({ id: "web", title: "Web", points: 10, enabled: false, releaseAt: new Date(releaseAtMs).toISOString(), releaseAtMs });
     try {

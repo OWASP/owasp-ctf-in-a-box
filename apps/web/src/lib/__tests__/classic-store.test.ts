@@ -1335,4 +1335,23 @@ describe("hint ladders", () => {
     if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors));
     expect(parsed.bundle.challenges[0].hints).toEqual(bundle.challenges[0].hints);
   });
+
+  it("emits hints instead of hint on single-hint challenges when another challenge has a ladder", async () => {
+    const idA = "chal-a";
+    const idB = "chal-b";
+    mocks.upstashPipeline.mockResolvedValueOnce([
+      { result: [idA, JSON.stringify(challenge({ id: idA })), idB, JSON.stringify(challenge({ id: idB }))] },
+      { result: [idA, "ctfbox{A}", idB, "ctfbox{B}"] },
+      { result: [idA, "first", `${idA}#2`, "second", idB, "single"] },
+      { result: [idA, "7"] },
+    ]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: JSON.stringify(["Web"]) }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: null }]);
+    const bundle = await exportBundle();
+    expect(bundle.version).toBe(5);
+    expect(bundle.challenges.find((c) => c.id === idB)?.hints).toEqual([{ text: "single", cost: null }]);
+    expect(bundle.challenges.find((c) => c.id === idB)).not.toHaveProperty("hint");
+    const parsed = parseBundle(serializeBundle(bundle));
+    expect(parsed.ok).toBe(true);
+  });
 });

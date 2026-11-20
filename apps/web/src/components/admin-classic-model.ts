@@ -404,6 +404,7 @@ export function exportBundleFrom(
   );
   const attachmentFiles = files?.filter((f) => named.has(`${f.item}\n${f.sha256}`));
   const withFiles = attachmentFiles?.length ? attachmentFiles : undefined;
+  const ladderBundle = rows.some(({ hints }) => carriesLadder(hints));
   const challenges = rows.map(({ challenge: c, flag, hints }) => ({
     id: c.id,
     title: c.title,
@@ -417,7 +418,7 @@ export function exportBundleFrom(
     // #210 caught hint; caseSensitive had the same latent hole), and a
     // re-import of such a bundle downgrades grading and deletes hints.
     ...(c.caseSensitive ? { caseSensitive: true as const } : {}),
-    ...(hints.length === 0 ? {} : carriesLadder(hints) ? { hints } : { hint: hints[0].text }),
+    ...(hints.length === 0 ? {} : ladderBundle ? { hints } : { hint: hints[0].text }),
     // Visibility (v4), the server export's rule: a backup restores a hidden
     // challenge hidden.
     ...(c.enabled === false ? { enabled: false } : {}),
@@ -429,7 +430,7 @@ export function exportBundleFrom(
     version: bundleVersionFor(
       withFiles !== undefined,
       challenges.some(carriesVisibility) || rows.some(({ hints }) => hints.length > 0 && !carriesLadder(hints)),
-      rows.some(({ hints }) => carriesLadder(hints)),
+      ladderBundle,
     ),
     categories: [...categories],
     stories: stories.map((st) => ({ ...st, steps: st.steps.filter((step) => exported.has(step)) })),

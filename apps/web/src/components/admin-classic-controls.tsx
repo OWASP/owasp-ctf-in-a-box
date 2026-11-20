@@ -262,6 +262,34 @@ export default function AdminClassicControls({
   });
   const { rows: challenges, categories, loaded, reorderPending } = resource;
 
+  // Ordered hint purchases are position-based; the editor warns before a
+  // ladder is reshaped. Refresh hint purchases when entering edit mode so
+  // purchases made after mount are not missed; if refresh fails, mark
+  // purchases as unknown to fail safe.
+  const editingId = resource.editing?.mode === "edit" ? resource.editing.id : null;
+  useEffect(() => {
+    if (!editingId) return;
+    let cancelled = false;
+    fetch("/api/admin/classic")
+      .then(async (res) => {
+        if (!res.ok) throw new Error(String(res.status));
+        const data = await parseJson<{ hintPurchases?: Record<string, number> | null }>(res);
+        if (cancelled) return;
+        if (data.hintPurchases === null) setHintPurchases({ known: false, byId: {} });
+        else if (data.hintPurchases && typeof data.hintPurchases === "object") {
+          setHintPurchases({ known: true, byId: data.hintPurchases });
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("Failed to refresh hint purchases:", err);
+        setHintPurchases({ known: false, byId: {} });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [editingId]);
+
   // Category editing (input, in-flight flag, refusal) and its writes; the
   // list itself is the resource's because the same GET and a bulk import own
   // it.

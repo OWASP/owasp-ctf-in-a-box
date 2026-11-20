@@ -192,6 +192,26 @@ describe("AdminClassicControls", () => {
       expect(parseBundle(text).ok).toBe(true);
     });
 
+    it("emits hints for both ladder and single-hint challenges when a bundle carries any ladder (v5)", () => {
+      const ladderRow = {
+        challenge: { id: "c-1", title: "C1", category: "Web", description: "", points: 10, order: 0 },
+        flag: "CTF{1}",
+        hints: [{ text: "first", cost: 5 }, { text: "second", cost: null }],
+      };
+      const singleHintRow = {
+        challenge: { id: "c-2", title: "C2", category: "Web", description: "", points: 10, order: 1 },
+        flag: "CTF{2}",
+        hints: [{ text: "only", cost: null }],
+      };
+      const bundle = exportBundleFrom([ladderRow, singleHintRow], ["Web"]);
+      expect(bundle.version).toBe(5);
+      expect(bundle.challenges[0].hints).toEqual([{ text: "first", cost: 5 }, { text: "second", cost: null }]);
+      expect(bundle.challenges[1].hints).toEqual([{ text: "only", cost: null }]);
+      expect(bundle.challenges[1]).not.toHaveProperty("hint");
+      const parsed = parseBundle(serializeBundle(bundle));
+      expect(parsed.ok).toBe(true);
+    });
+
     it("offers Include files next to Export, unticked by default", () => {
       const html = renderControls([row1]);
       expect(html).toContain("Include files");

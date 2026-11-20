@@ -943,6 +943,7 @@ export async function exportBundle(): Promise<ClassicBundle> {
     listStories(),
     listAllAttachments("classic"),
   ]);
+  const ladderBundle = rows.some(({ hints }) => carriesLadder(hints));
   const challenges: ClassicBundleChallenge[] = rows.map(({ challenge, flag, hints }) => ({
     id: challenge.id,
     title: challenge.title,
@@ -959,7 +960,7 @@ export async function exportBundle(): Promise<ClassicBundle> {
     // Same only-when-set rule as caseSensitive: a hint-less board exports
     // without a hint field. A single rung at the event-wide price is written
     // as v4's `hint` string; only a real ladder needs v5's ordered `hints`.
-    ...(hints.length === 0 ? {} : carriesLadder(hints) ? { hints } : { hint: hints[0].text }),
+    ...(hints.length === 0 ? {} : ladderBundle ? { hints } : { hint: hints[0].text }),
     // Visibility, only when it says something (v4): a backup restores a
     // hidden challenge hidden, never live.
     ...(challenge.enabled === false ? { enabled: false } : {}),
@@ -979,7 +980,7 @@ export async function exportBundle(): Promise<ClassicBundle> {
     version: bundleVersionFor(
       false,
       challenges.some(carriesVisibility) || rows.some(({ hints }) => hints.length > 0 && !carriesLadder(hints)),
-      rows.some(({ hints }) => carriesLadder(hints)),
+      ladderBundle,
     ),
     categories,
     challenges,

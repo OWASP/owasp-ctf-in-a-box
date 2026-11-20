@@ -190,7 +190,7 @@ ${CLASSIC_HIDDEN_LUA}
 -- Visibility comes first: a hidden Jeopardy challenge's hint is refused like
 -- an unknown one, before the lock, the text or any write. The admin preview
 -- (dry run) skips it, like the lock.
-if ARGV[6] ~= '1' and ARGV[14] == '1' and classicHidden(redis.call('HGET', KEYS[8], ARGV[1])) then
+if ARGV[6] ~= '1' and ARGV[14] and ARGV[14] ~= '' and classicHidden(redis.call('HGET', KEYS[8], ARGV[14])) then
   return {'missing'}
 end
 -- The story lock (#463) comes next: a locked step's hint is never read.
@@ -716,8 +716,8 @@ async function attemptReveal(
         quoted,
         // ARGV[13]: the default price, for a settings hash with none.
         String(HINT_COST),
-        // ARGV[14]: check the Jeopardy challenge's visibility.
-        target === "classic" ? "1" : "0",
+        // ARGV[14]: check the Jeopardy challenge's visibility (the challenge id, or "" for non-classic).
+        target === "classic" ? id : "",
         // ARGV[15]: the rung's cost-hash field, "" for targets without
         // per-hint prices; ARGV[16]: the previous rung, "" for level 1.
         costField,
@@ -888,7 +888,8 @@ export async function getClassicHintLadder(
       if (exists.error !== undefined) throw new Error(exists.error);
       if (costRead.error !== undefined) throw new Error(costRead.error);
       if (Number(exists.result) !== 1) break;
-      const raw = Array.isArray(costRead.result) ? Number(costRead.result[0]) : NaN;
+      const entry = Array.isArray(costRead.result) ? costRead.result[0] : null;
+      const raw = typeof entry === "number" ? entry : typeof entry === "string" ? Number(entry) : NaN;
       const cost = Number.isInteger(raw) && raw >= 0 ? raw : null;
       rungs.push({ level, price: hintPrice(cost, fallbackCost) });
     }

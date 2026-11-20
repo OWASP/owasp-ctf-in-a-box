@@ -3,6 +3,9 @@
 // a JSON array of command arrays, bearer token, positional { result } replies.
 import { TARGETS } from "./config.js";
 
+export const SCHEMA_VERSION_KEY = "ctf:meta:schema-version";
+export const CURRENT_SCHEMA_VERSION = "2";
+
 const SYNC_STATUS_KEY = "ctf:sync:status";
 // The poller's DURABLE state (ADR 64): per-repo `since`/ETag cursors, the seen
 // cache, `ingested`/`dropped`/`lastDrop`, and the last master-reset epoch it
@@ -161,6 +164,38 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
   }
 
   return {
+    async ensureCompatible() {
+      const readVersion = async () => {
+        const [version] = await pipeline([["GET", SCHEMA_VERSION_KEY]]);
+        return version;
+      };
+
+      const version = await readVersion();
+
+      if (version === CURRENT_SCHEMA_VERSION) return;
+      if (version !== null) {
+        throw new Error(`unsupported Redis schema version: ${version}`);
+      }
+
+      const legacyKeys = await this.findKeysByPatterns(V1_FINGERPRINT_PATTERNS);
+      if (legacyKeys.length > 0) {
+        throw new Error(
+          `incompatible Redis data detected (${legacyKeys[0]}). Export required data and perform a master reset before starting the v2 sync service.`,
+        );
+      }
+
+      const [result] = await pipeline([
+        ["SET", SCHEMA_VERSION_KEY, CURRENT_SCHEMA_VERSION, "NX"],
+      ]);
+
+      if (result === "OK") return;
+
+      const concurrentVersion = await readVersion();
+      if (concurrentVersion === CURRENT_SCHEMA_VERSION) return;
+
+      throw new Error("Redis schema marker initialization failed; refusing to start");
+    },
+
     async findKeysByPatterns(patterns) {
       const found = new Set();
 
@@ -172,10 +207,21 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
             ["SCAN", cursor, "MATCH", pattern, "COUNT", 1000],
           ]);
 
-          const [nextCursor, keys] = result;
-          cursor = String(nextCursor);
+          if (
+            !Array.isArray(result) ||
+            result.length !== 2 ||
+            typeof result[0] !== "string" ||
+            !/^\d+$/.test(result[0]) ||
+            !Array.isArray(result[1]) ||
+            !result[1].every((key) => typeof key === "string")
+          ) {
+            throw new Error("invalid Redis SCAN response");
+          }
 
-          for (const key of keys ?? []) {
+          const [nextCursor, keys] = result;
+          cursor = nextCursor;
+
+          for (const key of keys) {
             found.add(key);
           }
         } while (cursor !== "0");

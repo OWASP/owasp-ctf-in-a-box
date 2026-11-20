@@ -536,6 +536,23 @@ export const CLEAR_HELD_SCRIPT = `redis.call('DEL', KEYS[1])
 redis.call('SREM', KEYS[2], ARGV[1])
 return 1`;
 
+// KEYS: [1]=ctf:user:<id>  ARGV: [1]=player id
+// The membership and the record in one step, against the team the record
+// names NOW rather than the one deleteUser's lookup saw: a join, a switch or
+// a captaincy handed over after that read is what this step acts on. Refuses
+// the team's captain, which would leave a team nobody can administer.
+// Answers {verdict, team or ""}. Exported for the live suite only.
+export const DELETE_RECORD_SCRIPT = `
+local team = redis.call('HGET', KEYS[1], 'team')
+if team and team ~= '' then
+  local t = 'ctf:team:' .. team
+  if redis.call('HGET', t, 'captain') == ARGV[1] then return {'is-captain', team} end
+  redis.call('SREM', t .. ':members', ARGV[1])
+end
+redis.call('DEL', KEYS[1])
+if team then return {'ok', team} end
+return {'ok', ''}`;
+
 /**
  * Removes a contestant entirely: their progress, their hints, their team
  * membership, their `ctf:user:<id>` record, their rate-limit counters, the
@@ -549,7 +566,9 @@ return 1`;
  * yourself and the last admin) and for a captain (see `forceTransferCaptain`).
  * Both refusals, and the "No such player." for an id with neither an account,
  * event state nor a grant, come before any write. A grant claimed after that
- * check is removed once the account row is gone, with a warning. A grant on
+ * check is removed once the account row is gone, with a warning. A player
+ * who becomes captain after the check is refused at the last step, once the
+ * account is gone (`DELETE_RECORD_SCRIPT`): transfer the captaincy and re-run. A grant on
  * an id with no account row is not an organizer (nobody signs in as it): it is
  * what a run that failed at the grant removal leaves, and the retry removes
  * it, with its own warning.
@@ -640,7 +659,6 @@ export async function deleteUser(
     // closes after the last write, on the failure path too.
     await beginScoreLowering();
     try {
-      const leftTeam = detail.team?.slug ?? null;
       // The account goes before any progress or held score: a delete that
       // fails here leaves all of them as they were, with the row in place
       // (the catch below lifts this call's token) or gone (the scorer answers
@@ -678,16 +696,24 @@ export async function deleteUser(
       // The reset without resetUserProgress's "scored again" warning: the
       // hold refuses this player's PR, so their solves do not come back.
       const reset = await resetProgressOf(player, actor);
-      // The membership goes in its own checked request before the record: the
-      // record's `team` field is how a re-run finds the team, so it must
-      // outlive any membership left behind.
-      if (leftTeam) {
-        assertPipelineOk(await upstashPipeline([["SREM", membersKey(leftTeam), player]]), "delete user membership");
+      // The membership and the record go together, against the team the
+      // record names at this moment (DELETE_RECORD_SCRIPT). A player who
+      // became captain since the lookup is refused here, with the account
+      // already gone: the record and the marker stay, so once the captaincy
+      // is transferred a re-run finds the player and finishes.
+      const verdict = await upstashEval(DELETE_RECORD_SCRIPT, [userKey(player)], [player]);
+      const [status, team] = Array.isArray(verdict) ? (verdict as unknown[]).map(String) : [String(verdict), ""];
+      if (status === "is-captain") {
+        throw new OpsValidationError(
+          "id",
+          `${detail.name} became captain of "${team}" while the delete ran. Their account and progress are gone; transfer the captaincy, then delete again to finish.`,
+        );
       }
-      const cmds: (string | number)[][] = [["DEL", userKey(player)]];
-      for (const key of rateLimitKeysFor(player)) cmds.push(["DEL", key]);
-      // Checked: a refused DEL reported as a delete leaves the record in place.
-      assertPipelineOk(await upstashPipeline(cmds), "delete user");
+      if (status !== "ok") throw new Error(`unexpected verdict from the delete record script: ${status}`);
+      const leftTeam = team || null;
+      const cmds: (string | number)[][] = rateLimitKeysFor(player).map((key) => ["DEL", key]);
+      // Checked: a refused DEL reported as a delete leaves a counter in place.
+      if (cmds.length > 0) assertPipelineOk(await upstashPipeline(cmds), "delete user");
       // Its own request, after the batch is confirmed: commands in one
       // pipeline run independently, so a marker DEL in the batch would land
       // even when an earlier cleanup command failed, and the re-run that must

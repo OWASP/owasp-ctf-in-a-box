@@ -23,7 +23,7 @@
 # Dependabot's docker ecosystem for /scorer bumps this stage like any FROM.
 FROM docker:29.9.3-cli@sha256:2357639ad1ea7d0194134bf3292622fd4e562483966ed674e5d7c945b5f3b28d AS docker-cli
 
-FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914
+FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
 
 # Only the static `docker` binary, no buildx/compose plugins: the judge's
 # entrypoints call plain `docker` subcommands, and an inner build that needs

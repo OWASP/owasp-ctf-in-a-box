@@ -641,10 +641,21 @@ doctor_v1_fingerprint_patterns() {
 doctor_check_redis_compatibility() {
   local compose_file="$SCRIPT_DIR/../docker-compose.yml"
   local compose=(docker compose --env-file "$OUT" -f "$compose_file")
-  local marker pattern keys patterns
+  local marker pattern keys patterns running_services
 
   if [ "$DRY_RUN" -eq 1 ]; then
     printf 'DRY-RUN: would inspect Redis schema compatibility and scan v1 fingerprints if the schema marker is absent\n\n'
+    return 0
+  fi
+
+  if ! running_services="$("${compose[@]}" ps --services --status running 2>/dev/null)"; then
+    printf '%s⚠️  Redis compatibility: could not determine whether the local Compose Redis service is running.%s\n\n' \
+      "$C_YELLOW" "$C_RESET"
+    return 1
+  fi
+
+  if ! grep -Fxq redis <<< "$running_services"; then
+    printf 'Redis compatibility not checked: no local Compose Redis; the app, scorer and sync refuse v1 data at startup\n\n'
     return 0
   fi
 

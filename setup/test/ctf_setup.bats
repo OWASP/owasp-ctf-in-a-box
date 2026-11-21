@@ -41,8 +41,8 @@ EOF
 }
 
 # Mock only Docker commands used by the Redis compatibility doctor check.
-# Configure behavior through REDIS_MARKER, REDIS_SCAN_KEY, REDIS_FAIL_GET,
-# and REDIS_FAIL_SCAN environment variables.
+# Configure behavior through REDIS_RUNNING, REDIS_MARKER, REDIS_SCAN_KEY,
+# REDIS_FAIL_GET, and REDIS_FAIL_SCAN environment variables.
 _stub_redis_docker() {
   mkdir -p "$BATS_TEST_TMPDIR/redis-stub"
   cat > "$BATS_TEST_TMPDIR/redis-stub/docker" <<'DOCKER'
@@ -50,6 +50,11 @@ _stub_redis_docker() {
 echo "docker $*" >> "$BATS_TEST_TMPDIR/docker.calls"
 
 case "$*" in
+  *"ps --services --status running"*)
+    [ "${REDIS_FAIL_PS:-0}" = 1 ] && exit 1
+    [ "${REDIS_RUNNING:-1}" = 1 ] && printf 'redis\n'
+    exit 0
+    ;;
   *"GET ctf:meta:schema-version"*)
     [ "${REDIS_FAIL_GET:-0}" = 1 ] && exit 1
     if [ -n "${REDIS_MARKER:-}" ]; then
@@ -2951,7 +2956,34 @@ EOF2
 
   [ "$status" -ne 0 ]
   printf '%s' "$output" | grep -qF 'cannot inspect Redis without REDIS_PASSWORD'
-  [ ! -s "$BATS_TEST_TMPDIR/docker.calls" ]
+  grep -qF "ps --services --status running" "$BATS_TEST_TMPDIR/docker.calls"
+  ! grep -qF "GET ctf:meta:schema-version" "$BATS_TEST_TMPDIR/docker.calls"
+}
+
+@test "doctor skips Redis compatibility check without local Compose Redis" {
+  _redis_doctor_env
+  _stub_redis_docker
+
+  run env PATH="$BATS_TEST_TMPDIR/redis-stub:$PATH" \
+    REDIS_RUNNING=0 NO_COLOR=1 bash "$SCRIPT" doctor
+
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | grep -qF 'Redis compatibility not checked: no local Compose Redis; the app, scorer and sync refuse v1 data at startup'
+  grep -qF "ps --services --status running" "$BATS_TEST_TMPDIR/docker.calls"
+  ! grep -qF "GET ctf:meta:schema-version" "$BATS_TEST_TMPDIR/docker.calls"
+  ! grep -qF -- "--scan --pattern" "$BATS_TEST_TMPDIR/docker.calls"
+}
+
+@test "doctor fails closed when Compose service discovery fails" {
+  _redis_doctor_env
+  _stub_redis_docker
+
+  run env PATH="$BATS_TEST_TMPDIR/redis-stub:$PATH" \
+    REDIS_FAIL_PS=1 NO_COLOR=1 bash "$SCRIPT" doctor
+
+  [ "$status" -ne 0 ]
+  printf '%s' "$output" | grep -qF 'could not determine whether the local Compose Redis service is running'
+  ! grep -qF "GET ctf:meta:schema-version" "$BATS_TEST_TMPDIR/docker.calls"
 }
 
 @test "doctor fails closed when the Redis fingerprint fixture is missing" {

@@ -727,9 +727,13 @@ events, not during one.
    each player links GitHub from `/profile` so their PRs score.
 
 **Redis compatibility:** v2 checks Redis before starting. If it finds
-recognizable v1 event data, startup is refused. Do not manually create, modify
-or delete `ctf:meta:schema-version` to bypass this check. Runtime services
-initialize the schema marker automatically after confirming compatibility.
+recognizable v1 event data, startup is refused. A box already running a
+pre-release v2 build may also be refused: its v2 data may not have the schema
+marker yet, so it is indistinguishable from legacy data. Before deploying this
+release, export the event and run the master reset on that box, just as for a
+v1 upgrade. Do not manually create, modify or delete
+`ctf:meta:schema-version` to bypass this check. Runtime services initialize
+the schema marker automatically after confirming compatibility.
 
 ## Monitoring
 

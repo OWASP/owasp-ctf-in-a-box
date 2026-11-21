@@ -3,6 +3,9 @@
 // a JSON array of command arrays, bearer token, positional { result } replies.
 import { TARGETS } from "./config.js";
 
+export const SCHEMA_VERSION_KEY = "ctf:meta:schema-version";
+export const CURRENT_SCHEMA_VERSION = "2";
+
 const SYNC_STATUS_KEY = "ctf:sync:status";
 // The poller's DURABLE state (ADR 64): per-repo `since`/ETag cursors, the seen
 // cache, `ingested`/`dropped`/`lastDrop`, and the last master-reset epoch it
@@ -94,6 +97,34 @@ export function redisErrorText(error) {
   return String(error).replace(/,?\s*with args beginning with:.*$/s, "").slice(0, 200);
 }
 
+// Keep in sync with test/fixtures/v1-fingerprints.json. Sync has
+// its own copy because its Docker build context is independent of the web app.
+export const V1_FINGERPRINT_PATTERNS = [
+  "ctf:solves:*",
+  "ctf:team:*",
+  "ctf:user:*",
+  "ctf:joincode:*",
+  "ctf:sd:held:*",
+  "ctf:relink:*",
+  "ctf:hints:*",
+  "ctf:quiz:answers:*",
+  "ctf:quiz:attempts:*",
+  "ctf:quiz:points",
+  "ctf:quiz:answered",
+  "ctf:quiz:lastAt",
+  "ctf:classic:solves:*",
+  "ctf:classic:attempts:*",
+  "ctf:classic:points",
+  "ctf:classic:solved",
+  "ctf:classic:solvecount",
+  "ctf:classic:lastAt",
+  "ctf:classic:opened:*",
+  "ctf:activity:log",
+  "ctf:sponsors",
+  "ctf:sponsors:logo",
+  "ctf:adjustments",
+];
+
 /** The poller's Redis client, or null when UPSTASH_REDIS_REST_URL/TOKEN are
  *  unset (main() refuses to start without one: the freeze, the targets, the
  *  durable state and the PR author links all live there). `fetchImpl`, `log` and `timeoutMs` are seams. */
@@ -133,6 +164,87 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
   }
 
   return {
+    /**
+     * Fails CLOSED: Redis marker reads, fingerprint scans, and marker writes
+     * must all succeed; legacy data or unsupported schema versions refuse startup.
+     */
+    async ensureCompatible() {
+      const readVersion = async () => {
+        const [version] = await pipeline([["GET", SCHEMA_VERSION_KEY]]);
+        return version;
+      };
+
+      const version = await readVersion();
+
+      if (version === CURRENT_SCHEMA_VERSION) return;
+      if (version !== null) {
+        throw new Error(`unsupported Redis schema version: ${version}`);
+      }
+
+      for (const pattern of V1_FINGERPRINT_PATTERNS) {
+        const legacyKeys = await this.findKeysByPatterns([pattern]);
+        if (legacyKeys.length > 0) {
+          // Another v2 service may have initialized the marker while this
+          // fingerprint scan was running. Only a confirmed v2 marker makes
+          // the matching key safe to ignore.
+          const concurrentVersion = await readVersion();
+          if (concurrentVersion === CURRENT_SCHEMA_VERSION) return;
+          if (concurrentVersion !== null) {
+            throw new Error(`unsupported Redis schema version: ${concurrentVersion}`);
+          }
+
+          throw new Error(
+            `incompatible Redis data detected (matching fingerprint: ${pattern}). Export required data and perform a master reset before starting the v2 sync service.`,
+          );
+        }
+      }
+
+      const [result] = await pipeline([
+        ["SET", SCHEMA_VERSION_KEY, CURRENT_SCHEMA_VERSION, "NX"],
+      ]);
+
+      if (result === "OK") return;
+
+      const concurrentVersion = await readVersion();
+      if (concurrentVersion === CURRENT_SCHEMA_VERSION) return;
+
+      throw new Error("Redis schema marker initialization failed; refusing to start");
+    },
+
+    async findKeysByPatterns(patterns) {
+      const found = new Set();
+
+      for (const pattern of patterns) {
+        let cursor = "0";
+
+        do {
+          const [result] = await pipeline([
+            ["SCAN", cursor, "MATCH", pattern, "COUNT", 1000],
+          ]);
+
+          if (
+            !Array.isArray(result) ||
+            result.length !== 2 ||
+            typeof result[0] !== "string" ||
+            !/^\d+$/.test(result[0]) ||
+            !Array.isArray(result[1]) ||
+            !result[1].every((key) => typeof key === "string")
+          ) {
+            throw new Error("invalid Redis SCAN response");
+          }
+
+          const [nextCursor, keys] = result;
+          cursor = nextCursor;
+
+          for (const key of keys) {
+            found.add(key);
+          }
+        } while (cursor !== "0");
+      }
+
+      return [...found];
+    },
+
     async isPaused() {
       try {
         // Effective freeze = manual toggle OR scheduled scoring window

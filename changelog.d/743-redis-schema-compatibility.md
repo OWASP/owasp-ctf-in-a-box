@@ -1,0 +1,1 @@
+- **Changed: Redis schema compatibility checks (#743).** Version 2 services now refuse to start when Redis contains recognizable legacy version 1 event data or an unsupported schema version. **Breaking:** Organizers upgrading from version 1 must follow the documented Redis migration procedure before starting version 2 services.

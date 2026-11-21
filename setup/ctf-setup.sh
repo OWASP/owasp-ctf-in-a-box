@@ -607,6 +607,28 @@ doctor_check_github_org() {
   return $crc
 }
 
+# Read the v1 Redis fingerprints from the shared fixture. Keep this
+# dependency-free: setup must not require jq, Node, or Python at runtime.
+doctor_v1_fingerprint_patterns() {
+  local fixture="$SCRIPT_DIR/../test/fixtures/v1-fingerprints.json"
+  local patterns count
+
+  [ -r "$fixture" ] || {
+    echo "cannot read Redis fingerprint fixture: $fixture" >&2
+    return 1
+  }
+
+  patterns="$(grep -oE '"ctf:[^"]+"' "$fixture" | tr -d '"')" || return 1
+  count="$(printf '%s\n' "$patterns" | grep -c . || true)"
+
+  [ "$count" -eq 23 ] || {
+    echo "expected 23 Redis fingerprint patterns in $fixture; found $count" >&2
+    return 1
+  }
+
+  printf '%s\n' "$patterns"
+}
+
 # Redis requires a password, and docker-compose.yml uses `${REDIS_PASSWORD:?}`
 # — so an .env that lacks one does not bring up a weaker stack, it fails to
 # bring up at all. Checked HERE because doctor is where an
@@ -614,6 +636,77 @@ doctor_check_github_org() {
 # variable without saying where it comes from. Advisory (no `rc=1`): this is
 # a local .env concern, not a provisioning defect, and doctor's exit code
 # gates the org-side steps.
+# Read-only Redis schema check. Runtime services initialize the marker;
+# doctor only inspects it and never changes Redis.
+doctor_check_redis_compatibility() {
+  local compose_file="$SCRIPT_DIR/../docker-compose.yml"
+  local compose=(docker compose --env-file "$OUT" -f "$compose_file")
+  local marker pattern keys patterns running_services
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf 'DRY-RUN: would inspect Redis schema compatibility and scan v1 fingerprints if the schema marker is absent\n\n'
+    return 0
+  fi
+
+  if ! running_services="$("${compose[@]}" ps --services --status running 2>/dev/null)"; then
+    printf '%s⚠️  Redis compatibility: could not determine whether the local Compose Redis service is running.%s\n\n' \
+      "$C_YELLOW" "$C_RESET"
+    return 1
+  fi
+
+  if ! grep -Fxq redis <<< "$running_services"; then
+    printf 'Redis compatibility not checked: no local Compose Redis; the app, scorer and sync refuse v1 data at startup\n\n'
+    return 0
+  fi
+
+  if [ -z "$(env_val REDIS_PASSWORD)" ]; then
+    printf '%s⚠️  Redis compatibility: cannot inspect Redis without REDIS_PASSWORD in %s.%s\n\n' \
+      "$C_YELLOW" "$OUT" "$C_RESET"
+    return 1
+  fi
+
+  if ! marker="$("${compose[@]}" exec -T redis redis-cli --raw GET ctf:meta:schema-version 2>/dev/null)"; then
+    printf '%s⚠️  Redis compatibility: could not read the schema marker. Is the Redis service running?%s\n\n' \
+      "$C_YELLOW" "$C_RESET"
+    return 1
+  fi
+
+  if [ "$marker" = "2" ]; then
+    printf '%s✅ Redis schema: version 2%s\n\n' "$C_GREEN" "$C_RESET"
+    return 0
+  fi
+
+  if [ -n "$marker" ]; then
+    printf '%s❌ Redis schema: unsupported version %s (expected 2). Do not start v2 services against this dataset.%s\n\n' \
+      "$C_RED" "$marker" "$C_RESET"
+    return 1
+  fi
+
+  if ! patterns="$(doctor_v1_fingerprint_patterns)"; then
+    printf '%s⚠️  Redis compatibility: could not load the v1 fingerprint fixture.%s\n\n' \
+      "$C_YELLOW" "$C_RESET"
+    return 1
+  fi
+
+  while IFS= read -r pattern; do
+    [ -n "$pattern" ] || continue
+    if ! keys="$("${compose[@]}" exec -T redis redis-cli --raw --scan --pattern "$pattern" 2>/dev/null)"; then
+      printf '%s⚠️  Redis compatibility: fingerprint scan failed for pattern %s.%s\n\n' \
+        "$C_YELLOW" "$pattern" "$C_RESET"
+      return 1
+    fi
+    if [ -n "$keys" ]; then
+      printf '%s❌ Redis contains recognizable legacy v1 event data (pattern: %s). Export required data and perform the documented master reset before starting v2 services.%s\n\n' \
+        "$C_RED" "$pattern" "$C_RESET"
+      return 1
+    fi
+  done <<< "$patterns"
+
+  printf '%s✅ Redis has no recognizable v1 event data; schema marker is not initialized. Runtime startup will initialize it.%s\n\n' \
+    "$C_GREEN" "$C_RESET"
+  return 0
+}
+
 doctor_check_redis_password() {
   if [ -f "${OUT:-.env}" ] && ! grep -q "^REDIS_PASSWORD=." "${OUT:-.env}"; then
     printf '%s⚠️  %s has no REDIS_PASSWORD — "docker compose up" will refuse to start.%s\n' \
@@ -864,6 +957,7 @@ cmd_doctor() {
   doctor_check_admin_claim || rc=1
   doctor_check_github_org "$org" || rc=1
   doctor_check_redis_password
+  doctor_check_redis_compatibility || rc=1
   doctor_check_launch
 
   # Nothing org-scoped left to inspect without an org: SD-on already failed

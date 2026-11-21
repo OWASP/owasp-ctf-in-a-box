@@ -559,6 +559,72 @@ test("serve(): boots the memory store and answers /healthz", async (t) => {
   assert.match(logs[0], /memory store/);
 });
 
+test("serve(): checks Redis compatibility before listening", async (t) => {
+  const commands = [];
+  const fetchImpl = async (_url, opts) => {
+    const [[command]] = JSON.parse(opts.body);
+    commands.push(command);
+    const result =
+      command === "GET" ? null :
+      command === "SCAN" ? ["0", []] :
+      command === "SET" ? "OK" : null;
+    return new Response(JSON.stringify([{ result }]), { status: 200 });
+  };
+
+  const server = await serve(
+    {
+      SCORER_TOKEN: TOKEN,
+      RUBRIC_DIR,
+      PORT: "0",
+      UPSTASH_REDIS_REST_URL: "http://redis.test",
+      UPSTASH_REDIS_REST_TOKEN: "test-token",
+    },
+    { log: () => {}, fetchImpl },
+  );
+  t.after(() => server.close());
+
+  assert.equal(commands[0], "GET");
+  assert.ok(commands.includes("SCAN"));
+  assert.equal(commands.at(-1), "SET");
+  assert.equal(
+    (await fetch(`http://127.0.0.1:${server.address().port}/healthz`)).status,
+    200,
+  );
+});
+
+test("serve(): refuses legacy Redis data before listening", async () => {
+  const commands = [];
+  const fetchImpl = async (_url, opts) => {
+    const [[command]] = JSON.parse(opts.body);
+    commands.push(command);
+
+    const result =
+      command === "GET" ? null :
+      command === "SCAN" ? ["0", ["ctf:user:legacy"]] :
+      null;
+
+    return new Response(JSON.stringify([{ result }]), { status: 200 });
+  };
+
+  await assert.rejects(
+    serve(
+      {
+        SCORER_TOKEN: TOKEN,
+        RUBRIC_DIR,
+        PORT: "0",
+        UPSTASH_REDIS_REST_URL: "http://redis.test",
+        UPSTASH_REDIS_REST_TOKEN: "test-token",
+      },
+      { log: () => {}, fetchImpl },
+    ),
+    /incompatible Redis data detected/,
+  );
+
+  assert.equal(commands[0], "GET");
+  assert.ok(commands.includes("SCAN"));
+  assert.ok(!commands.includes("SET"));
+});
+
 test("serve(): refuses a whitespace-only PORT (Number(' ') is 0, an ephemeral port)", async () => {
   await assert.rejects(
     serve({ SCORER_TOKEN: TOKEN, RUBRIC_DIR, PORT: " " }, { log: () => {} }),

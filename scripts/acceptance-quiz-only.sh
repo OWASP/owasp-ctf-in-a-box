@@ -114,6 +114,7 @@ acc_assert_module_lineups quiz
 # leaderboard source, so there is nothing here for it to serve.
 # ---------------------------------------------------------------------------
 acc_boot_redis_srh "$NET" qo "$SRH_TOKEN"
+acc_mark_v2_schema qo-redis
 
 # ---------------------------------------------------------------------------
 # Seed the quiz's real Redis schema directly (see header comment for why).

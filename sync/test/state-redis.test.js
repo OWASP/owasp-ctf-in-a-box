@@ -30,7 +30,7 @@ function fakeSrh({ settings = { scoringStartsAt: LAUNCHED, secureDevTargets: '["
     ["ctf:link:github:mallory", MALLORY],
   ]);
   const hashes = new Map([["ctf:admin:settings", new Map(Object.entries(settings))]]);
-  const srh = { strings, hashes, failNext: 0, errorOn: null, pipelines: [] };
+  const srh = { strings, hashes, failNext: 0, failStateReads: 0, errorOn: null, pipelines: [] };
   const hash = (k) => {
     if (!hashes.has(k)) hashes.set(k, new Map());
     return hashes.get(k);
@@ -40,8 +40,11 @@ function fakeSrh({ settings = { scoringStartsAt: LAUNCHED, secureDevTargets: '["
       case "GET":
         return strings.get(key) ?? null;
       case "SET":
+        if (args.includes("NX") && strings.has(key)) return null;
         strings.set(key, args[0]);
         return "OK";
+      case "SCAN":
+        return ["0", []];
       case "HGET":
         return hashes.get(key)?.get(args[0]) ?? null;
       case "HMGET":
@@ -64,7 +67,15 @@ function fakeSrh({ settings = { scoringStartsAt: LAUNCHED, secureDevTargets: '["
       srh.failNext--;
       throw new TypeError("fetch failed");
     }
-    const out = cmds.map((c) => (srh.errorOn === c[0] ? { error: "NOAUTH Authentication required." } : { result: run(c) }));
+    if (srh.failStateReads > 0 && cmds.some((c) => c[0] === "GET" && c[1] === SYNC_STATE_KEY)) {
+      srh.failStateReads--;
+      throw new TypeError("fetch failed");
+    }
+    const out = cmds.map((c) =>
+      srh.errorOn === c[0] || srh.errorOn === `${c[0]}:${c[1]}`
+        ? { error: "NOAUTH Authentication required." }
+        : { result: run(c) },
+    );
     return new Response(JSON.stringify(out), { status: 200 });
   };
   return srh;
@@ -192,7 +203,7 @@ test("an unreadable Redis at startup holds the poller: no tick, loud log, retry 
     SYNC_STATE_KEY,
     JSON.stringify({ repos: { VAmPI: { since: "2026-10-01T10:05:00Z", etag: null, seen: ["2@2026-10-01T10:05:00Z"] } }, ingested: 2, dropped: 0 }),
   );
-  srh.failNext = 2; // srh is down for the first two attempts
+  srh.failStateReads = 2; // state reads fail for the first two attempts
   const comments = [comment(1, "2026-10-01T10:00:00Z"), comment(2, "2026-10-01T10:05:00Z")];
   const world = fakeWorld(comments);
 
@@ -210,7 +221,7 @@ test("an unreadable Redis at startup holds the poller: no tick, loud log, retry 
 test("a per-command error reply on the state read (NOAUTH inside a 200) is a failed read, not an empty state", async () => {
   const srh = fakeSrh();
   srh.strings.set(SYNC_STATE_KEY, JSON.stringify({ repos: { VAmPI: { since: "2026-10-01T10:05:00Z", etag: null, seen: [] } } }));
-  srh.errorOn = "GET";
+  srh.errorOn = `GET:${SYNC_STATE_KEY}`;
   const world = fakeWorld([comment(1, "2026-10-01T10:00:00Z")]);
   let ticked = 0;
   let sleeps = 0;

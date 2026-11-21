@@ -462,6 +462,14 @@ export async function main(deps = {}) {
     logErr("ctf-sync: Secure Development needs Redis to attribute PRs to players");
     return exit(1);
   }
+
+  try {
+    await redis.ensureCompatible();
+  } catch (err) {
+    logErr(`ctf-sync: Redis compatibility check failed: ${err.message}`);
+    return exit(1);
+  }
+
   // No static repo count here any more: which of the six targets get polled
   // is decided per tick from Redis (config-v2), so a count printed once at
   // startup would just be stale the moment an organizer changes it in /admin.

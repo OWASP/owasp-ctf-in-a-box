@@ -419,6 +419,14 @@ acc_assert_sync_refuses_no_org() {
   fi
 }
 
+# acc_mark_v2_schema <redis-container>
+# — marks an acceptance Redis dataset as v2 before any fixture data is seeded.
+acc_mark_v2_schema() {
+  local redis_container="$1"
+  docker exec "$redis_container" redis-cli -e SET ctf:meta:schema-version 2 >/dev/null \
+    || { echo "FAIL: could not initialize the v2 schema marker in $redis_container" >&2; return 1; }
+}
+
 # acc_seed_player <redis-container> <player-id> <display-name>
 # — creates the account row a signed-in player has (`ctf:auth:user` plus the
 # email index set better-auth keeps beside it), so the board resolves the

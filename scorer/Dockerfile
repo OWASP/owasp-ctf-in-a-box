@@ -21,7 +21,7 @@
 # breaks a fresh build ("unable to select packages") every time Alpine
 # rebuilds the package, and the base digest does not freeze the index.
 # Dependabot's docker ecosystem for /scorer bumps this stage like any FROM.
-FROM docker:29.9.3-cli@sha256:2357639ad1ea7d0194134bf3292622fd4e562483966ed674e5d7c945b5f3b28d AS docker-cli
+FROM docker:29.10.0-cli@sha256:34507eb5069d8be82c95dd3b6987d4250fd5fee49b82e2509b7d7a7030740d6d AS docker-cli
 
 FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914
 

@@ -10,7 +10,7 @@ vi.mock("server-only", () => ({}));
 
 const getGithubLink = vi.hoisted(() => vi.fn(async () => null));
 const isReleasedAndBlocked = vi.hoisted(() => vi.fn<(login: string) => Promise<boolean>>(async () => false));
-vi.mock("@/lib/github-link", () => ({ linkOnUserWrite: vi.fn(async () => {}), getGithubLink, isReleasedAndBlocked }));
+vi.mock("@/lib/github-link", () => ({ linkOnUserWrite: vi.fn(async () => {}), getGithubLink, isReleasedAndBlocked, claimGithubLink: vi.fn(async () => true), releaseGithubLinkClaim: vi.fn(async () => {}) }));
 
 const getAdminSettings = vi.hoisted(() => vi.fn<() => Promise<unknown>>());
 vi.mock("@/lib/admin-store", async (orig) => ({

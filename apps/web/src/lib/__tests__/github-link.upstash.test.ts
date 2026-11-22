@@ -4,7 +4,9 @@ import { RUN, freshId, liveConfigured, liveKey } from "./live-redis";
 vi.mock("server-only", () => ({}));
 
 import {
+  claimGithubLink,
   getGithubLink,
+  releaseGithubLinkClaim,
   isReleasedAndBlocked,
   recordGithubSignIn,
   releaseGithubLink,
@@ -81,6 +83,34 @@ describe.skipIf(!liveConfigured)("recordGithubSignIn against a live SRH proxy", 
     expect(await t.record("u1", "octo-renamed")).toBe("linked");
     expect(await t.resolve("octocat")).toBeNull();
     expect(await t.resolve("octo-renamed")).toBe("u1");
+  });
+
+  it("a link claim is held by one callback token, refused for any other, and lapses", async () => {
+    const pending = `${liveKey("link-pending", freshId("p"))}:`;
+    const ttl = async (id: string) => {
+      const [r] = await upstashPipeline([["PTTL", `${pending}${id}`]]);
+      if (r?.error) throw new Error(r.error);
+      return Number(r?.result);
+    };
+    expect(await claimGithubLink("u1", "tok-a", pending, 60_000)).toBe(true);
+    expect(await claimGithubLink("u1", "tok-b", pending, 60_000)).toBe(false);
+    expect(await claimGithubLink("u1", "tok-a", pending, 60_000)).toBe(false);
+    expect(await ttl("u1")).toBeGreaterThan(0);
+    expect(await ttl("u1")).toBeLessThanOrEqual(60_000);
+    expect(await claimGithubLink("u2", "tok-b", pending, 60_000)).toBe(true);
+
+    expect(await claimGithubLink("u3", "tok-a", pending, 50)).toBe(true);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(await claimGithubLink("u3", "tok-b", pending, 60_000)).toBe(true);
+  });
+
+  it("a link claim is released only by the token that holds it", async () => {
+    const pending = `${liveKey("link-pending", freshId("p"))}:`;
+    expect(await claimGithubLink("u1", "tok-a", pending, 60_000)).toBe(true);
+    await releaseGithubLinkClaim("u1", "tok-b", pending);
+    expect(await claimGithubLink("u1", "tok-b", pending, 60_000)).toBe(false);
+    await releaseGithubLinkClaim("u1", "tok-a", pending);
+    expect(await claimGithubLink("u1", "tok-b", pending, 60_000)).toBe(true);
   });
 
   it("refuses a login another player holds and writes nothing", async () => {

@@ -5,8 +5,11 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => upstash);
 
 import {
+  LINK_PENDING_TTL_MS,
   RELINK_BLOCK_KEY,
+  claimGithubLink,
   getGithubLink,
+  releaseGithubLinkClaim,
   linkKey,
   linkOnUserWrite,
   recordGithubSignIn,
@@ -160,6 +163,34 @@ describe("github link", () => {
   it("rejects an unexpected script reply", async () => {
     upstash.upstashEval.mockResolvedValue(null);
     await expect(recordGithubSignIn("id-1", "octo")).rejects.toThrow(/unexpected/);
+  });
+
+  describe("claimGithubLink and releaseGithubLinkClaim", () => {
+    it("claims the player's pending key with SET NX PX for the callback's token, under ctf:link:*", async () => {
+      upstash.upstashPipeline.mockResolvedValue([{ result: "OK" }]);
+      expect(await claimGithubLink("id-1", "tok-1")).toBe(true);
+      expect(upstash.upstashPipeline.mock.calls[0][0]).toEqual([["SET", "ctf:link:pending:id-1", "tok-1", "NX", "PX", LINK_PENDING_TTL_MS]]);
+    });
+
+    it("is false when another callback holds the claim", async () => {
+      upstash.upstashPipeline.mockResolvedValue([{ result: null }]);
+      expect(await claimGithubLink("id-1", "tok-1")).toBe(false);
+    });
+
+    it("throws on a command error or an unexpected reply, so the caller fails closed", async () => {
+      upstash.upstashPipeline.mockResolvedValue([{ error: "NOAUTH" }]);
+      await expect(claimGithubLink("id-1", "tok-1")).rejects.toThrow(/NOAUTH/);
+      upstash.upstashPipeline.mockResolvedValue([{ result: 1 }]);
+      await expect(claimGithubLink("id-1", "tok-1")).rejects.toThrow(/unexpected claim reply/);
+    });
+
+    it("releases the pending key for the token only", async () => {
+      upstash.upstashEval.mockResolvedValue(1);
+      await releaseGithubLinkClaim("id-1", "tok-1");
+      const [, keys, args] = upstash.upstashEval.mock.calls[0];
+      expect(keys).toEqual(["ctf:link:pending:id-1"]);
+      expect(args).toEqual(["tok-1"]);
+    });
   });
 
   describe("linkOnUserWrite", () => {

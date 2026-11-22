@@ -12,7 +12,7 @@ import { createAuthEndpoint } from "better-auth/api";
 import { handleOAuthUserInfo, linkOAuthAccount, parseState } from "better-auth/oauth2";
 import { authOptions } from "@/lib/auth";
 import * as keys from "@/lib/auth-store/keys";
-import { LINK_AT_KEY, LINK_USER_PREFIX, linkKey } from "@/lib/github-link";
+import { LINK_AT_KEY, LINK_PENDING_PREFIX, LINK_USER_PREFIX, linkKey } from "@/lib/github-link";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
 import { upstashPipeline as pipeline } from "@/lib/upstash";
 import { ADMIN_SETTINGS_KEY } from "@/lib/admin-store";
@@ -92,9 +92,9 @@ async function build() {
     params: { id: string };
     headers: Headers;
   }) => Promise<LinkResult>;
-  // Starts the link as the player's browser would, then completes it at
+  // Starts the link as the player's browser would and returns the completion:
   // GitHub's callback with the state and state cookie /link-social handed out.
-  const link = async ({ userId, accountId, login, ghEmail }: LinkInput) => {
+  const startLink = async (userId: string) => {
     const session = await sessionHeaders(ctx, userId);
     const started = await instance.api.linkSocialAccount({
       body: { provider: "github", callbackURL: "/profile?linked=github" },
@@ -105,9 +105,11 @@ async function build() {
     if (!state) throw new Error("link probe: /link-social returned no state");
     const stateCookies = started.headers.getSetCookie().map((c) => c.split(";")[0]);
     const cookie = [session.get("cookie"), ...stateCookies].join("; ");
-    return probe({ body: { accountId, login, ghEmail }, query: { state }, params: { id: "github" }, headers: new Headers({ cookie }) });
+    return ({ accountId, login, ghEmail }: ProbeBody) =>
+      probe({ body: { accountId, login, ghEmail }, query: { state }, params: { id: "github" }, headers: new Headers({ cookie }) });
   };
-  return { prefix, instance, ctx, link };
+  const link = async ({ userId, ...body }: LinkInput) => (await startLink(userId))(body);
+  return { prefix, instance, ctx, link, startLink };
 }
 
 // A signed session cookie for `userId`, as the browser would send it.
@@ -344,7 +346,7 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
       return { ...user, email };
     }
     async function linkKeys(userId: string, login: string) {
-      written.push(["DEL", linkKey(login), `${LINK_USER_PREFIX}${userId}`], ["HDEL", LINK_AT_KEY, userId]);
+      written.push(["DEL", linkKey(login), `${LINK_USER_PREFIX}${userId}`, `${LINK_PENDING_PREFIX}${userId}`], ["HDEL", LINK_AT_KEY, userId]);
       return {
         owner: await redis(["GET", linkKey(login)]),
         at: await redis(["HGET", LINK_AT_KEY, userId]),
@@ -409,6 +411,118 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
       expect(await linkKeys(u1.id, login)).toEqual(before);
       expect(await redis(["GET", `${LINK_USER_PREFIX}${u1.id}`])).toBe(login);
       expect((await ia.findAccounts(u1.id)).map((a) => a.accountId)).toEqual(["gh-4"]);
+    });
+
+    it("keeps the first link when two link flows started while unlinked both complete, and no link key moves", async () => {
+      // Both starts pass refuseSecondGithubLink, since neither link is recorded
+      // yet; the second completion has to be refused at the callback.
+      const { ctx, startLink } = await build();
+      const ia = ctx.internalAdapter;
+      const u1 = await kitUser(ia, "twotabs");
+      const first = freshLogin();
+      const second = freshLogin();
+      const completeFirst = await startLink(u1.id);
+      const completeSecond = await startLink(u1.id);
+
+      expect(await completeFirst({ accountId: "gh-5", login: first, ghEmail: "t1@github.example.test" })).toEqual({ linked: true });
+      const before = await linkKeys(u1.id, first);
+      expect(before.owner).toBe(u1.id);
+      // Released once the row was written, so nothing is left to hold up an
+      // organizer's unlink and a relink.
+      expect(await redis(["GET", `${LINK_PENDING_PREFIX}${u1.id}`])).toBeNull();
+
+      const err = await completeSecond({ accountId: "gh-6", login: second, ghEmail: "t2@github.example.test" }).then(
+        () => null,
+        (e: unknown) => e as { status?: string; body?: { code?: string } },
+      );
+
+      expect(err?.status).toBe("FORBIDDEN");
+      expect(err?.body?.code).toBe("GITHUB_ALREADY_LINKED");
+      expect(await linkKeys(u1.id, first)).toEqual(before);
+      expect(await redis(["GET", `${LINK_USER_PREFIX}${u1.id}`])).toBe(first);
+      expect((await linkKeys(u1.id, second)).owner).toBeNull();
+      expect((await ia.findAccounts(u1.id)).map((a) => a.accountId)).toEqual(["gh-5"]);
+      expect(await ia.findAccountByKey({ providerId: "github", accountId: "gh-6" })).toBeNull();
+    });
+
+    it("lets exactly one of two overlapping link completions through, and leaves no second GitHub account", async () => {
+      // Both completions can read "no link" before either records one; the
+      // link claim decides which may write its account row. A second row left
+      // on the player would let a later GitHub sign-in through it move the
+      // link as if it were a rename.
+      const { ctx, startLink } = await build();
+      const ia = ctx.internalAdapter;
+      const u1 = await kitUser(ia, "overlap");
+      const logins = { "gh-7": freshLogin(), "gh-8": freshLogin() };
+      const completions = await Promise.all([startLink(u1.id), startLink(u1.id)]);
+      // Each completion's read of the player's account rows is held until the
+      // other one reaches its own read, or 300 ms pass, so the reads overlap
+      // whatever the scheduling. Without the claim both would reach it and
+      // find no GitHub row; with it the second is refused before reading.
+      const rowsRead = `:account:by:userId:${u1.id}`;
+      let reads = 0;
+      let bothRead!: () => void;
+      const overlap = new Promise<void>((resolve) => (bothRead = resolve));
+      relay.hook = async (cmds, real) => {
+        if (cmds.some((c) => c[0] === "SMEMBERS" && String(c[1]).endsWith(rowsRead))) {
+          if (++reads === 2) bothRead();
+          await Promise.race([overlap, new Promise((resolve) => setTimeout(resolve, 300))]);
+        }
+        return real(cmds);
+      };
+
+      const results = await Promise.allSettled([
+        completions[0]({ accountId: "gh-7", login: logins["gh-7"], ghEmail: "o1@github.example.test" }),
+        completions[1]({ accountId: "gh-8", login: logins["gh-8"], ghEmail: "o2@github.example.test" }),
+      ]).finally(() => {
+        relay.hook = null;
+      });
+
+      expect(reads).toBe(1);
+      const linked = results.filter((r) => r.status === "fulfilled");
+      const refused = results.filter((r) => r.status === "rejected");
+      expect(linked.map((r) => r.value)).toEqual([{ linked: true }]);
+      expect(refused.map((r) => (r.reason as { body?: { code?: string } }).body?.code)).toEqual(["GITHUB_ALREADY_LINKED"]);
+      const accounts = (await ia.findAccounts(u1.id)).map((a) => a.accountId);
+      expect(accounts).toHaveLength(1);
+      const winner = accounts[0] as keyof typeof logins;
+      const loser = winner === "gh-7" ? "gh-8" : "gh-7";
+      expect(await redis(["GET", `${LINK_USER_PREFIX}${u1.id}`])).toBe(logins[winner]);
+      expect((await linkKeys(u1.id, logins[winner])).owner).toBe(u1.id);
+      expect((await linkKeys(u1.id, logins[loser])).owner).toBeNull();
+      expect(await ia.findAccountByKey({ providerId: "github", accountId: loser })).toBeNull();
+    });
+
+    it("refuses a second GitHub account for a player whose first link the kit refused, and lets the first retry", async () => {
+      // A refused link (another player held the login) keeps its account row
+      // with no link. A second account on top of it would let a later sign-in
+      // through the first move the link as if it were a rename.
+      const { ctx, link } = await build();
+      const ia = ctx.internalAdapter;
+      const u1 = await kitUser(ia, "refused");
+      const login = freshLogin();
+      const other = freshLogin();
+      const squatter = "00000000-0000-4000-8000-000000000001";
+      written.push(["DEL", linkKey(login)]);
+      await redis(["SET", linkKey(login), squatter]);
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      const firstTry = { userId: u1.id, kitEmail: u1.email, accountId: "gh-9", login, ghEmail: "f@github.example.test" };
+      expect(await link(firstTry)).toEqual({ linked: true });
+      errors.mockRestore();
+      expect(await redis(["GET", `${LINK_USER_PREFIX}${u1.id}`])).toBeNull();
+
+      const err = await link({ userId: u1.id, kitEmail: u1.email, accountId: "gh-10", login: other, ghEmail: "o@github.example.test" }).then(
+        () => null,
+        (e: unknown) => e as { status?: string; body?: { code?: string } },
+      );
+
+      expect(err?.body?.code).toBe("GITHUB_ALREADY_LINKED");
+      expect((await ia.findAccounts(u1.id)).map((a) => a.accountId)).toEqual(["gh-9"]);
+      expect((await linkKeys(u1.id, other)).owner).toBeNull();
+      expect(await redis(["GET", `${LINK_PENDING_PREFIX}${u1.id}`])).toBeNull();
+      await redis(["DEL", linkKey(login)]);
+      expect(await link(firstTry)).toEqual({ linked: true });
+      expect((await linkKeys(u1.id, login)).owner).toBe(u1.id);
     });
 
     it("lets an unlinked player start /link-social", async () => {

@@ -81,6 +81,13 @@ function refuseLegacyData(pattern: string): never {
  * versions also prevent startup.
  */
 export async function checkRedisCompatibility(): Promise<void> {
+  if (
+    !process.env.UPSTASH_REDIS_REST_URL &&
+    !process.env.UPSTASH_REDIS_REST_TOKEN
+  ) {
+    return;
+  }
+
   const version = await readSchemaVersion();
 
   if (version === CURRENT_SCHEMA_VERSION) return;

@@ -165,7 +165,7 @@ function mockModuleResets(classic: [number, number, number, number, number]) {
  *  module script: 2 DEL + 2 HDEL for quiz, 2 DEL + 1 HDEL for hints, then
  *  the HDEL of quiz's award time (#522). */
 function mockQuizAndHintsPipeline() {
-  mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1, 1, 1, 1, 1, 1, 1));
+  mocks.upstashPipeline.mockResolvedValueOnce(replies(1, 1, 1, 1, 1, 1, 1, 1, 1, 1));
 }
 
 /** What `deleteUser` reads before any write: the lookup (with the team read
@@ -516,6 +516,8 @@ describe("resetUserProgress", () => {
       "ctf:quiz:answered#0c7aca70-0000-4000-8000-00000000000a",
       "ctf:user:0c7aca70-0000-4000-8000-00000000000a:hints",
       "ctf:hints:at:0c7aca70-0000-4000-8000-00000000000a",
+      // The per-purchase cost record is this player's hint history too.
+      "ctf:hints:cost:0c7aca70-0000-4000-8000-00000000000a",
       "ctf:hints:spent#0c7aca70-0000-4000-8000-00000000000a",
       // #522: the award time goes with the totals it orders.
       "ctf:quiz:lastAt#0c7aca70-0000-4000-8000-00000000000a",

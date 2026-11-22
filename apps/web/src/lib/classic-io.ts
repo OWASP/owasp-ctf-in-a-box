@@ -52,24 +52,31 @@ import {
 import { type AttachmentFile, validateAttachmentFiles } from "@/lib/attachment-files";
 import { MARKDOWN_MAX } from "@/lib/markdown";
 import type { Story } from "@/lib/story-lock";
+import { HINT_COST_MAX } from "@/lib/hint-defaults";
+import { HINT_LEVELS_MAX, type HintLevelConfig } from "@/lib/hint-ladder";
 import { isReleaseInstant } from "@/lib/classic-release";
 
 /** 2 added `stories` and per-challenge `attachments` (metadata); 3 adds the
  *  optional top-level `attachmentFiles`; 4 adds a challenge's visibility
- *  (`enabled`, `releaseAt`). 1 to 3 stay importable. */
-export const CLASSIC_BUNDLE_VERSION = 4;
-const SUPPORTED_VERSIONS = new Set([1, 2, 3, 4]);
+ *  (`enabled`, `releaseAt`); 5 adds the ordered, independently priced
+ *  `hints` ladder. 1 to 4 stay importable, and their single `hint` string is
+ *  read as a one-rung ladder (level 1, event-wide price). */
+export const CLASSIC_BUNDLE_VERSION = 5;
+const SUPPORTED_VERSIONS = new Set([1, 2, 3, 4, 5]);
 /** The oldest version that knows `stories` and `attachments`. */
 const STORIES_VERSION = 2;
 /** The oldest version that knows `attachmentFiles`. */
 const FILES_VERSION = 3;
 /** The oldest version that knows a challenge's visibility. */
 const VISIBILITY_VERSION = 4;
+/** The oldest version that knows a challenge's `hints` ladder. */
+const LADDER_VERSION = 5;
 
 /** The version an export is stamped with: the oldest one that knows every
- *  field it carries, so a bundle without files or visibility stays
- *  importable on a box built before either. */
-export function bundleVersionFor(hasFiles: boolean, hasVisibility = false): number {
+ *  field it carries, so a bundle without files, visibility or a ladder stays
+ *  importable on a box built before any of them. */
+export function bundleVersionFor(hasFiles: boolean, hasVisibility = false, hasLadder = false): number {
+  if (hasLadder) return LADDER_VERSION;
   if (hasVisibility) return VISIBILITY_VERSION;
   return hasFiles ? FILES_VERSION : STORIES_VERSION;
 }
@@ -77,6 +84,14 @@ export function bundleVersionFor(hasFiles: boolean, hasVisibility = false): numb
 /** Whether a bundle row carries a visibility field (and so needs version 4). */
 export function carriesVisibility(c: { enabled?: boolean; releaseAt?: string | null }): boolean {
   return c.enabled === false || typeof c.releaseAt === "string";
+}
+
+/** Whether a ladder needs v5. One rung at the event-wide price is exactly
+ *  what v1-v4's `hint` string expresses, so it stays a v4 archive; a second
+ *  rung or any explicit per-rung cost (including 0) needs the ordered list. */
+export function carriesLadder(hints: readonly HintLevelConfig[] | undefined): boolean {
+  if (!hints || hints.length === 0) return false;
+  return hints.length > 1 || hints.some((hint) => hint.cost !== null && hint.cost !== undefined);
 }
 const STORY_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const STORY_KEYS = new Set(["id", "title", "intro", "steps"]);
@@ -95,8 +110,13 @@ export type ClassicBundleChallenge = {
    *  rather than required so every bundle exported before #193 still imports,
    *  which is the whole contract of a versioned bundle. */
   caseSensitive?: boolean;
-  /** Optional paid-hint text (#190). Absent = no hint. Secret like `flag`:
-   *  a bundle is an ORGANIZER artifact and already carries every answer. */
+  /** Optional paid-hint ladder. Absent = no hint. Secret like `flag`:
+   *  a bundle is an ORGANIZER artifact and already carries every answer.
+   *  A `cost` of null (or absent) means the event-wide hint cost; level N is
+   *  only purchasable after N-1. */
+  hints?: HintLevelConfig[];
+  /** v1-v4 single-hint field, still accepted on import and normalized to a
+   *  one-rung `hints` list. Never written by a v5 export. */
   hint?: string;
   /** v2 (#186): the challenge's files as METADATA only — an upload's name,
    *  size and sha256, or a link. Bytes travel in the event archive or a v3
@@ -138,12 +158,41 @@ const CHALLENGE_KEYS = [
   "order",
   "flag",
   "caseSensitive",
-  "hint",
+  "hints",
   "attachments",
   "enabled",
   "releaseAt",
 ] as const;
 const CHALLENGE_KEY_SET = new Set<string>(CHALLENGE_KEYS);
+const LEGACY_CHALLENGE_KEYS = [
+  "id",
+  "title",
+  "category",
+  "description",
+  "points",
+  "order",
+  "flag",
+  "caseSensitive",
+  "hint",
+  "attachments",
+] as const;
+const LEGACY_CHALLENGE_KEY_SET = new Set<string>(LEGACY_CHALLENGE_KEYS);
+/** v3/v4: a single `hint` plus the v4 visibility fields, but no ladder. */
+const PRE_LADDER_CHALLENGE_KEYS = [
+  "id",
+  "title",
+  "category",
+  "description",
+  "points",
+  "order",
+  "flag",
+  "caseSensitive",
+  "hint",
+  "attachments",
+  "enabled",
+  "releaseAt",
+] as const;
+const PRE_LADDER_CHALLENGE_KEY_SET = new Set<string>(PRE_LADDER_CHALLENGE_KEYS);
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -197,16 +246,40 @@ function validateCategories(raw: unknown, errors: ImportError[]): string[] {
  *  (checked against THIS file's own `categories`, never the live store).
  *  Pushes every problem found onto `errors` rather than stopping at the
  *  first — the whole point of a bulk path is one pass over every row. */
-function validateChallenge(raw: unknown, index: number, categories: readonly string[], errors: ImportError[]): void {
+function validateChallenge(
+  raw: unknown,
+  index: number,
+  categories: readonly string[],
+  version: number,
+  errors: ImportError[],
+): void {
   const base = `challenges[${index}]`;
   if (!isPlainObject(raw)) {
     errors.push({ where: base, message: "Each challenge must be an object" });
     return;
   }
 
-  const unknownKeys = Object.keys(raw).filter((k) => !CHALLENGE_KEY_SET.has(k));
+  const hasLadder = version >= LADDER_VERSION;
+  const knowsVisibility = version >= VISIBILITY_VERSION;
+  const allowedKeys = hasLadder
+    ? CHALLENGE_KEY_SET
+    : knowsVisibility
+      ? PRE_LADDER_CHALLENGE_KEY_SET
+      : LEGACY_CHALLENGE_KEY_SET;
+  const allowedList = hasLadder
+    ? CHALLENGE_KEYS
+    : knowsVisibility
+      ? PRE_LADDER_CHALLENGE_KEYS
+      : LEGACY_CHALLENGE_KEYS;
+  const unknownKeys = Object.keys(raw).filter((k) => !allowedKeys.has(k));
   if (unknownKeys.length > 0) {
-    errors.push({ where: base, message: `Unknown key(s) (${unknownKeys.length}) — a challenge has only ${CHALLENGE_KEYS.join(", ")}` });
+    errors.push({ where: base, message: `Unknown key(s) (${unknownKeys.length}) — a challenge has only ${allowedList.join(", ")}` });
+  }
+  if (hasLadder && raw.hint !== undefined) {
+    errors.push({
+      where: `${base}.hint`,
+      message: `Use "hints" — a single "hint" string needs bundle version 4 or earlier`,
+    });
   }
 
   const id = raw.id;
@@ -233,12 +306,51 @@ function validateChallenge(raw: unknown, index: number, categories: readonly str
     errors.push({ where: `${base}.releaseAt`, message: "releaseAt must be an ISO 8601 date and time ending in Z or an offset such as -03:00" });
   }
 
-  // Optional paid-hint text (#190): a non-empty string within the cap.
-  if (raw.hint !== undefined) {
-    if (typeof raw.hint !== "string" || !raw.hint.trim() || raw.hint.length > CLASSIC_HINT_MAX) {
-      errors.push({
-        where: `${base}.hint`,
-        message: `hint must be a non-empty string of at most ${CLASSIC_HINT_MAX} characters`,
+  // Optional paid-hint text/ladder. v1-v4 carry one string (#190); v5
+  // Carries ordered rungs. Both are capped here exactly as the store
+  // caps them, so a bundle that parses cannot fail the write later.
+  if (!hasLadder) {
+    if (raw.hint !== undefined) {
+      if (typeof raw.hint !== "string" || !raw.hint.trim() || raw.hint.length > CLASSIC_HINT_MAX) {
+        errors.push({
+          where: `${base}.hint`,
+          message: `hint must be a non-empty string of at most ${CLASSIC_HINT_MAX} characters`,
+        });
+      }
+    }
+  } else if (raw.hints !== undefined) {
+    if (!Array.isArray(raw.hints)) {
+      errors.push({ where: `${base}.hints`, message: "hints must be an array" });
+    } else {
+      if (raw.hints.length > HINT_LEVELS_MAX) {
+        errors.push({ where: `${base}.hints`, message: `At most ${HINT_LEVELS_MAX} hints are allowed` });
+      }
+      raw.hints.forEach((hint, h) => {
+        const where = `${base}.hints[${h}]`;
+        if (!isPlainObject(hint)) {
+          errors.push({ where, message: "Each hint must be an object with text and optional cost" });
+          return;
+        }
+        const unknown = Object.keys(hint).filter((k) => k !== "text" && k !== "cost");
+        if (unknown.length > 0) {
+          errors.push({ where, message: `Unknown key(s) (${unknown.length}) — a hint has only text, cost` });
+        }
+        if (typeof hint.text !== "string" || !hint.text.trim() || hint.text.length > CLASSIC_HINT_MAX) {
+          errors.push({
+            where: `${where}.text`,
+            message: `hint text must be a non-empty string of at most ${CLASSIC_HINT_MAX} characters`,
+          });
+        }
+        if (
+          hint.cost !== undefined &&
+          hint.cost !== null &&
+          (typeof hint.cost !== "number" || !Number.isInteger(hint.cost) || hint.cost < 0 || hint.cost > HINT_COST_MAX)
+        ) {
+          errors.push({
+            where: `${where}.cost`,
+            message: `hint cost must be an integer in [0, ${HINT_COST_MAX}]`,
+          });
+        }
       });
     }
   }
@@ -399,7 +511,7 @@ export function parseBundle(raw: string): ParseResult {
   const categories = validateCategories(parsed.categories, errors);
 
   const rawChallenges = parsed.challenges;
-  rawChallenges.forEach((c, i) => validateChallenge(c, i, categories, errors));
+  rawChallenges.forEach((c, i) => validateChallenge(c, i, categories, parsed.version as number, errors));
   checkDuplicateIds(rawChallenges, errors);
 
   // v2 (#186): attachments, like stories, need the version that knows them.
@@ -460,7 +572,26 @@ export function parseBundle(raw: string): ParseResult {
 
   // Every challenge passed validation above (errors.length === 0), so this
   // cast is sound: each entry has exactly the required keys and types.
-  const challenges = rawChallenges as ClassicBundleChallenge[];
+  // Pre-ladder single hints are NORMALIZED to a one-rung ladder here, so
+  // every downstream importer has exactly one shape to handle.
+  const challenges: ClassicBundleChallenge[] = rawChallenges.map((raw) => {
+    const c = raw as ClassicBundleChallenge;
+    if ((parsed.version as number) < LADDER_VERSION) {
+      const { hint, ...rest } = c;
+      return {
+        ...rest,
+        ...(typeof hint === "string" && hint.trim()
+          ? { hints: [{ text: hint.trim(), cost: null }] }
+          : {}),
+      };
+    }
+    return {
+      ...c,
+      ...(c.hints
+        ? { hints: c.hints.map((h) => ({ text: h.text.trim(), cost: h.cost ?? null })) }
+        : {}),
+    };
+  });
   return {
     ok: true,
     bundle: {
@@ -546,7 +677,18 @@ function validateStories(raw: unknown, challengeIds: ReadonlySet<string>, errors
 }
 
 /** Indented, not minified — an organizer edits this file by hand. Ends in a
- *  trailing newline, like every other text file in the repo. */
+ *  trailing newline, like every other text file in the repo.
+ *
+ *  A version below 5 has no ladder, so a one-rung `hints` (what parsing a
+ *  legacy `hint` normalizes to) is written back as the `hint` string that
+ *  version understands. Without this a parsed legacy bundle would serialize
+ *  to text its own version refuses, breaking the round-trip every import
+ *  asserts. */
 export function serializeBundle(bundle: ClassicBundle): string {
-  return JSON.stringify(bundle, null, 2) + "\n";
+  if (bundle.version >= LADDER_VERSION) return JSON.stringify(bundle, null, 2) + "\n";
+  const challenges = bundle.challenges.map(({ hints, ...c }) => {
+    const text = hints?.[0]?.text;
+    return text !== undefined ? { ...c, hint: text } : c;
+  });
+  return JSON.stringify({ ...bundle, challenges }, null, 2) + "\n";
 }

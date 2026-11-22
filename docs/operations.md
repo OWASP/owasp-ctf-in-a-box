@@ -2656,10 +2656,12 @@ volume for next time) or `./scripts/dev-stack down --wipe` (also drops it).
 account that claimed the admin claim code at `/admin/claim` — there is no
 local bypass for that boundary, and the script does not add one. Signing in
 with GitHub needs a real OAuth app: put its client id/secret in
-`.env.dev-stack` (or the file you pass with `--env-file`), then run
-`./scripts/dev-stack down && ./scripts/dev-stack up` to apply it. Lost the
-code? `./setup/ctf-setup.sh admin-code --out <that file>` prints a new one,
-followed by the same down/up.
+`.env.dev-stack`, then run `./scripts/dev-stack down && ./scripts/dev-stack up`
+to apply it. With your own file, pass it to both:
+`./scripts/dev-stack --env-file <that file> down && ./scripts/dev-stack --env-file <that file> up`.
+Lost the code? `./setup/ctf-setup.sh admin-code --out <that file>` prints a
+new one, followed by the same down/up. The summary `up` prints already names
+the `--env-file` in every command it suggests.
 
 ## Before launch
 

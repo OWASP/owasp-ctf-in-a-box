@@ -80,9 +80,35 @@ _event_env() {
   printf '%s\n' "$output" | grep -qF 'EVENT_URL exported in this shell'
 }
 
+@test "a public name that only starts with 127. is refused before any docker call" {
+  local url
+  for url in https://127.example.com http://127.0.0.1.nip.io:8080 http://127.256.0.1; do
+    : > "$CALLS"
+    _event_env "$SANDBOX/event.env" "$url"
+    run "$SANDBOX/scripts/dev-stack" --env-file "$SANDBOX/event.env" up
+    if [ "$status" -ne 1 ] || [ -s "$CALLS" ]; then
+      echo "EVENT_URL='$url' was not refused: status $status, calls: $(cat "$CALLS")"
+      return 1
+    fi
+  done
+  printf '%s\n' "$output" | grep -qF 'public certificate for 127.256.0.1'
+}
+
+@test "follow-up commands name the --env-file the run used, quoted" {
+  cd "$SANDBOX"
+  # shellcheck disable=SC1091
+  . scripts/dev-stack
+  [ "$(dev_stack_cmd)" = ./scripts/dev-stack ]
+  ENV_FILE_OPT="$BATS_TEST_TMPDIR/my events/event.env"
+  eval "set -- $(dev_stack_cmd)"
+  [ "$1" = ./scripts/dev-stack ]
+  [ "$2" = --env-file ]
+  [ "$3" = "$BATS_TEST_TMPDIR/my events/event.env" ]
+}
+
 @test "--env-file with a loopback EVENT_URL goes ahead" {
   local url
-  for url in http://localhost:8080 http://ctf.localhost https://127.0.0.1/ 'http://[::1]:3000' ''; do
+  for url in http://localhost:8080 http://ctf.localhost https://127.0.0.1/ http://127.10.0.2:8080 'http://[::1]:3000' ''; do
     : > "$CALLS"
     _event_env "$SANDBOX/event.env" "$url"
     run "$SANDBOX/scripts/dev-stack" --env-file "$SANDBOX/event.env" up

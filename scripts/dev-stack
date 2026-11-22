@@ -69,6 +69,16 @@ set_env_file_opt() {
   ENV_FILE_OPT="$path"
 }
 
+# How to run dev-stack again for a follow-up step (restart, score, teardown):
+# with the same --env-file this run used, so it reads the file just edited.
+dev_stack_cmd() {
+  if [ -n "$ENV_FILE_OPT" ]; then
+    printf './scripts/dev-stack --env-file %q' "$ENV_FILE_OPT"
+  else
+    printf './scripts/dev-stack'
+  fi
+}
+
 resolve_env_file() {
   if [ -n "$ENV_FILE_OPT" ]; then
     ENV_FILE="$ENV_FILE_OPT"
@@ -146,13 +156,16 @@ event_url_host() {
   printf '%s' "$host" | tr '[:upper:]' '[:lower:]'
 }
 
-# Same hosts as isLoopback() in apps/web/src/lib/secure-url.ts: traffic to
-# them never leaves the machine, and Caddy issues no public certificate.
+# Hosts whose traffic never leaves the machine, so Caddy issues no public
+# certificate: localhost, *.localhost, [::1] and a numeric 127.0.0.0/8
+# address. A name such as 127.example.com is a public DNS name, not loopback.
 is_loopback_host() {
   case "$1" in
-    localhost|*.localhost|127.*|"[::1]") return 0 ;;
+    localhost|*.localhost|"[::1]") return 0 ;;
   esac
-  return 1
+  [[ "$1" =~ ^127\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+  [ "${BASH_REMATCH[1]}" -le 255 ] && [ "${BASH_REMATCH[2]}" -le 255 ] &&
+    [ "${BASH_REMATCH[3]}" -le 255 ]
 }
 
 # Caddy serves EVENT_URL's host, and for a public name it asks Let's Encrypt
@@ -467,7 +480,7 @@ seed_demo_data() {
   submit_solves "$alice" juice-shop 6 || rc=$?
   if [ "$rc" -eq 3 ]; then
     echo "== demo seeding deferred: scoring is not open yet (scheduled start kept, or frozen)."
-    echo "   Once it opens, seed by hand: ./scripts/dev-stack score <player> <juice-shop|dvwa> <n>"
+    echo "   Once it opens, seed by hand: $(dev_stack_cmd) score <player> <juice-shop|dvwa> <n>"
     return 0
   fi
   [ "$rc" -eq 0 ] || return "$rc"
@@ -548,12 +561,13 @@ cmd_up() {
   # What the CONTAINERS got, in their precedence order — an exported value
   # (even an empty one) beats the env file for compose. The claim hash is
   # only ever reported as set or not, never printed.
-  local claim_note claim_hash org org_note profiles
+  local claim_note claim_hash org org_note profiles ds
+  ds="$(dev_stack_cmd)"
   claim_hash="$(effective_claim_hash)" || exit 1
   if claim_code_is_hash "$claim_hash"; then
     claim_note="set — claim the admin seat at $event_url/admin/claim"
   else
-    claim_note="NOT SET — run ./setup/ctf-setup.sh admin-code --out $ENV_FILE, then ./scripts/dev-stack down && ./scripts/dev-stack up"
+    claim_note="NOT SET — run ./setup/ctf-setup.sh admin-code --out $ENV_FILE, then $ds down && $ds up"
   fi
   if [ "${GITHUB_ORG+x}" = x ]; then org="$GITHUB_ORG"; else org="$(env_value GITHUB_ORG)" || exit 1; fi
   if [ -n "$org" ]; then
@@ -594,7 +608,7 @@ cmd_up() {
  if a fresh load still shows the old numbers.
 
  Watch a NEW score land live:
-   ./scripts/dev-stack score <player> <juice-shop|dvwa> <n>
+   $ds score <player> <juice-shop|dvwa> <n>
    (marks the first <n> catalogue challenges solved for <player>, a player
    id or a linked GitHub login such as alice-dev; reload
    $event_url/leaderboard after ~30s)
@@ -603,15 +617,15 @@ cmd_up() {
    /admin needs a signed-in kit account that claimed the admin claim code
    (printed once when the env file was written) at $event_url/admin/claim.
    Lost it? ./setup/ctf-setup.sh admin-code --out $ENV_FILE prints a new one;
-   then ./scripts/dev-stack down && ./scripts/dev-stack up so the app reads
+   then $ds down && $ds up so the app reads
    the new hash (a plain restart keeps the old environment). Signing in with
    GitHub needs a real OAuth app: callback
    <EVENT_URL>/api/auth/callback/github, client id/secret in $ENV_FILE
    (GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET).
    Everything else — leaderboard, challenge browsing, seeded scores — works now.
 
- Tear down: ./scripts/dev-stack down            (keeps seeded state)
-            ./scripts/dev-stack down --wipe      (also drops volumes)
+ Tear down: $ds down          (keeps seeded state)
+            $ds down --wipe   (also drops volumes)
 ============================================================
 SUMMARY
 }

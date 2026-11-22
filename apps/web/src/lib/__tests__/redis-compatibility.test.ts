@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { pipeline } = vi.hoisted(() => ({
   pipeline: vi.fn(),
@@ -18,8 +18,14 @@ import {
   V1_FINGERPRINT_PATTERNS,
 } from "@/lib/redis-compatibility";
 
+beforeEach(() => {
+  vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://example.upstash.io");
+  vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "test-token");
+});
+
 afterEach(() => {
   pipeline.mockReset();
+  vi.unstubAllEnvs();
 });
 
 function emptyScan() {
@@ -39,6 +45,15 @@ function freshRedis() {
 }
 
 describe("Redis schema compatibility", () => {
+  it("skips compatibility checking when Redis is not configured", async () => {
+    vi.stubEnv("UPSTASH_REDIS_REST_URL", "");
+    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "");
+
+    await expect(checkRedisCompatibility()).resolves.toBeUndefined();
+
+    expect(pipeline).not.toHaveBeenCalled();
+  });
+
   it("uses the expected persistent schema marker", () => {
     expect(SCHEMA_VERSION_KEY).toBe("ctf:meta:schema-version");
     expect(CURRENT_SCHEMA_VERSION).toBe("2");

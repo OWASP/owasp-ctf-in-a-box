@@ -1,1 +1,0 @@
-- **Fixed: a host TypeScript incremental cache no longer reaches the app image (#786).** `apps/web/Dockerfile.dockerignore` now excludes `*.tsbuildinfo` at any depth, so a local `next dev` or `tsc` run no longer leaves a cache that makes `docker compose build app` fail type-checking on files that are not in the context. Nothing changes for a clean CI build.

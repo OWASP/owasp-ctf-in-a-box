@@ -134,7 +134,7 @@ describe("Redis schema compatibility", () => {
     const error = await checkRedisCompatibility().catch((caught) => caught);
 
     expect(error).toBeInstanceOf(Error);
-    expect(error.message).toContain("matching fingerprint: ctf:solves:*");
+    expect(error.message).toContain("Incompatible Redis data detected (matching fingerprint: ctf:solves:*). Export required data, perform a master reset on v1, then deploy v2.");
     expect(error.message).not.toContain("ctf:user:legacy-player");
   });
 

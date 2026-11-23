@@ -67,7 +67,7 @@ async function findLegacyFingerprintPattern(): Promise<string | null> {
 
 function refuseLegacyData(pattern: string): never {
   throw new Error(
-    `[startup] Legacy v1 Redis data detected (matching fingerprint: ${pattern}). Export any data you need, then perform a master reset before starting this v2 application.`,
+    `Incompatible Redis data detected (matching fingerprint: ${pattern}). Export required data, perform a master reset on v1, then deploy v2.`,
   );
 }
 

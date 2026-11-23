@@ -71,6 +71,12 @@ set_env_file_opt() {
 
 # How to run dev-stack again for a follow-up step (restart, score, teardown):
 # with the same --env-file this run used, so it reads the file just edited.
+# The command that writes a fresh admin claim code into the env file this run
+# used, with the path quoted so it can be copied as is.
+admin_code_cmd() {
+  printf './setup/ctf-setup.sh admin-code --out %q' "$ENV_FILE"
+}
+
 dev_stack_cmd() {
   if [ -n "$ENV_FILE_OPT" ]; then
     printf './scripts/dev-stack --env-file %q' "$ENV_FILE_OPT"
@@ -187,6 +193,16 @@ refuse_public_event_url() {
     source="in $ENV_FILE"
   fi
   [ -n "$url" ] || return 0
+  # Caddy expands EVENT_URL before parsing, and whitespace or a comma splits
+  # it into several site addresses, each of which gets a certificate. Only the
+  # first host would be checked below, so a list is refused outright.
+  case "$url" in
+    *[[:space:],]*)
+      echo "FAIL: EVENT_URL $source is '$url', which Caddy reads as more than one site address." >&2
+      echo "      dev-stack takes a single localhost URL, such as http://localhost." >&2
+      exit 1
+      ;;
+  esac
   host="$(event_url_host "$url")"
   if is_loopback_host "$host"; then
     return 0
@@ -567,7 +583,7 @@ cmd_up() {
   if claim_code_is_hash "$claim_hash"; then
     claim_note="set — claim the admin seat at $event_url/admin/claim"
   else
-    claim_note="NOT SET — run ./setup/ctf-setup.sh admin-code --out $ENV_FILE, then $ds down && $ds up"
+    claim_note="NOT SET — run $(admin_code_cmd), then $ds down && $ds up"
   fi
   if [ "${GITHUB_ORG+x}" = x ]; then org="$GITHUB_ORG"; else org="$(env_value GITHUB_ORG)" || exit 1; fi
   if [ -n "$org" ]; then
@@ -616,7 +632,7 @@ cmd_up() {
  Admin panel / signed-in experience:
    /admin needs a signed-in kit account that claimed the admin claim code
    (printed once when the env file was written) at $event_url/admin/claim.
-   Lost it? ./setup/ctf-setup.sh admin-code --out $ENV_FILE prints a new one;
+   Lost it? $(admin_code_cmd) prints a new one;
    then $ds down && $ds up so the app reads
    the new hash (a plain restart keeps the old environment). Signing in with
    GitHub needs a real OAuth app: callback

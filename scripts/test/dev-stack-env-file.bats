@@ -94,6 +94,35 @@ _event_env() {
   printf '%s\n' "$output" | grep -qF 'public certificate for 127.256.0.1'
 }
 
+@test "an EVENT_URL listing more than one address is refused before any docker call" {
+  local url
+  for url in 'http://localhost:80 https://ctf.example.org' 'http://localhost,https://ctf.example.org' 'http://localhost	ctf.example.org'; do
+    : > "$CALLS"
+    _event_env "$SANDBOX/event.env" "$url"
+    run "$SANDBOX/scripts/dev-stack" --env-file "$SANDBOX/event.env" up
+    if [ "$status" -ne 1 ] || [ -s "$CALLS" ]; then
+      echo "EVENT_URL='$url' in the file was not refused: status $status, calls: $(cat "$CALLS")"
+      return 1
+    fi
+  done
+  EVENT_URL='http://localhost:80 https://ctf.example.org' run "$SANDBOX/scripts/dev-stack" up
+  [ "$status" -eq 1 ]
+  [ ! -s "$CALLS" ]
+  [ ! -e "$SANDBOX/.env.dev-stack" ]
+  printf '%s\n' "$output" | grep -qF 'more than one site address'
+}
+
+@test "the admin-code recovery command quotes the env file path" {
+  cd "$SANDBOX"
+  # shellcheck disable=SC1091
+  . scripts/dev-stack
+  ENV_FILE="$BATS_TEST_TMPDIR/my events/event.env"
+  eval "set -- $(admin_code_cmd)"
+  [ "$#" -eq 4 ]
+  [ "$3" = --out ]
+  [ "$4" = "$BATS_TEST_TMPDIR/my events/event.env" ]
+}
+
 @test "follow-up commands name the --env-file the run used, quoted" {
   cd "$SANDBOX"
   # shellcheck disable=SC1091

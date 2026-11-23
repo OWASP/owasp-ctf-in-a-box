@@ -31,6 +31,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+. scripts/lib/acceptance-lib.sh
+
 cleanup() {
   docker rm -f web-acceptance web-default web-noscorer web-launched aa-redis aa-srh >/dev/null 2>&1 || true
   docker network rm aa-net >/dev/null 2>&1 || true

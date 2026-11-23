@@ -8,6 +8,32 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
 
 ## Unreleased
 
+## v2.0.0 — 2026-11-25
+
+Players get kit accounts. The box keeps its own users and sessions in Redis,
+every record is keyed by the player's account id instead of their GitHub
+login, and GitHub is needed only to score Secure Development. An upgrade from
+v1 starts from a clean event: export what you need, master reset on v1, then
+deploy v2 (`docs/hosting.md`, "Upgrading from v1").
+
+### Breaking changes
+
+- **v1 event data does not carry over (#743).** Records keyed by GitHub login
+  cannot be read by v2, so player, team, solve and activity data from a v1
+  event is not migrated, and the app, scorer and sync refuse to start while
+  Redis still holds v1 data. Follow the upgrade order above.
+- **Admins are claimed, not listed (#738).** `ADMIN_LOGINS` is not read. Set
+  the one-time admin claim code (`ctf-setup.sh secrets`, or `deploy.sh
+  --new-admin-code` on Fly and AWS), then claim the first seat at
+  `/admin/claim`.
+- **The AI module is removed (#729).** v1.1.0 deprecated it; its settings,
+  content and routes are gone.
+- **Sign-in is a kit account (#737, #739, #798).** Players sign up with a
+  username and password; GitHub sign-in is an `/admin` switch, and the one
+  OAuth provider.
+
+### Changes
+
 - **Added: username and password accounts (#737).** Players sign up on the
   box at `/sign-in` with a username (3 to 30 of letters, digits, `_` and
   `.`, unique ignoring case) and a password (12 to 128, no composition
@@ -189,6 +215,79 @@ repo-level — `apps/web/package.json` tracks the current tag; `scorer` and
   Solve-less teammates therefore see the same reachable challenge total as
   their teammates, without changing points, rankings or leaderboard row
   creation.
+- **Added: optional Discord webhook announcements (#590).** `/admin` → Event
+  now has a "Discord announcements" section: paste a discord.com webhook URL
+  (stored in its own Redis key, never returned by any API, never logged, and
+  audited only as "set"/"cleared") and opt each announcement in separately —
+  first blood, event launch, scoring paused/resumed, and remaining-time
+  checks at organizer-set marks — the time checks only while the event is
+  live and unpaused, and never after the scoring window closes. Nothing
+  posts by default: an observation loop reads its config first and ends the
+  tick there for a box with no webhook or every announcement off (one
+  pipeline carrying three reads, and the loop backs off to a much longer
+  interval while the box stays unconfigured; a config/webhook save
+  schedules an immediate pass without waiting for it. Enabling
+  announcements shortly before launch announces the launch only when that
+  pass records the pre-launch state first; a launch that starts before the
+  pass runs is seeded silently),
+  lifecycle edges go through an atomic compare-and-swap so exactly one
+  replica announces each edge — and the first observation a box makes seeds
+  silently, so configuring a webhook never replays history, while a freeze
+  that spans a close and a window extension is announced once — first blood is
+  recorded atomically at solve time and claimed when the post is enqueued (a
+  box that is off never claims, so enabling later cannot replay it), and marks
+  claim every crossed time in
+  one pass while posting at most one check, so a restart or a mid-event
+  enable never bursts. Delivery goes through a leased Redis outbox with
+  retries — a restart loses nothing durable, and turning a type off stops
+  its pending posts immediately. Every message suppresses Discord mentions
+  outright, so a team named `@everyone` cannot ping the channel, and
+  escapes Markdown in untrusted text, so a team named `[Claim your
+  prize](…)` cannot become a clickable link; a classic challenge still
+  locked behind its story step is never announced — not even its id; and no
+  flag, answer or hint can reach a message, because the builders only
+  accept public metadata. A Send test and per-type previews are in the
+  section; the master reset wipes the announcement state but keeps the
+  webhook setup (ADR 73).
+- **Added: a GitHub sign-in switch in /admin, and GitHub sign-in is optional without Secure Development (#739).** Username and password sign-in is always on, and GitHub is the one OAuth provider: set `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` (both keys, then recreate the app container) and *Sign in with GitHub* appears on `/sign-in` and as a switch in the Event tab's Sign-in section. Turning it off stops new GitHub sign-ins, including one already started, but does not sign out existing sessions; players can still link GitHub from their profile for Secure Development. The GitHub keys are needed only with Secure Development: an event without it can run on username and password alone. On AWS, `github_client_id` is optional without Secure Development, and `GITHUB_CLIENT_SECRET` is read from SSM only when it is set.
+- **Added: admin account tools — reset codes, rename, unlink, delete with a re-link block, delete all accounts (#740).** In the Support tab an organizer can issue a single-use, 15-minute password reset code (the player redeems it at `/reset` and picks a new password; every session is signed out; an organizer is refused until their admin access is revoked, and an admin claim by the player is refused with a retryable error while the new password is written), rename a player, and unlink an unscored GitHub link (refused unless the player keeps a usable sign-in: a password with a username). The unlink holds the player's Secure Development scores while it runs (the scorer answers `503`, sync retries), so a score in flight is either seen by its scored check or re-resolved against the unlinked login and held. Deleting a contestant now removes the account itself and blocks their GitHub login from linking again until the next master reset, and refuses an organizer (an admin grant claimed while the delete runs is removed with the account, and the delete says so; a retry of a delete that failed at that step removes the grant left behind). The Event tab's danger zone adds Delete all accounts (type `delete all accounts`), which deletes every account including yours and every admin grant: rotate the claim code first (`ctf-setup.sh admin-code`, or `deploy.sh --new-admin-code`), then sign in with a new account and claim `/admin` again. A claim from a session whose account is gone is refused and spends no code.
+- **Changed: v2 refuses to start on v1 data (#743).** The app, scorer and sync check Redis before serving or polling: if it holds recognizable v1 event data and no `ctf:meta:schema-version` marker, or a marker for another schema version, the service logs one line naming the matched key pattern and exits. On a compatible Redis the first service writes the marker. A box that ran a pre-release v2 build has no marker either and is refused the same way. **Breaking:** run the master reset on the old box before deploying v2 (`docs/hosting.md`, "Upgrading from v1").
+- **Changed: v2.0 players are kit accounts, and GitHub is needed only for Secure Development (#731, #744).** Players create an account on the box with a username and password; GitHub sign-in appears when you add its keys and leave its switch on in `/admin`. Every record is keyed by a player id, and admins are claimed with a one-time code. **Breaking:** v1 accounts and progress do not carry over. To upgrade, export the v1 event archive and keep it, run the master reset on the v1 box and stop it, remove `ADMIN_LOGINS` from `.env`, deploy v2 with a claim code (`ctf-setup.sh admin-code`, or `deploy.sh --new-admin-code` on Fly and AWS), and claim `/admin`. The steps are in `docs/hosting.md` under "Upgrading from v1"; the decision is ADR 74.
+- **Changed: sign-in prompts, the rules, terms and privacy pages and the module guides describe kit accounts (#744).**
+  Contestants are told to sign in, not to sign in with GitHub, and that their
+  account on the site is their identity for scoring. Secure Development copy
+  tells them to link GitHub from their profile so their pull requests score.
+  The privacy page lists what an account stores (username, scrypt password
+  hash, placeholder email, sessions with their sign-in IP and user agent,
+  linked provider ids and the GitHub login), what each sign-in provider hands
+  over and what is kept, the four cookies, and that an organizer deletes an
+  account on request.
+- **Security: the app image no longer picks up nested `.env` files (#749).**
+  The app build reads `apps/web/Dockerfile.dockerignore`, whose rules matched
+  only the repo root, so `apps/web/.env.local` was copied into the image. Both
+  ignore files now exclude `.env`, `.env.*`, `node_modules` and `.next` at any
+  depth, which also keeps a host-built `node_modules` out of the build.
+- **Fixed: deleting a contestant while they change team no longer leaves a
+  ghost team member (#765).** The membership removal and the record delete
+  now run as one Redis script against the team the player's record names at
+  that moment, not the team the delete read at the start. A player who joins
+  or switches team mid-delete is removed from the team they ended up on. A
+  player who became captain mid-delete is refused at that step, and the error
+  says to transfer the captaincy and delete again. The account and progress
+  are already gone at that point, and the re-run finishes the delete.
+- **Fixed: a deleted player's in-flight Secure Development score can no longer restore their solves (#775).** Deleting a contestant now puts the player's scores on hold (`ctf:score-hold:<id>`) before it clears them, and the scorer checks that hold atomically with the solve write: a score posted while the delete runs gets a retryable `503`, and one posted after it gets a final `422` (`player-deleted`) that sync logs as `refused`. The account goes before the progress, so a delete that fails before the account is gone keeps the player's progress and held scores. Sync now sends the scorer the GitHub login it resolved each score through, and the scorer writes the solve only while that login still links to the player (a retryable `503` otherwise), so a score resolved before an unlink, a delete or Delete all accounts and sent after it is resolved again instead of written to the old player. A delete that fails partway lifts its hold on the player's scores (only its own token); run it again to finish it. If the cleanup itself failed, the scores stay held until the delete is run again. The scorer also reads the master-reset epoch in the same script as the solve write and refuses a score timed before it (final `422` `pre-reset`), and the master reset writes that epoch before it clears any solve, so a score judged before a master reset or Delete all accounts and written after it no longer restores a solve, with or without a login (#791).
+- **Changed: changelog entries are fragments, not lines in `CHANGELOG.md`
+  (#785).** A PR that changes shipped code adds one file,
+  `changelog.d/<issue>-<slug>.md`, holding its entry, and the `changelog`
+  check is satisfied only by a new fragment (editing `CHANGELOG.md` does not
+  satisfy it). Open PRs stop conflicting on the `## Unreleased` block.
+  `node scripts/changelog-assemble.mjs` folds the fragments into
+  `CHANGELOG.md` at release.
+- **Fixed: a host TypeScript incremental cache no longer reaches the app image (#786).** `apps/web/Dockerfile.dockerignore` now excludes `*.tsbuildinfo` at any depth, so a local `next dev` or `tsc` run no longer leaves a cache that makes `docker compose build app` fail type-checking on files that are not in the context. Nothing changes for a clean CI build.
+- **Fixed: `scripts/dev-stack` no longer starts on a real event's `.env` (#787).** It runs on its throwaway `.env.dev-stack` even when a `.env` sits in the same checkout, and uses another file only when given `--env-file <path>` before the subcommand. `up` refuses an env file or exported `EVENT_URL` that is not a loopback URL, because Caddy would request a public certificate for that host from the developer's machine. If you kept OAuth keys for local sign-in in `.env`, move them to `.env.dev-stack` or pass `--env-file`.
+- **Fixed: a GitHub unlink now clears the player's GitHub login and GitHub avatar (#792).** Before this, the login stayed on the player's record after an unlink. Admin search still found the player by it, the profile still showed the GitHub avatar, and the next write to the record could link the old login to the player again.
+- **Fixed: the reset code dialog in the admin Support tab printed "UTC UTC" after the expiry time (#793).**
+- **Changed: GitHub is the one OAuth sign-in provider (#798).** Players sign in with a username and password, or with GitHub when its keys are set and its `/admin` switch is on. A box that ran a pre-release v2 build with Google or Discord keys can delete them from `.env` (`.env.fly` on Fly, the Google and Discord client id variables in `terraform.tfvars` on AWS); nothing reads them. A player who signed in only with Google or Discord needs an organizer to set a username for them in Support, if they have none, and give them a reset code. A reset code is refused for an organizer while they hold admin access, so another admin removes them from the admins list, gives them the reset code, then presses *Issue admin code* and has them claim it at `/admin/claim` once they have signed in with the new password. If they are the only admin, rotate the claim code first (`ctf-setup.sh admin-code`, or `deploy.sh --new-admin-code`) and claim `/admin` from a new account, which then does the same.
 
 ## v1.1.0 — 2026-11-10
 

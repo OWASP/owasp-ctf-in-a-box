@@ -233,7 +233,7 @@ dev_stack_copy() {
 
 @test "dev-stack: a clean SCORE_IMAGE still adds the secdev profile (control)" {
   dev_stack_copy
-  printf 'REDIS_PASSWORD=x\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > ds/.env
+  printf 'REDIS_PASSWORD=x\nSCORE_IMAGE=ghcr.io/fixture/score:latest\n' > ds/.env.dev-stack
   PATH="$PWD/stubs:$PATH" run env -u SCORE_IMAGE bash ds/scripts/dev-stack down
   [ "$status" -eq 0 ]
   grep -qF -- '--profile secdev' docker.log
@@ -241,7 +241,7 @@ dev_stack_copy() {
 
 @test "dev-stack: an unterminated SCORE_IMAGE quote stops it before any docker call" {
   dev_stack_copy
-  printf 'REDIS_PASSWORD=x\nSCORE_IMAGE="ghcr.io/fixture/score:latest\n' > ds/.env
+  printf 'REDIS_PASSWORD=x\nSCORE_IMAGE="ghcr.io/fixture/score:latest\n' > ds/.env.dev-stack
   PATH="$PWD/stubs:$PATH" run env -u SCORE_IMAGE bash ds/scripts/dev-stack down
   [ "$status" -ne 0 ]
   echo "$output" | grep -qF 'unterminated quote'
@@ -250,7 +250,7 @@ dev_stack_copy() {
 
 @test "dev-stack: an interpolated SCORE_IMAGE stops it before any docker call" {
   dev_stack_copy
-  printf 'REDIS_PASSWORD=x\nSCORE_IMAGE=${SCORER_IMAGE:-}\n' > ds/.env
+  printf 'REDIS_PASSWORD=x\nSCORE_IMAGE=${SCORER_IMAGE:-}\n' > ds/.env.dev-stack
   PATH="$PWD/stubs:$PATH" run env -u SCORE_IMAGE bash ds/scripts/dev-stack down
   [ "$status" -ne 0 ]
   echo "$output" | grep -qF 'uses interpolation'

@@ -3,6 +3,13 @@
 # contestant experience (leaderboard, challenge browsing, a score landing on
 # the board) with no GitHub org, no OAuth app, no real contestant PRs.
 #
+# Usage: dev-stack [--env-file <path>] <subcommand>
+#
+# The env file is the throwaway .env.dev-stack, written on the first `up`.
+# A real event's .env is never read unless --env-file names it, and `up`
+# refuses any env file whose EVENT_URL is not loopback (see
+# refuse_public_event_url).
+#
 # Subcommands:
 #   up                          bring the stack up, seed a demo leaderboard
 #   down [--wipe]                tear it down (--wipe also drops volumes)
@@ -20,6 +27,9 @@
 # the app image, and everything else — the event's name, which modules run,
 # which Secure Development targets — is an `/admin` setting.
 set -euo pipefail
+# --env-file is relative to where the developer ran the script, not the repo
+# root this cds into.
+CALLER_PWD="$PWD"
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 # shellcheck source=scripts/lib/dotenv.sh
@@ -31,13 +41,53 @@ SCORER_IMAGE_TAG="ctf-dev-stack/scorer:local"
 DEV_ENV_FILE=.env.dev-stack
 
 # ---------------------------------------------------------------------------
-# env resolution — never overwrite a real .env; a throwaway file only.
+# env resolution — the throwaway file, or the one --env-file names. Never a
+# .env that merely exists: in a checkout that also holds a real event's .env,
+# that would start the local stack on the event's EVENT_URL, OAuth keys and
+# GITHUB_ORG.
 # ---------------------------------------------------------------------------
 ENV_FILE=""
+ENV_FILE_OPT=""
+
+# Set ENV_FILE_OPT from --env-file, resolved against the caller's directory.
+# A named file that is not there is refused rather than written: the throwaway
+# secrets only ever go to .env.dev-stack.
+set_env_file_opt() {
+  local path="$1"
+  if [ -z "$path" ]; then
+    echo "--env-file needs a path" >&2
+    exit 2
+  fi
+  case "$path" in
+    /*) ;;
+    *) path="$CALLER_PWD/$path" ;;
+  esac
+  if [ ! -f "$path" ]; then
+    echo "FAIL: --env-file $1: no such file" >&2
+    exit 2
+  fi
+  ENV_FILE_OPT="$path"
+}
+
+# How to run dev-stack again for a follow-up step (restart, score, teardown):
+# with the same --env-file this run used, so it reads the file just edited.
+# The command that writes a fresh admin claim code into the env file this run
+# used, with the path quoted so it can be copied as is.
+admin_code_cmd() {
+  printf './setup/ctf-setup.sh admin-code --out %q' "$ENV_FILE"
+}
+
+dev_stack_cmd() {
+  if [ -n "$ENV_FILE_OPT" ]; then
+    printf './scripts/dev-stack --env-file %q' "$ENV_FILE_OPT"
+  else
+    printf './scripts/dev-stack'
+  fi
+}
 
 resolve_env_file() {
-  if [ -f .env ]; then
-    ENV_FILE=.env
+  if [ -n "$ENV_FILE_OPT" ]; then
+    ENV_FILE="$ENV_FILE_OPT"
   elif [ -f "$DEV_ENV_FILE" ]; then
     ENV_FILE="$DEV_ENV_FILE"
   else
@@ -60,25 +110,13 @@ file_value() {
 }
 
 # GITHUB_ORG is a RUNTIME key since config v2 (#386) — there is no config file
-# to derive it from, and nothing is baked into the image. Resolve it the way
-# the containers will actually see it: docker compose lets the shell
-# environment win over --env-file, so an exported value is authoritative, then
-# the env file.
-#
-# `${VAR+x}`, not `${VAR:-}`: compose gives the shell precedence over the env
-# file, so an EXPORTED empty value is exactly what the containers get and must
-# not be papered over with the file's value — only an unset variable falls
-# through.
+# to derive it from, and nothing is baked into the image. The throwaway file is
+# written with the exported value, the one compose would hand the containers
+# anyway. A real .env is not consulted: its org belongs to that event.
 # No fallback for the org: an invented one would put wrong fork links on
 # /challenges. Empty means the app shows bare repo names.
 resolve_github_org() {
-  local v
-  if [ "${GITHUB_ORG+x}" = x ]; then
-    v="$GITHUB_ORG"
-  else
-    v="$(file_value GITHUB_ORG .env)" || exit 1
-  fi
-  printf '%s' "$v"
+  printf '%s' "${GITHUB_ORG:-}"
 }
 
 # Compose lets the shell environment win over --env-file, an exported EMPTY
@@ -109,9 +147,78 @@ effective_claim_hash() {
   fi
 }
 
+# The host part of an EVENT_URL, lowercased: the scheme, userinfo, port, path,
+# query and fragment dropped. A bare `host:port` (Caddy accepts a site address
+# without a scheme) works too.
+event_url_host() {
+  local rest="$1" host
+  case "$rest" in *://*) rest="${rest#*://}" ;; esac
+  rest="${rest%%[/?#]*}"
+  rest="${rest##*@}"
+  case "$rest" in
+    \[*) host="${rest%%]*}]" ;;
+    *) host="${rest%%:*}" ;;
+  esac
+  printf '%s' "$host" | tr '[:upper:]' '[:lower:]'
+}
+
+# Hosts whose traffic never leaves the machine, so Caddy issues no public
+# certificate: localhost, *.localhost, [::1] and a numeric 127.0.0.0/8
+# address. A name such as 127.example.com is a public DNS name, not loopback.
+is_loopback_host() {
+  case "$1" in
+    localhost|*.localhost|"[::1]") return 0 ;;
+  esac
+  [[ "$1" =~ ^127\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+  [ "${BASH_REMATCH[1]}" -le 255 ] && [ "${BASH_REMATCH[2]}" -le 255 ] &&
+    [ "${BASH_REMATCH[3]}" -le 255 ]
+}
+
+# Caddy serves EVENT_URL's host, and for a public name it asks Let's Encrypt
+# for a certificate. From a laptop every such attempt fails and counts against
+# that hostname's failed-validation limit, so `up` refuses a non-loopback
+# EVENT_URL before anything is built or started. Exported wins over the env
+# file, as compose resolves it, an exported empty value included; empty is
+# compose's http://localhost default. Runs before a throwaway file is written
+# or a claim code generated.
+refuse_public_event_url() {
+  local url source host
+  if [ "${EVENT_URL+x}" = x ]; then
+    url="$EVENT_URL"
+    source="exported in this shell"
+  else
+    # The throwaway file about to be written says http://localhost.
+    [ -n "$ENV_FILE" ] || return 0
+    url="$(env_value EVENT_URL)" || exit 1
+    source="in $ENV_FILE"
+  fi
+  [ -n "$url" ] || return 0
+  # Caddy expands EVENT_URL before parsing, and whitespace or a comma splits
+  # it into several site addresses, each of which gets a certificate. Only the
+  # first host would be checked below, so a list is refused outright.
+  case "$url" in
+    *[[:space:],]*)
+      echo "FAIL: EVENT_URL $source is '$url', which Caddy reads as more than one site address." >&2
+      echo "      dev-stack takes a single localhost URL, such as http://localhost." >&2
+      exit 1
+      ;;
+  esac
+  host="$(event_url_host "$url")"
+  if is_loopback_host "$host"; then
+    return 0
+  fi
+  echo "FAIL: EVENT_URL $source is $url, not a localhost URL." >&2
+  echo "      Caddy would request a public certificate for $host from this machine," >&2
+  echo "      and each failed attempt counts against that hostname's Let's Encrypt limit." >&2
+  echo "      dev-stack is for local use: run it without --env-file (the throwaway" >&2
+  echo "      $DEV_ENV_FILE), or point --env-file at a file with EVENT_URL=http://localhost." >&2
+  exit 1
+}
+
 ensure_env() {
   resolve_env_file
   refuse_claim_hash_override
+  refuse_public_event_url
   if [ -n "$ENV_FILE" ]; then
     echo "== using existing $ENV_FILE"
     # An env file written before Redis grew a password is the common case on
@@ -131,7 +238,7 @@ ensure_env() {
     fi
     return
   fi
-  echo "== no .env found; writing a throwaway $DEV_ENV_FILE (same fields as setup/ctf-setup.sh secrets)"
+  echo "== no $DEV_ENV_FILE found; writing a throwaway one (same fields as setup/ctf-setup.sh secrets)"
   # GITHUB_ORG is a runtime key, so the throwaway file wants the real value
   # rather than a blank. The admin seat is claimed with a fresh one-time code
   # (ADR 72): only its hash goes in the file, and the code is printed once.
@@ -389,7 +496,7 @@ seed_demo_data() {
   submit_solves "$alice" juice-shop 6 || rc=$?
   if [ "$rc" -eq 3 ]; then
     echo "== demo seeding deferred: scoring is not open yet (scheduled start kept, or frozen)."
-    echo "   Once it opens, seed by hand: ./scripts/dev-stack score <player> <juice-shop|dvwa> <n>"
+    echo "   Once it opens, seed by hand: $(dev_stack_cmd) score <player> <juice-shop|dvwa> <n>"
     return 0
   fi
   [ "$rc" -eq 0 ] || return "$rc"
@@ -470,12 +577,13 @@ cmd_up() {
   # What the CONTAINERS got, in their precedence order — an exported value
   # (even an empty one) beats the env file for compose. The claim hash is
   # only ever reported as set or not, never printed.
-  local claim_note claim_hash org org_note profiles
+  local claim_note claim_hash org org_note profiles ds
+  ds="$(dev_stack_cmd)"
   claim_hash="$(effective_claim_hash)" || exit 1
   if claim_code_is_hash "$claim_hash"; then
     claim_note="set — claim the admin seat at $event_url/admin/claim"
   else
-    claim_note="NOT SET — run ./setup/ctf-setup.sh admin-code --out $ENV_FILE, then ./scripts/dev-stack down && ./scripts/dev-stack up"
+    claim_note="NOT SET — run $(admin_code_cmd), then $ds down && $ds up"
   fi
   if [ "${GITHUB_ORG+x}" = x ]; then org="$GITHUB_ORG"; else org="$(env_value GITHUB_ORG)" || exit 1; fi
   if [ -n "$org" ]; then
@@ -516,7 +624,7 @@ cmd_up() {
  if a fresh load still shows the old numbers.
 
  Watch a NEW score land live:
-   ./scripts/dev-stack score <player> <juice-shop|dvwa> <n>
+   $ds score <player> <juice-shop|dvwa> <n>
    (marks the first <n> catalogue challenges solved for <player>, a player
    id or a linked GitHub login such as alice-dev; reload
    $event_url/leaderboard after ~30s)
@@ -524,16 +632,16 @@ cmd_up() {
  Admin panel / signed-in experience:
    /admin needs a signed-in kit account that claimed the admin claim code
    (printed once when the env file was written) at $event_url/admin/claim.
-   Lost it? ./setup/ctf-setup.sh admin-code --out $ENV_FILE prints a new one;
-   then ./scripts/dev-stack down && ./scripts/dev-stack up so the app reads
+   Lost it? $(admin_code_cmd) prints a new one;
+   then $ds down && $ds up so the app reads
    the new hash (a plain restart keeps the old environment). Signing in with
    GitHub needs a real OAuth app: callback
    <EVENT_URL>/api/auth/callback/github, client id/secret in $ENV_FILE
    (GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET).
    Everything else — leaderboard, challenge browsing, seeded scores — works now.
 
- Tear down: ./scripts/dev-stack down            (keeps seeded state)
-            ./scripts/dev-stack down --wipe      (also drops volumes)
+ Tear down: $ds down          (keeps seeded state)
+            $ds down --wipe   (also drops volumes)
 ============================================================
 SUMMARY
 }
@@ -557,7 +665,7 @@ cmd_down() {
 cmd_score() {
   [ $# -eq 3 ] || { echo "usage: dev-stack score <player> <juice-shop|dvwa> <n>" >&2; exit 2; }
   resolve_env_file
-  [ -n "$ENV_FILE" ] || { echo "no .env or $DEV_ENV_FILE found — run 'dev-stack up' first" >&2; exit 1; }
+  [ -n "$ENV_FILE" ] || { echo "no $DEV_ENV_FILE found — run 'dev-stack up' first, or pass --env-file" >&2; exit 1; }
   local player
   player="$(resolve_player "$1")" || exit 1
   submit_solves "$player" "$2" "$3"
@@ -566,12 +674,17 @@ cmd_score() {
 # Sourcing (the bats suite) defines the functions without running a command.
 if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
 
+if [ "${1:-}" = "--env-file" ]; then
+  set_env_file_opt "${2:-}"
+  shift 2
+fi
+
 case "${1:-}" in
   up|"") cmd_up ;;
   down) shift; cmd_down "$@" ;;
   score) shift; cmd_score "$@" ;;
   *)
-    echo "usage: dev-stack {up|down [--wipe]|score <player> <juice-shop|dvwa> <n>}" >&2
+    echo "usage: dev-stack [--env-file <path>] {up|down [--wipe]|score <player> <juice-shop|dvwa> <n>}" >&2
     exit 2
     ;;
 esac

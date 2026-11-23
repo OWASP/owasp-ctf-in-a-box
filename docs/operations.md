@@ -2597,9 +2597,11 @@ org, an OAuth app, or a real contestant PR? One command:
 ./scripts/dev-stack up
 ```
 
-This generates a throwaway `.env.dev-stack` if you have no `.env` (never
-touches or overwrites a real one), builds the scorer image locally from
-`scorer/` and the app image from `apps/web/`, brings up `redis`,
+This runs on a throwaway `.env.dev-stack`, written on the first run. A real
+`.env` in the same checkout is never overwritten, and never read unless you
+name it with `--env-file` (below), so the local stack does not pick up an
+event's `EVENT_URL`, OAuth keys or `GITHUB_ORG`. It builds the scorer image
+locally from `scorer/` and the app image from `apps/web/`, brings up `redis`,
 `srh`, `scorer`, `app` and `caddy`, **launches** the dev event (it sets
 `scoringStartsAt` to now unless a valid one is already set, because an event
 with no scoring start is not launched and scores nothing; a kept start that is
@@ -2611,12 +2613,24 @@ path rather than poking Redis keys directly. It prints the URL to open when
 it's done.
 
 It needs no config file — there is no such thing any more (#386).
-`GITHUB_ORG` comes from your environment if you exported it, else from `.env`.
-With no `.env`, `up` writes a throwaway `.env.dev-stack` that carries a fresh
+`GITHUB_ORG` comes from your environment if you exported it, else it is
+empty. With no `.env.dev-stack`, `up` writes one that carries a fresh
 admin claim code's hash and prints the code once; both are read at start-up,
 so changing one means recreating the containers, not a rebuild. Everything else — the event's
 name, which modules run, which Secure Development targets — is an `/admin`
 setting.
+
+To run on a different file, name it before the subcommand, and pass the same
+option to `score` and `down`:
+
+```sh
+./scripts/dev-stack --env-file .env.local up
+```
+
+`up` refuses an env file (or an exported `EVENT_URL`) whose `EVENT_URL` is not
+a loopback URL such as `http://localhost`: Caddy would request a public
+certificate for that host from your machine, and every failed attempt counts
+against the hostname's Let's Encrypt limit.
 
 Watch a new score land live, without a real PR:
 
@@ -2641,11 +2655,13 @@ volume for next time) or `./scripts/dev-stack down --wipe` (also drops it).
 **What this does not do:** sign you in. `/admin` needs a signed-in kit
 account that claimed the admin claim code at `/admin/claim` — there is no
 local bypass for that boundary, and the script does not add one. Signing in
-with GitHub needs a real OAuth app: put its client id/secret in `.env` (or
-the generated `.env.dev-stack`), then run
-`./scripts/dev-stack down && ./scripts/dev-stack up` to apply it. Lost the
-code? `./setup/ctf-setup.sh admin-code --out <that file>` prints a new one,
-followed by the same down/up.
+with GitHub needs a real OAuth app: put its client id/secret in
+`.env.dev-stack`, then run `./scripts/dev-stack down && ./scripts/dev-stack up`
+to apply it. With your own file, pass it to both:
+`./scripts/dev-stack --env-file <that file> down && ./scripts/dev-stack --env-file <that file> up`.
+Lost the code? `./setup/ctf-setup.sh admin-code --out <that file>` prints a
+new one, followed by the same down/up. The summary `up` prints already names
+the `--env-file` in every command it suggests.
 
 ## Before launch
 

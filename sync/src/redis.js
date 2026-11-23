@@ -194,7 +194,7 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
           }
 
           throw new Error(
-            `incompatible Redis data detected (matching fingerprint: ${pattern}). Export required data and perform a master reset before starting the v2 sync service.`,
+            `Incompatible Redis data detected (matching fingerprint: ${pattern}). Export required data, perform a master reset on v1, then deploy v2.`,
           );
         }
       }

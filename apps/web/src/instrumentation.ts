@@ -1,25 +1,18 @@
 import { trustedClientIpHeader } from "@/lib/client-ip";
-import { errorLabel } from "@/lib/error-label";
 import { configuredProviders } from "@/lib/sign-in-providers";
 import { checkEventUrl } from "@/lib/secure-url";
+import { errorLabel } from "@/lib/error-label";
 
-/** Starts the Discord-announcer ticker (#590) once per server instance, in
- *  the nodejs runtime only (the announcer's stores are server-only Redis
- *  readers; the Edge copy of this file must not load them), fire-and-forget
- *  — instrumentation's register() completes before the first request, so a
- *  slow first tick must never gate serving. Every failure inside the ticker
- *  is already logged and swallowed; startAnnounceTicker itself no-ops when
- *  Redis env is absent or when already started. */
+/** Starts the Discord announcer only in the Node.js runtime, without
+ *  blocking application startup. Redis compatibility must be checked first.
+ */
 async function startDiscordAnnouncer(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+
   try {
     const { startAnnounceTicker } = await import("@/lib/announce/ticker");
     startAnnounceTicker();
   } catch (err) {
-    // A boot that cannot load the announcer still serves the event — the
-    // announcer is optional by construction. errorLabel caps the value to a
-    // name+message and never stringifies a non-Error throw, so a raw
-    // exception message or secret cannot enter the log.
     console.error("ctf-app: discord announcer not started:", errorLabel(err));
   }
 }
@@ -28,24 +21,12 @@ async function startDiscordAnnouncer(): Promise<void> {
  * Next's server-startup hook: called once per server instance, and completes
  * before the first request is served.
  *
- * This is the right home for the EVENT_URL check specifically because of that
- * timing. Validating inside `lib/auth.ts` at import would also run during
- * `next build` (which sets NODE_ENV=production), turning a deployment warning
- * into a build failure on a machine that has no event config at all. Checking
- * per-request would be too late — by the first request the cookie policy is
- * already settled, and an organizer would learn about it from a log line
- * buried under traffic instead of a server that refused to come up.
- *
- * The Edge runtime loads this file too; the check is pure string work with no
- * Node built-ins, so it runs identically in both.
+ * The Edge runtime loads this file too, so Node-only Redis compatibility
+ * checks and the Discord announcer are dynamically imported only in Node.js.
  */
-export function register() {
-  // Throws on a malformed TRUSTED_CLIENT_IP_HEADER, refusing to boot rather
-  // than keying every client on one address (see client-ip.ts).
+export async function register(): Promise<void> {
   trustedClientIpHeader();
 
-  // Quiz and classic still serve without GitHub keys, so this logs rather
-  // than refusing to boot.
   if ((process.env.SCORE_IMAGE ?? "").trim() !== "" && !configuredProviders().includes("github")) {
     console.error(
       "[startup] Secure Development is on (SCORE_IMAGE is set) but GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET are missing: players cannot link GitHub, so no PR will score.",
@@ -58,18 +39,20 @@ export function register() {
     allowInsecure: process.env.ALLOW_INSECURE_EVENT_URL === "1",
   });
 
-  startDiscordAnnouncer();
-
-  if (verdict.level === "ok") return;
-
   if (verdict.level === "warn") {
     console.warn(`⚠️  ctf-app: ${verdict.message}`);
-    return;
   }
 
-  // Throwing here stops the server before it serves anything. That is the
-  // intent: an event that boots with sniffable organizer sessions and no
-  // symptom is worse than one that refuses to boot with a message naming the
-  // fix.
-  throw new Error(`ctf-app: ${verdict.message}`);
+  // Mandatory compatibility check: failure prevents normal startup.
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { registerNodeInstrumentation } = await import("./instrumentation.node");
+    await registerNodeInstrumentation();
+  }
+
+  if (verdict.level === "fail") {
+    throw new Error(`ctf-app: ${verdict.message}`);
+  }
+
+  // Optional background service: never blocks application serving.
+  startDiscordAnnouncer();
 }

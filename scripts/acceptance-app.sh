@@ -31,6 +31,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+. scripts/lib/acceptance-lib.sh
+
 cleanup() {
   docker rm -f web-acceptance web-default web-noscorer web-launched aa-redis aa-srh >/dev/null 2>&1 || true
   docker network rm aa-net >/dev/null 2>&1 || true
@@ -91,6 +93,7 @@ until docker exec aa-redis redis-cli ping 2>/dev/null | grep -q PONG; do
   [ "$SECONDS" -ge "$aa_deadline" ] && { echo "FAIL: acceptance redis never answered"; exit 1; }
   sleep 1
 done
+acc_mark_v2_schema aa-redis
 docker exec aa-redis redis-cli HSET ctf:admin:settings scoringStartsAt "2000-01-01T00:00:00Z" >/dev/null
 AA_REDIS_ENV="-e UPSTASH_REDIS_REST_URL=http://srh:80 -e UPSTASH_REDIS_REST_TOKEN=$AA_SRH_TOKEN"
 # shellcheck disable=SC2086  # AA_REDIS_ENV is two -e flags on purpose

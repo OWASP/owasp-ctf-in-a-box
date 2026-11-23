@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { makeRedis, outsideScoringWindow, outsideWindow, pausedAt } from "../src/redis.js";
+import { makeRedis, outsideScoringWindow, outsideWindow, pausedAt, V1_FINGERPRINT_PATTERNS } from "../src/redis.js";
 import { TARGETS } from "../src/config.js";
 
 const PAST = "2000-01-01T00:00:00.000Z";
@@ -11,6 +11,12 @@ const env = { UPSTASH_REDIS_REST_URL: "http://srh:80", UPSTASH_REDIS_REST_TOKEN:
 // Mock fetch that returns a single HMGET [paused, scoringStartsAt, scoringEndsAt] reply.
 const hmgetFetch = (row) => async () =>
   new Response(JSON.stringify([{ result: row }]), { status: 200 });
+
+test("sync v1 fingerprint patterns match the shared fixture", async () => {
+  const url = new URL("../../test/fixtures/v1-fingerprints.json", import.meta.url);
+  const { patterns } = JSON.parse(await readFile(url, "utf8"));
+  assert.deepEqual(V1_FINGERPRINT_PATTERNS, patterns);
+});
 
 test("outsideWindow: before start / after end / inside / unbounded", () => {
   const now = Date.parse("2026-06-01T12:00:00Z");
@@ -284,6 +290,172 @@ test("holdScore throws on a per-command error", async () => {
   const fetchImpl = async () => new Response(JSON.stringify([{ error: "NOAUTH nope" }, { result: 1 }]), { status: 200 });
   const r = makeRedis({ UPSTASH_REDIS_REST_URL: "http://x", UPSTASH_REDIS_REST_TOKEN: "t" }, fetchImpl, () => {});
   await assert.rejects(r.holdScore("octocat", "f", {}), /NOAUTH/);
+});
+
+test("findKeysByPatterns scans multiple patterns and pages, deduplicating keys", async () => {
+  const calls = [];
+  const pages = [
+    ["7", ["ctf:user:alice", "ctf:user:bob"]],
+    ["0", ["ctf:user:bob", "ctf:user:charlie"]],
+    ["0", ["ctf:team:red"]],
+  ];
+
+  const redis = makeRedis(env, async (_url, init) => {
+    const commands = JSON.parse(init.body);
+    calls.push(commands);
+    return new Response(
+      JSON.stringify([{ result: pages.shift() }]),
+      { status: 200 },
+    );
+  });
+
+  const keys = await redis.findKeysByPatterns([
+    "ctf:user:*",
+    "ctf:team:*",
+  ]);
+
+  assert.deepEqual(keys, [
+    "ctf:user:alice",
+    "ctf:user:bob",
+    "ctf:user:charlie",
+    "ctf:team:red",
+  ]);
+  assert.deepEqual(calls, [
+    [["SCAN", "0", "MATCH", "ctf:user:*", "COUNT", 1000]],
+    [["SCAN", "7", "MATCH", "ctf:user:*", "COUNT", 1000]],
+    [["SCAN", "0", "MATCH", "ctf:team:*", "COUNT", 1000]],
+  ]);
+});
+
+
+test("ensureCompatible: schema v2 marker skips fingerprint scanning", async () => {
+  const sent = [];
+  const redis = makeRedis(env, async (_url, init) => {
+    const commands = JSON.parse(init.body);
+    sent.push(...commands);
+    return new Response(JSON.stringify([{ result: "2" }]), { status: 200 });
+  });
+
+  await redis.ensureCompatible();
+
+  assert.deepEqual(sent, [["GET", "ctf:meta:schema-version"]]);
+});
+
+test("ensureCompatible: fresh Redis scans fingerprints and initializes marker with NX", async () => {
+  const sent = [];
+  const redis = makeRedis(env, async (_url, init) => {
+    const commands = JSON.parse(init.body);
+    sent.push(...commands);
+    return new Response(JSON.stringify(commands.map((command) => ({
+      result: command[0] === "GET" ? null : command[0] === "SCAN" ? ["0", []] : "OK",
+    }))), { status: 200 });
+  });
+
+  await redis.ensureCompatible();
+
+  assert.equal(sent[0][0], "GET");
+  const scans = sent.filter((command) => command[0] === "SCAN");
+  assert.deepEqual(scans.map((command) => command[3]), V1_FINGERPRINT_PATTERNS);
+  assert.deepEqual(sent.at(-1), ["SET", "ctf:meta:schema-version", "2", "NX"]);
+});
+
+test("ensureCompatible: recognizable v1 data refuses startup", async () => {
+  let scanCount = 0;
+  const redis = makeRedis(env, async (_url, init) => {
+    const [[command]] = JSON.parse(init.body);
+    if (command === "GET") return new Response(JSON.stringify([{ result: null }]), { status: 200 });
+    scanCount++;
+    return new Response(JSON.stringify([{ result: ["0", ["ctf:user:alice"]] }]), { status: 200 });
+  });
+
+  await assert.rejects(redis.ensureCompatible(), (error) => {
+    assert.ok(
+      error.message.includes(
+        "Incompatible Redis data detected (matching fingerprint: ctf:solves:*). " +
+        "Export required data, perform a master reset on v1, then deploy v2.",
+      ),
+    );
+    assert.doesNotMatch(error.message, /ctf:user:alice/);
+    return true;
+  });
+  assert.equal(scanCount, 1);
+});
+
+test("ensureCompatible: unsupported schema version refuses startup", async () => {
+  const redis = makeRedis(env, async () =>
+    new Response(JSON.stringify([{ result: "3" }]), { status: 200 }),
+  );
+
+  await assert.rejects(redis.ensureCompatible(), /unsupported Redis schema version: 3/);
+});
+
+test("ensureCompatible: malformed SCAN response fails closed", async () => {
+  const redis = makeRedis(env, async (_url, init) => {
+    const [[command]] = JSON.parse(init.body);
+    return new Response(JSON.stringify([
+      { result: command === "GET" ? null : ["not-a-cursor", []] },
+    ]), { status: 200 });
+  });
+
+  await assert.rejects(redis.ensureCompatible(), /invalid Redis SCAN response/);
+});
+
+test("ensureCompatible: Redis errors fail closed", async () => {
+  const redis = makeRedis(env, errorReplyFetch("NOAUTH Authentication required"));
+  await assert.rejects(redis.ensureCompatible(), /NOAUTH/);
+});
+
+test("ensureCompatible: accepts a v2 marker created during fingerprint scanning", async () => {
+  let markerReads = 0;
+  const scannedPatterns = [];
+  const redis = makeRedis(env, async (_url, init) => {
+    const commands = JSON.parse(init.body);
+    return new Response(JSON.stringify(commands.map((command) => {
+      if (command[0] === "GET") {
+        markerReads++;
+        return { result: markerReads === 1 ? null : "2" };
+      }
+      if (command[0] === "SCAN") {
+        scannedPatterns.push(command[3]);
+        return {
+          result: [
+            "0",
+            command[3] === "ctf:sd:held:*" ? ["ctf:sd:held:by:alice"] : [],
+          ],
+        };
+      }
+      return { result: null };
+    })), { status: 200 });
+  });
+
+  await redis.ensureCompatible();
+
+  assert.equal(markerReads, 2);
+  assert.ok(scannedPatterns.includes("ctf:sd:held:*"));
+});
+
+test("ensureCompatible: concurrent marker initialization succeeds when another process writes v2", async () => {
+  let getCount = 0;
+  const sent = [];
+  const redis = makeRedis(env, async (_url, init) => {
+    const commands = JSON.parse(init.body);
+    sent.push(...commands);
+    const [command] = commands[0];
+    if (command === "GET") {
+      getCount++;
+      return new Response(JSON.stringify([{ result: getCount === 1 ? null : "2" }]), { status: 200 });
+    }
+    if (command === "SCAN") {
+      return new Response(JSON.stringify([{ result: ["0", []] }]), { status: 200 });
+    }
+    return new Response(JSON.stringify([{ result: null }]), { status: 200 });
+  });
+
+  await redis.ensureCompatible();
+
+  assert.ok(sent.some((command) => JSON.stringify(command) === JSON.stringify(["SET", "ctf:meta:schema-version", "2", "NX"])));
+  assert.deepEqual(sent.at(-1), ["GET", "ctf:meta:schema-version"]);
+  assert.equal(getCount, 2);
 });
 
 // ── releasing held scores (#741) ─────────────────────────────────────────────

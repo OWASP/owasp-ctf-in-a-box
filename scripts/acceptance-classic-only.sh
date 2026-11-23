@@ -129,6 +129,7 @@ acc_assert_module_lineups classic
 # leaderboard source, so there is nothing here for it to serve.
 # ---------------------------------------------------------------------------
 acc_boot_redis_srh "$NET" co "$SRH_TOKEN"
+acc_mark_v2_schema co-redis
 
 # ---------------------------------------------------------------------------
 # Seed the classic module's real Redis schema directly (see header comment

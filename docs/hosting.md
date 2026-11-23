@@ -704,7 +704,8 @@ events, not during one.
 2. **Run the master reset on the v1 box** (`/admin` → Event → danger zone).
    This must happen before deploying v2. It removes the recognizable v1 event
    data that would otherwise prevent v2 services from starting. The reset is
-   destructive; export anything you need first.
+   destructive; export anything you need first. **Stop the v1 box immediately
+   after the reset. Do not sign in to it again.**
 
 3. **Update `.env`.** Delete the `ADMIN_LOGINS` line (nothing reads it).
    The `GITHUB_CLIENT_*` keys stay required with Secure Development; without

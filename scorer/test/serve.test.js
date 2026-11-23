@@ -617,7 +617,7 @@ test("serve(): refuses legacy Redis data before listening", async () => {
       },
       { log: () => {}, fetchImpl },
     ),
-    /incompatible Redis data detected/,
+    /Incompatible Redis data detected/,
   );
 
   assert.equal(commands[0], "GET");

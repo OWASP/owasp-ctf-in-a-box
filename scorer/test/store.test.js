@@ -423,7 +423,12 @@ test("redis ensureCompatible: refuses recognizable v1 data", async () => {
   });
 
   await assert.rejects(store.ensureCompatible(), (error) => {
-    assert.match(error.message, /matching fingerprint: ctf:solves:\*/);
+    assert.ok(
+      error.message.includes(
+        "Incompatible Redis data detected (matching fingerprint: ctf:solves:*). " +
+        "Export required data, perform a master reset on v1, then deploy v2.",
+      ),
+    );
     assert.doesNotMatch(error.message, /ctf:solves:dvwa/);
     return true;
   });

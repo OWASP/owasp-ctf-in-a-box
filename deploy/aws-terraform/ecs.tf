@@ -122,6 +122,13 @@ locals {
     trimspace(var.github_client_id) != "" ? [
       { name = "GITHUB_CLIENT_SECRET", valueFrom = "${local.secret_arn_prefix}/GITHUB_CLIENT_SECRET" },
     ] : [],
+    // Behind Cloudflare only: the value the zone's Transform Rule sets as
+    // x-ctf-origin-secret, which is what lets the auth rate limits trust
+    // CF-Connecting-IP (client-ip.ts). Listed only when used, like the line
+    // above: a task naming a parameter nobody created never starts.
+    var.behind_cloudflare ? [
+      { name = "CLOUDFLARE_ORIGIN_SECRET", valueFrom = "${local.secret_arn_prefix}/CLOUDFLARE_ORIGIN_SECRET" },
+    ] : [],
   )
 
   // One SCORER_TOKEN, two readers: the scorer checks it on every POST /score
@@ -392,9 +399,6 @@ resource "aws_ecs_task_definition" "app" {
       { name = "LEADERBOARD_SOURCE", value = "lambda" },
       // Teams are refused unless this is exactly "true" (team-store.ts).
       { name = "TEAM_WRITES_ENABLED", value = "true" },
-      // "true" behind Cloudflare: the auth rate limits key on
-      // CF-Connecting-IP from a Cloudflare edge peer (client-ip.ts).
-      { name = "CLIENT_IP_BEHIND_CLOUDFLARE", value = var.behind_cloudflare ? "true" : "" },
       ], local.run_scorer ? [
       // Only when a scorer exists to answer it.
       { name = "LEADERBOARD_API_URL", value = local.scorer_url },

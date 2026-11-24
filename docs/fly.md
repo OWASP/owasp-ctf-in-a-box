@@ -451,8 +451,10 @@ On top of that, the render:
   accepted, and that proxy is the machine's only ingress
   ([budgets](operations.md#account-sign-up-and-sign-in-limits)). Behind
   Cloudflare it is the edge's address, so a Cloudflare-proxied domain also
-  sets `CLIENT_IP_BEHIND_CLOUDFLARE=true` in `.env.fly`: the app then keys on
-  `CF-Connecting-IP`, read only when `Fly-Client-IP` is a Cloudflare edge
+  sets `CLOUDFLARE_ORIGIN_SECRET` in `.env.fly` and the matching Transform
+  Rule ([origin secret](hosting.md#cloudflare-in-front-of-the-box)): the app
+  then keys on `CF-Connecting-IP` for requests that carry the secret from a
+  Cloudflare edge
 
 Never edit the rendered file. Every change belongs in `docker-compose.yml`,
 which is the point of rendering it.

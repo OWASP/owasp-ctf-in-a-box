@@ -90,16 +90,21 @@ client chooses (`apps/web/src/lib/client-ip.ts`):
 let a client choose its own address, and an invalid header name stops the
 app at startup.
 
-**Behind Cloudflare, set `CLIENT_IP_BEHIND_CLOUDFLARE=true`.** With
-Cloudflare's proxy in front of the box (an orange-cloud DNS record), every
-path above sees a Cloudflare edge address, and every player routed through
-the same edge shares the two per-address budgets. With the setting on, the
-app keys on Cloudflare's `CF-Connecting-IP` header instead, and only when the
-proxy-vouched address is inside Cloudflare's published ranges, so a client
-that reaches the origin directly cannot pick its own address. Leave it unset
-when the domain is not proxied by Cloudflare; any value other than `true`,
-`false` or empty stops the app at startup. Set it in `.env` (compose and
-Fly) or with `behind_cloudflare = true` in `terraform.tfvars` (AWS).
+**Behind Cloudflare, set `CLOUDFLARE_ORIGIN_SECRET`.** With Cloudflare's
+proxy in front of the box (an orange-cloud DNS record), every path above sees
+a Cloudflare edge address, and every player routed through the same edge
+shares the two per-address budgets. Set `CLOUDFLARE_ORIGIN_SECRET` to a random
+value and have the zone add it to every request
+([Cloudflare in front of the box](hosting.md#cloudflare-in-front-of-the-box)).
+The app then keys on Cloudflare's `CF-Connecting-IP` header, and only for a
+request that carries that value AND reaches the box from an address inside
+Cloudflare's published ranges. A client that reaches the origin directly, or
+through another Cloudflare account's Worker (which, Cloudflare documents, can
+set `CF-Connecting-IP` to anything), does not know the value, so it cannot
+pick its own address. Leave it unset when the domain is not proxied by
+Cloudflare. A value shorter than 32 characters, or with whitespace, stops the
+app at startup. Set it in `.env` (compose) or `.env.fly` (Fly); on AWS set
+`behind_cloudflare = true` and put the value in SSM.
 
 The per-address budgets are sized for a room of about 650 people sharing one
 venue NAT address. The per-username budget keys on address and username

@@ -277,9 +277,10 @@ Every command below uses these names:
   creates no WAF, so on AWS only the app's own per-login limits apply. To
   get the same protection, put the domain behind Cloudflare with that rule.
   Using an ACM certificate with Cloudflare's Full (strict) mode works. With
-  the domain behind Cloudflare, set `behind_cloudflare = true` so the
-  sign-up and sign-in limits key on each player, not on Cloudflare's edge
-  ([budgets](operations.md#account-sign-up-and-sign-in-limits)).
+  the domain behind Cloudflare, set `behind_cloudflare = true`, put
+  `CLOUDFLARE_ORIGIN_SECRET` in SSM and add the Transform Rule
+  ([origin secret](hosting.md#cloudflare-in-front-of-the-box)), so the
+  sign-up and sign-in limits key on each player, not on Cloudflare's edge.
 - **Dispatch both heavy scoring gates on the release commit** (see
   [The offline gates](operations.md#the-offline-gates)).
 - **Run the load pass** described in [Load testing on AWS](#load-testing-on-aws).

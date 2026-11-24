@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { behindCloudflare, clientIp, isCloudflareAddress, trustedClientIpHeader } from "@/lib/client-ip";
+import { CLOUDFLARE_ORIGIN_HEADER, clientIp, cloudflareOriginSecret, isCloudflareAddress, trustedClientIpHeader } from "@/lib/client-ip";
 
 const h = (v?: string) => new Headers(v === undefined ? {} : { "x-forwarded-for": v });
 const UNSET = {};
@@ -55,14 +55,20 @@ describe("clientIp with TRUSTED_CLIENT_IP_HEADER=fly-client-ip", () => {
   });
 });
 
-describe("clientIp with CLIENT_IP_BEHIND_CLOUDFLARE=true", () => {
+describe("clientIp with CLOUDFLARE_ORIGIN_SECRET", () => {
   // A real Cloudflare edge address (198.41.128.0/17) and one from 2606:4700::/32.
   const EDGE_V4 = "198.41.200.13";
   const EDGE_V6 = "2606:4700:10::ac43:1b0a";
-  const CF = { CLIENT_IP_BEHIND_CLOUDFLARE: "true" };
+  const SECRET = "0123456789abcdef0123456789abcdef0123456789abcdef";
+  const CF = { CLOUDFLARE_ORIGIN_SECRET: SECRET };
   const CF_FLY = { ...CF, ...FLY };
-  const via = (peerXff: string, cf?: string) =>
-    new Headers({ "x-forwarded-for": peerXff, ...(cf === undefined ? {} : { "cf-connecting-ip": cf }) });
+  // A request through the event's zone: the Transform Rule adds the secret.
+  const via = (peerXff: string, cf?: string, secret: string | null = SECRET) =>
+    new Headers({
+      "x-forwarded-for": peerXff,
+      ...(cf === undefined ? {} : { "cf-connecting-ip": cf }),
+      ...(secret === null ? {} : { [CLOUDFLARE_ORIGIN_HEADER]: secret }),
+    });
 
   it("keys two players behind the same Cloudflare edge apart (compose, AWS)", () => {
     const a = clientIp(via(`203.0.113.7, ${EDGE_V4}`, "203.0.113.7"), CF);
@@ -73,7 +79,12 @@ describe("clientIp with CLIENT_IP_BEHIND_CLOUDFLARE=true", () => {
   });
 
   it("reads CF-Connecting-IP behind Fly when Fly-Client-IP is a Cloudflare edge", () => {
-    const headers = new Headers({ "fly-client-ip": EDGE_V4, "cf-connecting-ip": "203.0.113.7", "x-forwarded-for": `x, ${FLY_APP_ADDR}` });
+    const headers = new Headers({
+      "fly-client-ip": EDGE_V4,
+      "cf-connecting-ip": "203.0.113.7",
+      "x-forwarded-for": `x, ${FLY_APP_ADDR}`,
+      [CLOUDFLARE_ORIGIN_HEADER]: SECRET,
+    });
     expect(clientIp(headers, CF_FLY)).toBe("203.0.113.7");
   });
 
@@ -81,12 +92,20 @@ describe("clientIp with CLIENT_IP_BEHIND_CLOUDFLARE=true", () => {
     expect(clientIp(via(EDGE_V6, "2001:db8::42"), CF)).toBe("2001:db8::42");
   });
 
-  it("ignores CF-Connecting-IP from a peer outside Cloudflare's ranges, so a direct-to-origin client cannot pick its bucket", () => {
+  it("ignores CF-Connecting-IP from a Cloudflare address without the secret: another account's Worker calling the origin", () => {
+    for (const secret of [null, "", "wrong", SECRET.slice(0, -1), SECRET + "x", SECRET.toUpperCase()]) {
+      expect(clientIp(via(EDGE_V4, "6.6.6.6", secret), CF)).toBe(EDGE_V4);
+    }
+  });
+
+  it("ignores CF-Connecting-IP from a peer outside Cloudflare's ranges, even with the secret", () => {
     for (const peer of ["203.0.113.9", "198.41.127.255", "2606:4701::1"]) {
       expect(clientIp(via(peer, "6.6.6.6"), CF)).toBe(peer);
     }
-    expect(clientIp(new Headers({ "cf-connecting-ip": "6.6.6.6" }), CF)).toBe("unknown");
-    expect(clientIp(new Headers({ "fly-client-ip": "203.0.113.9", "cf-connecting-ip": "6.6.6.6" }), CF_FLY)).toBe("203.0.113.9");
+    expect(clientIp(new Headers({ "cf-connecting-ip": "6.6.6.6", [CLOUDFLARE_ORIGIN_HEADER]: SECRET }), CF)).toBe("unknown");
+    expect(
+      clientIp(new Headers({ "fly-client-ip": "203.0.113.9", "cf-connecting-ip": "6.6.6.6", [CLOUDFLARE_ORIGIN_HEADER]: SECRET }), CF_FLY),
+    ).toBe("203.0.113.9");
   });
 
   it("keeps the edge address when CF-Connecting-IP is missing or not a single IP", () => {
@@ -97,25 +116,34 @@ describe("clientIp with CLIENT_IP_BEHIND_CLOUDFLARE=true", () => {
 
   it("trims CF-Connecting-IP", () => expect(clientIp(via(EDGE_V4, " 203.0.113.7 "), CF)).toBe("203.0.113.7"));
 
-  it("ignores CF-Connecting-IP when the setting is off or blank", () => {
-    for (const env of [UNSET, { CLIENT_IP_BEHIND_CLOUDFLARE: "" }, { CLIENT_IP_BEHIND_CLOUDFLARE: "false" }]) {
+  it("ignores CF-Connecting-IP and the secret header when the setting is unset or blank", () => {
+    for (const env of [UNSET, { CLOUDFLARE_ORIGIN_SECRET: "" }, { CLOUDFLARE_ORIGIN_SECRET: "   " }]) {
       expect(clientIp(via(EDGE_V4, "203.0.113.7"), env)).toBe(EDGE_V4);
     }
   });
 });
 
-describe("behindCloudflare", () => {
-  it.each([
-    [undefined, false],
-    ["", false],
-    ["  ", false],
-    ["false", false],
-    ["true", true],
-    [" TRUE ", true],
-  ])("reads %j as %s", (v, want) => expect(behindCloudflare(v === undefined ? {} : { CLIENT_IP_BEHIND_CLOUDFLARE: v })).toBe(want));
-  it.each(["yes", "1", "on", "cloudflare"])("throws on %j instead of guessing", (v) => {
-    expect(() => behindCloudflare({ CLIENT_IP_BEHIND_CLOUDFLARE: v })).toThrow(/CLIENT_IP_BEHIND_CLOUDFLARE/);
+describe("cloudflareOriginSecret", () => {
+  it("is null when unset or blank", () => {
+    expect(cloudflareOriginSecret({})).toBeNull();
+    expect(cloudflareOriginSecret({ CLOUDFLARE_ORIGIN_SECRET: "  " })).toBeNull();
   });
+  it("returns a valid value unchanged", () => {
+    const v = "a".repeat(32);
+    expect(cloudflareOriginSecret({ CLOUDFLARE_ORIGIN_SECRET: v })).toBe(v);
+  });
+  it.each(["short", "a".repeat(31), `${"a".repeat(32)} b`, `\t${"a".repeat(32)}`])(
+    "throws on an unusable value instead of reading it as unset, without echoing it",
+    (v) => {
+      expect(() => cloudflareOriginSecret({ CLOUDFLARE_ORIGIN_SECRET: v })).toThrow(/CLOUDFLARE_ORIGIN_SECRET/);
+      try {
+        cloudflareOriginSecret({ CLOUDFLARE_ORIGIN_SECRET: v });
+      } catch (e) {
+        expect(String(e)).not.toContain(v.trim());
+      }
+      expect(() => clientIp(h("1.1.1.1"), { CLOUDFLARE_ORIGIN_SECRET: v })).toThrow(/CLOUDFLARE_ORIGIN_SECRET/);
+    },
+  );
 });
 
 describe("isCloudflareAddress", () => {

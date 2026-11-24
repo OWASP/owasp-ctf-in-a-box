@@ -789,14 +789,34 @@ a **trustworthy** per-IP control can live: the app keys its sign-up and
 sign-in limits on the address of the hop that connected to the box's proxy
 (`Fly-Client-IP` on Fly, the rightmost `x-forwarded-for` entry behind Caddy or
 the ALB), never on a value the caller sets. Behind Cloudflare that is the
-edge's address, so set `CLIENT_IP_BEHIND_CLOUDFLARE=true` (`.env` or
-`.env.fly`; `behind_cloudflare = true` on AWS): the app then keys those limits
-on Cloudflare's `CF-Connecting-IP`, and reads it only when the connecting hop
-is inside Cloudflare's published ranges, so a client reaching the origin
-directly cannot choose it
+edge's address, so every player shares one sign-up and one sign-in budget
+until you set up the origin secret below
 ([Operations](operations.md#account-sign-up-and-sign-in-limits)). An
 unauthenticated `curl` loop against `/api/*` still costs the box a session
 lookup per hit unless the edge stops it.
+
+**The origin secret, so the limits key on each player.** Cloudflare tells the
+box who the player is in `CF-Connecting-IP`, but any Cloudflare account's
+Worker can call the origin directly and set that header to anything. The app
+trusts it only on requests your zone has marked with a secret:
+
+1. Generate a value: `openssl rand -hex 32`.
+2. Put it in `CLOUDFLARE_ORIGIN_SECRET` in `.env` (compose) or `.env.fly`
+   (Fly). On AWS set `behind_cloudflare = true` in `terraform.tfvars` and put
+   the value in SSM as `CLOUDFLARE_ORIGIN_SECRET` (`terraform output
+   next_steps` prints the command).
+3. In Cloudflare, pick the domain, then **Rules → Transform Rules → Modify
+   Request Header → Create rule**: match all incoming requests (or hostname
+   equals the event domain), action **Set static**, header name
+   `x-ctf-origin-secret`, value the same secret. Transform Rules are on the
+   Free plan. "Set" overwrites any copy a client sent.
+4. Redeploy (Fly: `deploy.sh`; compose: recreate the app container), sign
+   in once, and check the `ctf:rl:signin-ip:*` keys in Redis: the address is
+   yours, not a Cloudflare one (`104.`, `172.6x.`, `162.158.`, `198.41.`).
+
+Rotate the secret by changing the rule and the setting together; requests
+between the two changes fall back to the shared edge budget, nothing is
+refused.
 
 **One rate-limiting rule, on the Free plan.** Cloudflare's Free plan includes
 exactly one rate-limiting rule, counted by IP over a 10-second window with a

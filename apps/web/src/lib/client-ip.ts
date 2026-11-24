@@ -16,9 +16,9 @@
  *
  * A missing value is "unknown", one shared key: coarser, never chosen by the
  * client. Behind Cloudflare's proxy every path above yields a Cloudflare edge
- * address, so a whole venue would share one bucket; `CLIENT_IP_BEHIND_CLOUDFLARE`
+ * address, so a whole venue would share one bucket; `CLOUDFLARE_ORIGIN_SECRET`
  * (see clientIp below) reads the player's address from `CF-Connecting-IP`
- * instead, only when the peer is a Cloudflare edge.
+ * instead, only for requests that prove they came through the event's zone.
  */
 
 // An RFC 9110 field-name token. Anything else is a typo, not a header a proxy
@@ -47,18 +47,39 @@ const entries = (value: string | null) =>
     .map((p) => p.trim())
     .filter((p) => p !== "");
 
+/** The request header the event's Cloudflare zone sets, through a Transform
+ *  Rule, to `CLOUDFLARE_ORIGIN_SECRET` on every request it proxies. */
+export const CLOUDFLARE_ORIGIN_HEADER = "x-ctf-origin-secret";
+
 /**
- * Whether the box sits behind Cloudflare's proxy, from
- * `CLIENT_IP_BEHIND_CLOUDFLARE`. Blank or "false" is off; "true" is on.
- * Anything else THROWS, like an invalid `TRUSTED_CLIENT_IP_HEADER`: a typo
- * read as off would put a whole venue back on one Cloudflare edge bucket, and
- * instrumentation.ts calls this at startup so the server refuses to boot.
+ * The origin secret from `CLOUDFLARE_ORIGIN_SECRET`, or null when unset (the
+ * box is not behind Cloudflare, or the organizer has not set it up).
+ *
+ * A Cloudflare edge address alone does not prove a request came through the
+ * EVENT's zone: a Worker on any Cloudflare account can call the origin
+ * directly (the fly.dev hostname, the ALB's DNS name) and, Cloudflare
+ * documents, set CF-Connecting-IP to anything. Only the event's own zone knows
+ * this value, so a request carrying it went through that zone.
+ *
+ * A value shorter than 32 characters or with whitespace THROWS rather than
+ * reading as unset: instrumentation.ts calls this at startup so the server
+ * refuses to boot. The value itself is never part of the message.
  */
-export function behindCloudflare(env: Record<string, string | undefined> = process.env): boolean {
-  const raw = (env.CLIENT_IP_BEHIND_CLOUDFLARE ?? "").trim().toLowerCase();
-  if (raw === "" || raw === "false") return false;
-  if (raw === "true") return true;
-  throw new Error(`CLIENT_IP_BEHIND_CLOUDFLARE=${JSON.stringify(raw.slice(0, 64))} must be "true", "false" or empty`);
+export function cloudflareOriginSecret(env: Record<string, string | undefined> = process.env): string | null {
+  const raw = env.CLOUDFLARE_ORIGIN_SECRET ?? "";
+  if (raw.trim() === "") return null;
+  if (raw.length < 32 || /\s/.test(raw)) {
+    throw new Error("CLOUDFLARE_ORIGIN_SECRET must be at least 32 characters with no whitespace (e.g. openssl rand -hex 32)");
+  }
+  return raw;
+}
+
+/** Constant-time string equality. No node:crypto: this module also loads in
+ *  the Edge runtime through instrumentation.ts. */
+function sameSecret(given: string, want: string): boolean {
+  let diff = given.length ^ want.length;
+  for (let i = 0; i < want.length; i++) diff |= (given.charCodeAt(i) || 0) ^ want.charCodeAt(i);
+  return diff === 0;
 }
 
 // Cloudflare's published edge ranges, https://www.cloudflare.com/ips/ (checked
@@ -127,9 +148,11 @@ const isIp = (s: string) => v4(s) !== null || v6(s) !== null;
 /**
  * The proxy-vouched peer by the rules above, then, behind Cloudflare, the
  * player's own address from `CF-Connecting-IP`. That header is read only when
- * the peer is a Cloudflare edge: a client reaching the origin directly (the
- * Fly origin answers around Cloudflare, see docs/fly.md) can set it to
- * anything, and would otherwise pick a fresh rate-limit bucket per request.
+ * the request carries the zone's origin secret AND the peer is a Cloudflare
+ * edge. A client reaching the origin directly (the Fly origin answers around
+ * Cloudflare, see docs/fly.md), or through another account's Worker, can set
+ * CF-Connecting-IP to anything and would otherwise pick a fresh rate-limit
+ * bucket per request.
  */
 export function clientIp(headers: Headers, env: Record<string, string | undefined> = process.env): string {
   const trusted = trustedClientIpHeader(env);
@@ -140,7 +163,8 @@ export function clientIp(headers: Headers, env: Record<string, string | undefine
     const parts = entries(headers.get("x-forwarded-for"));
     peer = parts.length > 0 ? parts[parts.length - 1] : "unknown";
   }
-  if (behindCloudflare(env) && isCloudflareAddress(peer)) {
+  const secret = cloudflareOriginSecret(env);
+  if (secret !== null && sameSecret(headers.get(CLOUDFLARE_ORIGIN_HEADER) ?? "", secret) && isCloudflareAddress(peer)) {
     const cf = (headers.get("cf-connecting-ip") ?? "").trim();
     if (isIp(cf)) return cf;
   }

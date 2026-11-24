@@ -730,6 +730,9 @@ run "every_compose_variable_reaches_its_ecs_task" {
       setsubtract(keys(yamldecode(file("../../docker-compose.yml")).services.app.environment), [
         // HTTPS is not optional here (the session cookie is Secure).
         "ALLOW_INSECURE_EVENT_URL",
+        // Listed only with behind_cloudflare = true, asserted by the
+        // behind_cloudflare runs at the end of this file.
+        "CLOUDFLARE_ORIGIN_SECRET",
       ]),
       concat(
         [for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment : e.name],
@@ -1488,10 +1491,11 @@ run "a_sync_size_fargate_does_not_run_is_refused_at_plan" {
   expect_failures = [aws_ecs_task_definition.sync]
 }
 
-// behind_cloudflare reaches the app as the exact string client-ip.ts accepts:
-// "true" when set, empty otherwise. Any other value would stop the app at
-// startup, so a bool rendered as "1" or "True" must fail here, not on the box.
-run "behind_cloudflare_reaches_the_app_as_true" {
+// behind_cloudflare brings CLOUDFLARE_ORIGIN_SECRET from SSM, never as a plain
+// environment value: it is what lets the app trust CF-Connecting-IP, so a
+// value in the task definition would be readable by anyone who can describe
+// the task.
+run "behind_cloudflare_brings_the_origin_secret_from_ssm" {
   command = plan
 
   variables {
@@ -1499,22 +1503,30 @@ run "behind_cloudflare_reaches_the_app_as_true" {
   }
 
   assert {
-    condition = one([
-      for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment : e.value
-      if e.name == "CLIENT_IP_BEHIND_CLOUDFLARE"
-    ]) == "true"
-    error_message = "behind_cloudflare = true must give the app CLIENT_IP_BEHIND_CLOUDFLARE=true."
+    condition = contains(
+      [for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].secrets : e.name],
+      "CLOUDFLARE_ORIGIN_SECRET",
+    )
+    error_message = "behind_cloudflare = true must give the app CLOUDFLARE_ORIGIN_SECRET from SSM."
+  }
+
+  assert {
+    condition = !contains(
+      [for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment : e.name],
+      "CLOUDFLARE_ORIGIN_SECRET",
+    )
+    error_message = "CLOUDFLARE_ORIGIN_SECRET must never be a plain environment entry."
   }
 }
 
-run "behind_cloudflare_defaults_to_empty" {
+run "without_behind_cloudflare_the_task_names_no_origin_secret" {
   command = plan
 
   assert {
-    condition = one([
-      for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment : e.value
-      if e.name == "CLIENT_IP_BEHIND_CLOUDFLARE"
-    ]) == ""
-    error_message = "Without behind_cloudflare the app must get an empty CLIENT_IP_BEHIND_CLOUDFLARE."
+    condition = !contains(concat(
+      [for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].secrets : e.name],
+      [for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment : e.name],
+    ), "CLOUDFLARE_ORIGIN_SECRET")
+    error_message = "Without behind_cloudflare the app task must not name CLOUDFLARE_ORIGIN_SECRET (a missing SSM parameter stops the task)."
   }
 }

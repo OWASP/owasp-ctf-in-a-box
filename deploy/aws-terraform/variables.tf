@@ -166,7 +166,7 @@ variable "github_app_installation_id" {
 }
 
 variable "behind_cloudflare" {
-  description = "The event domain is proxied by Cloudflare (orange-cloud DNS). True makes the app key its sign-up and sign-in rate limits on Cloudflare's CF-Connecting-IP, read only when the ALB's peer is a Cloudflare edge address; false keys on the ALB's address, so every player behind one Cloudflare edge shares one budget."
+  description = "The event domain is proxied by Cloudflare (orange-cloud DNS). True gives the app CLOUDFLARE_ORIGIN_SECRET from SSM (you put it there; the zone's Transform Rule sets the same value as the x-ctf-origin-secret header), so its sign-up and sign-in rate limits key on each player's CF-Connecting-IP; false keys on the ALB's peer, so every player behind one Cloudflare edge shares one budget."
   type        = bool
   default     = false
 }

@@ -84,7 +84,8 @@ acm_certificate_arn = ""
 
 # true when the event domain is proxied by Cloudflare (orange-cloud DNS), so
 # the sign-up and sign-in rate limits key on each player's CF-Connecting-IP
-# instead of one shared Cloudflare edge address.
+# instead of one shared Cloudflare edge address. Needs CLOUDFLARE_ORIGIN_SECRET
+# in SSM (see next_steps) and the Transform Rule in docs/hosting.md.
 # behind_cloudflare = false
 
 # There is no transport setting: sync polls GitHub for score comments, and the

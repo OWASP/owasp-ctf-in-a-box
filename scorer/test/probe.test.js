@@ -112,9 +112,9 @@ test("probe timeout and connection refusal fail the probe, not the run", async (
   assert.equal(await runProbe("http://127.0.0.1:1", { request: GET_OK, expect: { status: 200 } }, { timeoutMs: 500 }), false);
 });
 
-test("waitForApp: any HTTP response counts as up, even a 500", async (t) => {
+test("waitForApp: an HTTP error is not readiness", async (t) => {
   const app = await mockApp(t, (req, res) => res.writeHead(500).end("boom"));
-  assert.equal(await waitForApp(app, { tries: 1, delayMs: 0 }), true);
+  assert.equal(await waitForApp(app, { tries: 1, delayMs: 0 }), false);
 });
 
 test("waitForApp: unreachable app exhausts its tries and reports down", async () => {

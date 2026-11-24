@@ -102,15 +102,15 @@ export async function runProbes(appUrl, probes, opts) {
   return true;
 }
 
-// Readiness gate: any HTTP response counts as up, status irrelevant.
+// A reachable error page is not evidence that the application's health endpoint works.
 export async function waitForApp(appUrl, { tries = 60, delayMs = 5000, fetchImpl = fetch } = {}) {
   for (let i = 0; i < tries; i++) {
     try {
-      await fetchImpl(appUrl, { signal: AbortSignal.timeout(5000) });
-      return true;
-    } catch {
-      if (i < tries - 1) await new Promise((r) => setTimeout(r, delayMs));
-    }
+      const response = await fetchImpl(appUrl, { signal: AbortSignal.timeout(5000) });
+      await response.body?.cancel();
+      if (response.status >= 200 && response.status < 300) return true;
+    } catch { /* Retry transient connection failures within the readiness budget. */ }
+    if (i < tries - 1) await new Promise((r) => setTimeout(r, delayMs));
   }
   return false;
 }

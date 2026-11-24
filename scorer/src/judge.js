@@ -103,13 +103,13 @@ export async function judge(env = process.env, { fetchImpl = fetch } = {}) {
   if (!APP_URL) throw new Error("judge: APP_URL is required");
 
   const rubricDir = env.RUBRIC_DIR ?? "/rubric";
-  const rubric = loadRubric(rubricDir, { target: TARGET });
+  const rubric = loadRubric(rubricDir);
   if (!rubric) throw new Error(`judge: no rubric found in ${rubricDir}`);
   if (!rubric.targets.has(TARGET)) {
     throw new Error(`judge: target "${TARGET}" is not in the rubric (have: ${[...rubric.targets.keys()].join(", ")})`);
   }
-  // The loader passes probes through untouched; validate the selected target
-  // before touching the network or the event file.
+  // Rubrics are baked into the scorer image and validated as one catalogue.
+  // Keep malformed content from silently shipping alongside a working target.
   // Exec challenges carry a test file instead of probes — there is no probe
   // grammar to validate, and their test files are only reachable at run time.
   for (const [target, { challenges }] of rubric.targets) {
@@ -138,9 +138,6 @@ export async function judge(env = process.env, { fetchImpl = fetch } = {}) {
   };
   const tries = boundedInteger("APP_READY_TRIES", 60, 600);
   const delayMs = boundedInteger("APP_READY_DELAY", 5, 60) * 1000;
-  if (tries === 0 && TARGET !== "securityshepherd") {
-    throw new Error("judge: APP_READY_TRIES=0 is reserved for Security Shepherd's bring-up readiness check");
-  }
   const readinessPath = getTarget(TARGET)?.readinessPath;
   const readinessUrl = readinessPath ? joinUrl(APP_URL, readinessPath) : APP_URL;
   if (tries === 0) {

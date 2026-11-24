@@ -37,7 +37,7 @@ function loadExecTarget(dir, name) {
 // rubric dir. Returns null when the dir is missing or holds no rubric content
 // — allowed for `serve` (degenerate mode), while `judge` demands a rubric
 // itself. Any INVALID content throws loudly.
-export function loadRubric(dir = process.env.RUBRIC_DIR ?? "/rubric", { target: selectedTarget } = {}) {
+export function loadRubric(dir = process.env.RUBRIC_DIR ?? "/rubric") {
   let dirents;
   try {
     dirents = readdirSync(dir, { withFileTypes: true });
@@ -46,12 +46,6 @@ export function loadRubric(dir = process.env.RUBRIC_DIR ?? "/rubric", { target: 
   }
 
   const targets = new Map();
-  // Judge isolation must happen before parsing; serve still loads the complete catalogue.
-  if (selectedTarget !== undefined) {
-    dirents = dirents.filter((d) => d.name === selectedTarget ||
-      d.name === `${selectedTarget}.yaml` || d.name === `${selectedTarget}.yml`);
-  }
-
   // Exec targets first: a <target>/tests/challenges/catalogue.<target>.json dir.
   for (const d of dirents.filter((d) => d.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
     const loaded = loadExecTarget(dir, d.name);

@@ -114,13 +114,12 @@ test("error-only targets never produce score reports", async (t) => {
   }
 });
 
-test("judge ignores malformed sibling rubrics", async (t) => {
+test("judge fails closed on a malformed sibling rubric", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "judge-isolated-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   cpSync(RUBRIC_DIR, dir, { recursive: true });
   writeFileSync(join(dir, "vampi.yaml"), "target: vampi\nunexpectedKey: true\n");
-  const result = await judge(await baseEnv(t, { RUBRIC_DIR: dir }));
-  assert.deepEqual(result.solved, ["xss-search", "admin-panel"]);
+  await assert.rejects(judge(await baseEnv(t, { RUBRIC_DIR: dir })), /rubric vampi.yaml: unknown key: unexpectedKey/);
 });
 
 test("Security Shepherd retains its bring-up readiness exception", async (t) => {
@@ -182,7 +181,7 @@ test("startup validation: missing TARGET/APP_URL, unknown target, no rubric", as
   const env = await baseEnv(t);
   await assert.rejects(judge({ ...env, TARGET: undefined }), /TARGET is required/);
   await assert.rejects(judge({ ...env, APP_URL: undefined }), /APP_URL is required/);
-  await assert.rejects(judge({ ...env, TARGET: "webgoat" }), /no rubric found/);
+  await assert.rejects(judge({ ...env, TARGET: "webgoat" }), /"webgoat" is not in the rubric/);
   await assert.rejects(judge({ ...env, RUBRIC_DIR: "/no/such/dir" }), /no rubric found/);
 });
 
@@ -233,11 +232,12 @@ test("readiness: unreachable APP_URL exits 1 through the real CLI", async (t) =>
 // needs it: its certificate expired in 2019, and the alternative — exporting
 // NODE_TLS_REJECT_UNAUTHORIZED=0 into the judge — would strip verification from
 // every request the judge makes, not just this app's. Other targets must probe.
-test("readiness: APP_READY_TRIES=0 refuses a generic target", async (t) => {
+test("readiness: APP_READY_TRIES=0 skips the probe when organizer configuration requests it", async (t) => {
   const env = await baseEnv(t, { APP_READY_TRIES: "0", APP_READY_DELAY: "0" });
-  await assert.rejects(judge(env, {
+  const { total } = await judge(env, {
     fetchImpl: async () => { throw new Error("readiness probe must not run"); },
-  }), /reserved for Security Shepherd/);
+  });
+  assert.ok(total >= 1);
 });
 
 // Push ingest is GONE (issue #377, ADR 56): the judge has no leaderboard POST

@@ -17,6 +17,7 @@ const { getSession, revealHint, resolveHintConfig, requireLaunchedApi, launchApi
   consumeRateLimit: vi.fn(),
 }));
 
+vi.mock("@/lib/account-exists", () => ({ accountExists: async () => true }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/launch", () => ({ requireLaunchedApi, launchApiAccess }));

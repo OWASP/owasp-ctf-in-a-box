@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getPlayer } from "@/lib/player";
+import { getPlayerForWrite } from "@/lib/player";
 import { launchApiAccess } from "@/lib/launch";
 import { revealHint } from "@/lib/hint-store";
 import { adminSeesHidden } from "@/lib/classic-visibility";
@@ -15,7 +15,7 @@ import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
  * TEXT, so an unlocked call would leak challenge content before the event
  * launches, not just score early. */
 export async function POST(request: Request) {
-  const player = await getPlayer(request.headers);
+  const player = await getPlayerForWrite(request.headers);
   if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const playerId = player.id;
 

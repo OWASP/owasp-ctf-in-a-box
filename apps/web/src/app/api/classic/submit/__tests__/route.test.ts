@@ -10,6 +10,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 // The activity log, so the dry-run test below can see that nothing was logged.
 const activityLog = vi.hoisted(() => ({ logActivity: vi.fn(async () => {}) }));
+vi.mock("@/lib/account-exists", () => ({ accountExists: async () => true }));
 vi.mock("@/lib/activity-log", () => activityLog);
 import { vi } from "vitest";
 

@@ -6,6 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/account-exists", () => ({ accountExists: async () => true }));
 vi.mock("server-only", () => ({}));
 
 const getGithubLink = vi.hoisted(() => vi.fn(async () => null));

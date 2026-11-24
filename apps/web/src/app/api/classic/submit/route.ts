@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { adminSeesHidden } from "@/lib/classic-visibility";
 import { isAdminPlayer } from "@/lib/admin-auth";
-import { getPlayer } from "@/lib/player";
+import { getPlayerForWrite } from "@/lib/player";
 import { logActivity } from "@/lib/activity-log";
 import { isModuleLive } from "@/lib/enabled-modules";
 import { launchApiAccess } from "@/lib/launch";
@@ -64,7 +64,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unavailable" }, { status: 403 });
   }
 
-  const player = await getPlayer(request.headers);
+  const player = await getPlayerForWrite(request.headers);
   if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const playerId = player.id;
 

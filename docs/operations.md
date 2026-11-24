@@ -1334,7 +1334,11 @@ membership and held scores. A team captain is refused, and so is an
 organizer: revoke their admin access first. The player's GitHub login is
 added to a blocklist (`ctf:relink:blocked`) and cannot link to any account
 until the next master reset, so a deleted player's PRs cannot be claimed by a
-new account. The deleted username is free again.
+new account. The deleted username is free again. The player's open browser
+can keep showing pages for up to five minutes (the signed session cache), but
+every write from it (team changes, flag and quiz submits, hint buys, profile
+changes, a GitHub link) is refused at once: each write checks that the
+account still exists.
 A Secure Development score for that player still in flight is refused, so it
 cannot restore their solves: the delete puts the player's scores on hold
 (`ctf:score-hold:<player id>`) before it clears anything, and the scorer

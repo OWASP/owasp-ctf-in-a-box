@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { readBoundedBody } from "@/lib/bounded-body";
 import { errorLabel } from "@/lib/error-label";
-import { getPlayer } from "@/lib/player";
+import { getPlayerForWrite } from "@/lib/player";
 import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
 import { setUsernameOnce } from "@/lib/username-store";
 
@@ -69,7 +69,7 @@ async function refreshSessionCookies(request: Request, res: NextResponse): Promi
 }
 
 export async function POST(request: Request) {
-  const player = await getPlayer(request.headers);
+  const player = await getPlayerForWrite(request.headers);
   if (!player) return json({ error: "unauthorized" }, 401);
 
   const username = await readUsername(request);

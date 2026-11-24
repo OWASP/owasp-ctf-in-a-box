@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getPlayer } from "@/lib/player";
+import { getPlayerForWrite } from "@/lib/player";
 import { transferCaptain } from "@/lib/team-store";
 
 function statusForError(error: string): number {
@@ -9,7 +9,7 @@ function statusForError(error: string): number {
 }
 
 export async function POST(request: Request) {
-  const player = await getPlayer(request.headers);
+  const player = await getPlayerForWrite(request.headers);
   if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const playerId = player.id;
 

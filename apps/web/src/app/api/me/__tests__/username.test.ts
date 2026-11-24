@@ -20,7 +20,7 @@ vi.mock("@/lib/auth", () => ({
   auth: { api: { getSession: m.getSession }, $context: Promise.resolve({ authCookies: { sessionData: SESSION_DATA } }) },
 }));
 vi.mock("@/lib/upstash", () => ({ upstashEval: m.upstashEval }));
-vi.mock("@/lib/player", () => ({ getPlayer: m.getPlayer }));
+vi.mock("@/lib/player", () => ({ getPlayer: m.getPlayer, getPlayerForWrite: m.getPlayer }));
 vi.mock("@/lib/username-store", () => ({ setUsernameOnce: m.setUsernameOnce }));
 vi.mock("@/lib/rate-limit-store", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/rate-limit-store")>();

@@ -19,6 +19,7 @@ import { inspect } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 // The activity log, so the dry-run test below can see that nothing was logged.
 const activityLog = vi.hoisted(() => ({ logActivity: vi.fn(async () => {}) }));
+vi.mock("@/lib/account-exists", () => ({ accountExists: async () => true }));
 vi.mock("@/lib/activity-log", () => activityLog);
 // The first-blood hook (#590): asserted below, and mocked so no test can
 // reach the real announcer (Redis + Discord).

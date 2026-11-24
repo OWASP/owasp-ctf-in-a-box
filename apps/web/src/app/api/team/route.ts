@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { getPlayer } from "@/lib/player";
+import { getPlayerForWrite } from "@/lib/player";
 import { createTeam } from "@/lib/team-store";
 
 export async function POST(request: Request) {
-  const player = await getPlayer(request.headers);
+  const player = await getPlayerForWrite(request.headers);
   if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!player.username) return NextResponse.json({ error: "username_required" }, { status: 409 });
   const playerId = player.id;

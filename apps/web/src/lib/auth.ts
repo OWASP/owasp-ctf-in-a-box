@@ -3,6 +3,7 @@ import { APIError, createAuthMiddleware, getOAuthState, getSessionFromCtx } from
 import { nextCookies } from "better-auth/next-js";
 import { username } from "better-auth/plugins";
 import type { BetterAuthOptions } from "better-auth";
+import { accountExists } from "@/lib/account-exists";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
 import { errorLabel } from "@/lib/error-label";
 import { getGithubLink, linkOnUserWrite } from "@/lib/github-link";
@@ -175,6 +176,29 @@ export async function gateOAuthCallback(ctx: HookCtx, write: CallbackWrite): Pro
     callbackVerdicts.set(state, verdict);
   }
   return verdict;
+}
+
+/**
+ * The `/link-social` before hook for a deleted account. The session comes
+ * from the signed cookie cache, which outlives an organizer's delete by up to
+ * its max age; linking then would write an account row and a GitHub link for
+ * a user that no longer exists. An unreadable check fails closed. A request
+ * with no session is left to the endpoint, which answers 401.
+ */
+export async function refuseDeletedAccount(ctx: AuthCtx): Promise<void> {
+  if (ctx.path !== "/link-social") return;
+  const session = await getSessionFromCtx(ctx);
+  if (!session) return;
+  let exists: boolean;
+  try {
+    exists = await accountExists(session.user.id);
+  } catch (err) {
+    console.error(`[auth] could not confirm the account before linking: ${errorLabel(err)}`);
+    throw new APIError("SERVICE_UNAVAILABLE", { message: "Could not check your account. Try again.", code: "ACCOUNT_UNREADABLE" });
+  }
+  if (!exists) {
+    throw new APIError("UNAUTHORIZED", { message: "This account no longer exists.", code: "ACCOUNT_DELETED" });
+  }
 }
 
 /**
@@ -416,6 +440,7 @@ export const authOptions = {
       await refuseSignUpFields(ctx);
       await refuseClientOAuthParams(ctx);
       await refuseDisabledProvider(ctx);
+      await refuseDeletedAccount(ctx);
       await refuseSecondGithubLink(ctx);
     }),
     // Sign-in timestamps for the admin activity log. The after hook runs on

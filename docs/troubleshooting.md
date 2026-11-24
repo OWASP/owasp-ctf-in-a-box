@@ -144,9 +144,10 @@ Work down this list — each item is a different subsystem:
    `scoringStartsAt/EndsAt`). An empty `scoringStartsAt` means the event has
    **not launched** and nothing scores — the usual cause right after an
    upgrade, since a blank start used to mean "always open" (#464). A score
-   is judged at the time its PR was judged (ADR 67; needs v2.0.1 or later on
-   both sides, the judge image the forks pull and the box's sync, otherwise
-   it is timed by the score comment's last edit): one judged while frozen,
+   is judged at the time its PR was judged (ADR 67, with v2.0.1 or later on
+   both the judge image the forks pull and the box's sync; an older judge
+   image is timed by the score comment's last edit, and a sync older than
+   ADR 67 by when the score reached the scorer): one judged while frozen,
    before the launch or after the end **never counts**, not even after you
    unfreeze or set a start — the poller logs it as `refused (paused)` or
    `refused (outside-window)`. A score timed before the last master reset

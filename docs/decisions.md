@@ -4129,8 +4129,9 @@ v2.0.0 end-to-end test). The judge now writes `judgedAt` (the run's own time,
 ISO 8601) into the marker, and `at` is that value. It comes from the same
 judge output as the score, so it is no more forgeable than the score itself,
 the property this ADR rests on. sync uses the comment's `updated_at` only
-when the marker has no `judgedAt` (a scorer image that predates it) or names
-a time after the comment, which no honest run produces; it skips a verdict
+when the marker has no `judgedAt` (a scorer image that predates it) or its
+`judgedAt` is a full second or more after the comment (`updated_at` has
+whole-second precision), which no honest run produces; it skips a verdict
 whose `judgedAt` predates the reset epoch whatever the edit time says. The
 **Known edge** above now reads by the judge run, not the comment's last
 write: a re-run that does judge stamps its own time. Because sync presents

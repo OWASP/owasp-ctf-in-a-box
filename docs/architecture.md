@@ -179,7 +179,7 @@ state; everything else that touches scores goes through it.
    lookup and for the freeze and reset reads, so it refuses to start without
    it (`ctf-sync: Secure Development needs Redis to attribute PRs to players`).
 6. `submitScore` (`sync/src/submit.js`) POSTs the validated payload with
-   `author` replaced by `player` (the resolved id), plus `at` — the verdict's time: the marker's `judgedAt`, written by the judge, or the comment's own GitHub `updated_at` when the marker has none or names a later time —
+   `author` replaced by `player` (the resolved id), plus `at` — the verdict's time: the marker's `judgedAt`, written by the judge, or the comment's own GitHub `updated_at` when the marker has none or its `judgedAt` is a full second or more after the comment —
    to `POST /score` on `scorer` with a bearer token
    (`Authorization: Bearer ${cfg.scorerToken}`), over the compose network —
    that endpoint is reachable from inside the box and nowhere else. The

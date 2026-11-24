@@ -819,10 +819,16 @@ is sized for a room of about 650:
      the SSM prefix are created by that apply), put the value, then turn it
      on:
 
+     Read it from a private file, not the command line, so it stays out of
+     shell history and the process list:
+
      ```sh
+     umask 077; openssl rand -hex 32 | tr -d '\n' > cf-origin-secret.txt
      aws ssm put-parameter --region <region> --type SecureString \
        --key-id <kms alias from next_steps> \
-       --name <ssm_prefix>/CLOUDFLARE_ORIGIN_SECRET --value "<the secret>"
+       --name <ssm_prefix>/CLOUDFLARE_ORIGIN_SECRET --value file://cf-origin-secret.txt
+     # Paste the file's contents into the Cloudflare rule (step 3), then:
+     rm cf-origin-secret.txt
      ```
 3. In Cloudflare, pick the domain, then **Rules → Transform Rules → Modify
    Request Header → Create rule**: custom filter **Hostname equals** the

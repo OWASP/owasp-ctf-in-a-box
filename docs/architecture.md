@@ -160,9 +160,10 @@ state; everything else that touches scores goes through it.
    `ctf:sd:held:*` (counted in the `held` tally bucket, never in `dropped`)
    and the login is never logged. Each tick, before the comment
    pass, sync releases held scores whose author linked before `scoringEndsAt`
-   (or the event has no end), oldest comment first, POSTing each at its
-   ORIGINAL comment time, so the scorer still judges the window, freeze and
-   reset against that time (ADR 67). A link made at or after the close does
+   (or the event has no end), oldest comment first, POSTing each at the time
+   it was held with, its verdict's time (the marker's `judgedAt`, or the
+   comment's time without one), so the scorer still judges the window, freeze
+   and reset against that time (ADR 67). A link made at or after the close does
    not release: the admin list shows it as `unclaimed`. The close is the
    current `scoringEndsAt`, read every tick, so an organizer who moves the
    end later than the link lets that score release; an unclaimed score is

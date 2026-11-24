@@ -339,12 +339,13 @@ export async function tick(cfg, state, deps = {}) {
       }
       // The verdict's own time: the judge's judgedAt, unless it is missing
       // (an older scorer image) or later than the comment, which no honest
-      // run produces. updated_at alone is not the verdict's time: the
+      // run produces. updated_at has whole-second precision, so a judgedAt in
+      // the same second as the comment is not later. updated_at alone is not the verdict's time: the
       // workflow also edits the comment without judging (the cooldown note),
       // and that edit would carry a frozen, pre-start or pre-reset verdict
       // into a live window.
       const at =
-        payload.judgedAt !== null && !(Date.parse(payload.judgedAt) > Date.parse(c.updated_at)) ? payload.judgedAt : c.updated_at;
+        payload.judgedAt !== null && !(Date.parse(payload.judgedAt) >= Date.parse(c.updated_at) + 1000) ? payload.judgedAt : c.updated_at;
       if (resetMs !== null && Date.parse(at) < resetMs) {
         tally.preReset++;
         continue;

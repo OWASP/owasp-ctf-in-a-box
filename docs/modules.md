@@ -159,7 +159,8 @@ the sections below are the enforceable contract behind it.
    success response is `202`. `at` is when the score was earned — for the
    poll pipeline, the marker's `judgedAt` (when the judge produced the
    verdict), or the score comment's GitHub `updated_at` for a marker without
-   one — and the scorer
+   one or whose `judgedAt` is a full second or more after the comment — and
+   the scorer
    times the solve by it and judges the scoring window, the freeze and the
    master-reset epoch at it ([ADR 67](decisions.md#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)).
    A `422` is a final refusal on that time (never retry it); a payload with

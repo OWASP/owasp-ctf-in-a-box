@@ -389,6 +389,22 @@ test("a marker's judgedAt is the score's `at`, not the comment's later edit time
   assert.equal(posts[0].at, "2026-08-13T10:44:00.000Z");
 });
 
+test("a judgedAt in the same second as the comment keeps its own time: updated_at has no milliseconds (#821)", async () => {
+  const posts = [];
+  const c = ghComment(35, judged("2026-08-13T11:00:00.500Z")); // updated_at 11:00:00Z
+  const f = routes(() => new Response(JSON.stringify([c]), { status: 200 }), 202, posts);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {} });
+  assert.equal(posts[0].at, "2026-08-13T11:00:00.500Z");
+});
+
+test("a judgedAt a full second or more after the comment falls back to the comment's time (#821)", async () => {
+  const posts = [];
+  const c = ghComment(36, judged("2026-08-13T11:00:01.000Z"));
+  const f = routes(() => new Response(JSON.stringify([c]), { status: 200 }), 202, posts);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {} });
+  assert.equal(posts[0].at, c.updated_at);
+});
+
 test("a judgedAt later than the comment, or unparseable, falls back to the comment's time (#821)", async () => {
   for (const judgedAt of ["2026-08-13T12:00:00.000Z", "not-a-date", ""]) {
     const posts = [];

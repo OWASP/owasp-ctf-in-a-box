@@ -789,11 +789,14 @@ a **trustworthy** per-IP control can live: the app keys its sign-up and
 sign-in limits on the address of the hop that connected to the box's proxy
 (`Fly-Client-IP` on Fly, the rightmost `x-forwarded-for` entry behind Caddy or
 the ALB), never on a value the caller sets. Behind Cloudflare that is the
-edge's address, which is usable for a coarse limit on
-sign-up and sign-in
-([Operations](operations.md#account-sign-up-and-sign-in-limits)) but never a
-client identity. An unauthenticated `curl` loop against `/api/*` therefore
-still costs the box a session lookup per hit unless the edge stops it.
+edge's address, so set `CLIENT_IP_BEHIND_CLOUDFLARE=true` (`.env` or
+`.env.fly`; `behind_cloudflare = true` on AWS): the app then keys those limits
+on Cloudflare's `CF-Connecting-IP`, and reads it only when the connecting hop
+is inside Cloudflare's published ranges, so a client reaching the origin
+directly cannot choose it
+([Operations](operations.md#account-sign-up-and-sign-in-limits)). An
+unauthenticated `curl` loop against `/api/*` still costs the box a session
+lookup per hit unless the edge stops it.
 
 **One rate-limiting rule, on the Free plan.** Cloudflare's Free plan includes
 exactly one rate-limiting rule, counted by IP over a 10-second window with a

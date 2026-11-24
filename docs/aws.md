@@ -276,7 +276,10 @@ Every command below uses these names:
   [docs/hosting.md](hosting.md#cloudflare-in-front-of-the-box). This module
   creates no WAF, so on AWS only the app's own per-login limits apply. To
   get the same protection, put the domain behind Cloudflare with that rule.
-  Using an ACM certificate with Cloudflare's Full (strict) mode works.
+  Using an ACM certificate with Cloudflare's Full (strict) mode works. With
+  the domain behind Cloudflare, set `behind_cloudflare = true` so the
+  sign-up and sign-in limits key on each player, not on Cloudflare's edge
+  ([budgets](operations.md#account-sign-up-and-sign-in-limits)).
 - **Dispatch both heavy scoring gates on the release commit** (see
   [The offline gates](operations.md#the-offline-gates)).
 - **Run the load pass** described in [Load testing on AWS](#load-testing-on-aws).

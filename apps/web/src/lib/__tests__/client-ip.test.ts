@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clientIp, trustedClientIpHeader } from "@/lib/client-ip";
+import { behindCloudflare, clientIp, isCloudflareAddress, trustedClientIpHeader } from "@/lib/client-ip";
 
 const h = (v?: string) => new Headers(v === undefined ? {} : { "x-forwarded-for": v });
 const UNSET = {};
@@ -53,6 +53,89 @@ describe("clientIp with TRUSTED_CLIENT_IP_HEADER=fly-client-ip", () => {
       "203.0.113.7",
     );
   });
+});
+
+describe("clientIp with CLIENT_IP_BEHIND_CLOUDFLARE=true", () => {
+  // A real Cloudflare edge address (198.41.128.0/17) and one from 2606:4700::/32.
+  const EDGE_V4 = "198.41.200.13";
+  const EDGE_V6 = "2606:4700:10::ac43:1b0a";
+  const CF = { CLIENT_IP_BEHIND_CLOUDFLARE: "true" };
+  const CF_FLY = { ...CF, ...FLY };
+  const via = (peerXff: string, cf?: string) =>
+    new Headers({ "x-forwarded-for": peerXff, ...(cf === undefined ? {} : { "cf-connecting-ip": cf }) });
+
+  it("keys two players behind the same Cloudflare edge apart (compose, AWS)", () => {
+    const a = clientIp(via(`203.0.113.7, ${EDGE_V4}`, "203.0.113.7"), CF);
+    const b = clientIp(via(`198.51.100.4, ${EDGE_V4}`, "198.51.100.4"), CF);
+    expect([a, b]).toEqual(["203.0.113.7", "198.51.100.4"]);
+    // Without the setting both share the edge's bucket, the bug in #820.
+    expect(clientIp(via(`203.0.113.7, ${EDGE_V4}`, "203.0.113.7"), UNSET)).toBe(EDGE_V4);
+  });
+
+  it("reads CF-Connecting-IP behind Fly when Fly-Client-IP is a Cloudflare edge", () => {
+    const headers = new Headers({ "fly-client-ip": EDGE_V4, "cf-connecting-ip": "203.0.113.7", "x-forwarded-for": `x, ${FLY_APP_ADDR}` });
+    expect(clientIp(headers, CF_FLY)).toBe("203.0.113.7");
+  });
+
+  it("accepts an IPv6 edge and an IPv6 client", () => {
+    expect(clientIp(via(EDGE_V6, "2001:db8::42"), CF)).toBe("2001:db8::42");
+  });
+
+  it("ignores CF-Connecting-IP from a peer outside Cloudflare's ranges, so a direct-to-origin client cannot pick its bucket", () => {
+    for (const peer of ["203.0.113.9", "198.41.127.255", "2606:4701::1"]) {
+      expect(clientIp(via(peer, "6.6.6.6"), CF)).toBe(peer);
+    }
+    expect(clientIp(new Headers({ "cf-connecting-ip": "6.6.6.6" }), CF)).toBe("unknown");
+    expect(clientIp(new Headers({ "fly-client-ip": "203.0.113.9", "cf-connecting-ip": "6.6.6.6" }), CF_FLY)).toBe("203.0.113.9");
+  });
+
+  it("keeps the edge address when CF-Connecting-IP is missing or not a single IP", () => {
+    for (const cf of [undefined, "", " , ", "not-an-ip", "203.0.113.7, 10.0.0.1", "999.1.1.1", "1.2.3"]) {
+      expect(clientIp(via(EDGE_V4, cf), CF)).toBe(EDGE_V4);
+    }
+  });
+
+  it("trims CF-Connecting-IP", () => expect(clientIp(via(EDGE_V4, " 203.0.113.7 "), CF)).toBe("203.0.113.7"));
+
+  it("ignores CF-Connecting-IP when the setting is off or blank", () => {
+    for (const env of [UNSET, { CLIENT_IP_BEHIND_CLOUDFLARE: "" }, { CLIENT_IP_BEHIND_CLOUDFLARE: "false" }]) {
+      expect(clientIp(via(EDGE_V4, "203.0.113.7"), env)).toBe(EDGE_V4);
+    }
+  });
+});
+
+describe("behindCloudflare", () => {
+  it.each([
+    [undefined, false],
+    ["", false],
+    ["  ", false],
+    ["false", false],
+    ["true", true],
+    [" TRUE ", true],
+  ])("reads %j as %s", (v, want) => expect(behindCloudflare(v === undefined ? {} : { CLIENT_IP_BEHIND_CLOUDFLARE: v })).toBe(want));
+  it.each(["yes", "1", "on", "cloudflare"])("throws on %j instead of guessing", (v) => {
+    expect(() => behindCloudflare({ CLIENT_IP_BEHIND_CLOUDFLARE: v })).toThrow(/CLIENT_IP_BEHIND_CLOUDFLARE/);
+  });
+});
+
+describe("isCloudflareAddress", () => {
+  it.each([
+    ["173.245.48.1", true],
+    ["104.16.0.0", true],
+    ["104.23.255.255", true],
+    ["104.24.0.1", true],
+    ["104.28.0.0", false],
+    ["198.41.128.0", true],
+    ["198.41.255.255", true],
+    ["198.42.0.0", false],
+    ["2400:cb00::1", true],
+    ["2a06:98c0::1", true],
+    ["2a06:98c8::1", false],
+    ["2001:db8::1", false],
+    ["8.8.8.8", false],
+    ["not-an-ip", false],
+    ["", false],
+  ])("%s -> %s", (ip, want) => expect(isCloudflareAddress(ip)).toBe(want));
 });
 
 describe("trustedClientIpHeader", () => {

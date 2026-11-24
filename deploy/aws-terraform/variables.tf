@@ -165,6 +165,12 @@ variable "github_app_installation_id" {
   }
 }
 
+variable "behind_cloudflare" {
+  description = "The event domain is proxied by Cloudflare (orange-cloud DNS). True makes the app key its sign-up and sign-in rate limits on Cloudflare's CF-Connecting-IP, read only when the ALB's peer is a Cloudflare edge address; false keys on the ALB's address, so every player behind one Cloudflare edge shares one budget."
+  type        = bool
+  default     = false
+}
+
 variable "enable_secure_development" {
   description = "This event runs the secure-development module (GitHub forks + PR scoring). When false, no scorer and no sync run at all — the compose profiles' behaviour, ported."
   type        = bool

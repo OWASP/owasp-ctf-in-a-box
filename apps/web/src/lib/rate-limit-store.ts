@@ -119,19 +119,20 @@ export const RATE_LIMITS = {
   /** Password reset code redemptions (`/api/reset-password`), keyed on the
    *  client address because the player is signed out, and charged FAIL
    *  CLOSED. A code is 128 bits, so guessing is infeasible whatever this is;
-   *  the budget only throttles a script hammering the route. Sized like
-   *  signUpIp, because behind a venue NAT or a CDN edge every player shares
-   *  one address, and a small budget would let one person lock every reset
-   *  out. */
+   *  the budget only throttles a script hammering the route. Generous,
+   *  because behind a venue NAT every player shares one address, and a small
+   *  budget would let one person lock every reset out; resets are rare,
+   *  organizer-issued, so it stays below the sign-up budget. */
   passwordReset: { bucket: "password-reset", limit: 300, windowSeconds: 900 },
   /** Sign-up attempts per client address (`/sign-up/email`), charged fail
-   *  closed. Sized so a venue sharing one NAT, or a CDN edge address, still
-   *  fits a whole room signing up. */
-  signUpIp: { bucket: "signup-ip", limit: 300, windowSeconds: 10 * 60 },
+   *  closed. Sized so a venue of about 650 people sharing one NAT address
+   *  still fits the whole room signing up in one opening rush. */
+  signUpIp: { bucket: "signup-ip", limit: 1000, windowSeconds: 10 * 60 },
   /** Sign-in attempts per client address (`/sign-in/username`), fail closed.
    *  Coarse on purpose: it bounds a script spraying many usernames from one
-   *  source without hurting a shared NAT. */
-  signInIp: { bucket: "signin-ip", limit: 600, windowSeconds: 10 * 60 },
+   *  source without hurting a shared NAT (a room of about 650, each signing
+   *  in a few times). */
+  signInIp: { bucket: "signin-ip", limit: 2000, windowSeconds: 10 * 60 },
   /** Password guesses per source AND username, keyed `<ip>|<username>`, fail
    *  closed. Guessing is bounded per source, and a stranger elsewhere cannot
    *  spend a player's budget and lock them out. */

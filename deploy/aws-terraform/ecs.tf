@@ -392,6 +392,9 @@ resource "aws_ecs_task_definition" "app" {
       { name = "LEADERBOARD_SOURCE", value = "lambda" },
       // Teams are refused unless this is exactly "true" (team-store.ts).
       { name = "TEAM_WRITES_ENABLED", value = "true" },
+      // "true" behind Cloudflare: the auth rate limits key on
+      // CF-Connecting-IP from a Cloudflare edge peer (client-ip.ts).
+      { name = "CLIENT_IP_BEHIND_CLOUDFLARE", value = var.behind_cloudflare ? "true" : "" },
       ], local.run_scorer ? [
       // Only when a scorer exists to answer it.
       { name = "LEADERBOARD_API_URL", value = local.scorer_url },

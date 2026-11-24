@@ -1487,3 +1487,34 @@ run "a_sync_size_fargate_does_not_run_is_refused_at_plan" {
 
   expect_failures = [aws_ecs_task_definition.sync]
 }
+
+// behind_cloudflare reaches the app as the exact string client-ip.ts accepts:
+// "true" when set, empty otherwise. Any other value would stop the app at
+// startup, so a bool rendered as "1" or "True" must fail here, not on the box.
+run "behind_cloudflare_reaches_the_app_as_true" {
+  command = plan
+
+  variables {
+    behind_cloudflare = true
+  }
+
+  assert {
+    condition = one([
+      for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment : e.value
+      if e.name == "CLIENT_IP_BEHIND_CLOUDFLARE"
+    ]) == "true"
+    error_message = "behind_cloudflare = true must give the app CLIENT_IP_BEHIND_CLOUDFLARE=true."
+  }
+}
+
+run "behind_cloudflare_defaults_to_empty" {
+  command = plan
+
+  assert {
+    condition = one([
+      for e in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment : e.value
+      if e.name == "CLIENT_IP_BEHIND_CLOUDFLARE"
+    ]) == ""
+    error_message = "Without behind_cloudflare the app must get an empty CLIENT_IP_BEHIND_CLOUDFLARE."
+  }
+}

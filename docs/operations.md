@@ -73,8 +73,8 @@ attempts. Try again in N seconds."
 
 | Budget | Limit | Window |
 |---|---|---|
-| Account creation, per client address | 300 | 10 minutes |
-| Sign-in (password, and starting a GitHub sign-in or link), per client address | 600 | 10 minutes |
+| Account creation, per client address | 1000 | 10 minutes |
+| Sign-in (password, and starting a GitHub sign-in or link), per client address | 2000 | 10 minutes |
 | Password attempts, per client address and username | 10 | 15 minutes |
 
 The address is the one the box's own proxy vouches for, never a value the
@@ -88,11 +88,22 @@ client chooses (`apps/web/src/lib/client-ip.ts`):
 
 `TRUSTED_CLIENT_IP_HEADER` is not set by hand. On compose or AWS it would
 let a client choose its own address, and an invalid header name stops the
-app at startup. Behind Cloudflare every path sees Cloudflare's edge, so every
-player routed through the same edge shares the two per-address budgets. They
-are sized for a room of a few hundred people to sign up together. The
-per-username budget keys on address and username together, so one player
-mistyping a password does not lock anyone else out. The limits live in
+app at startup.
+
+**Behind Cloudflare, set `CLIENT_IP_BEHIND_CLOUDFLARE=true`.** With
+Cloudflare's proxy in front of the box (an orange-cloud DNS record), every
+path above sees a Cloudflare edge address, and every player routed through
+the same edge shares the two per-address budgets. With the setting on, the
+app keys on Cloudflare's `CF-Connecting-IP` header instead, and only when the
+proxy-vouched address is inside Cloudflare's published ranges, so a client
+that reaches the origin directly cannot pick its own address. Leave it unset
+when the domain is not proxied by Cloudflare; any value other than `true`,
+`false` or empty stops the app at startup. Set it in `.env` (compose and
+Fly) or with `behind_cloudflare = true` in `terraform.tfvars` (AWS).
+
+The per-address budgets are sized for a room of about 650 people sharing one
+venue NAT address. The per-username budget keys on address and username
+together, so one player mistyping a password does not lock anyone else out. The limits live in
 `RATE_LIMITS` in `apps/web/src/lib/rate-limit-store.ts`; there is no setting
 for them in `/admin`.
 

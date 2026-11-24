@@ -82,6 +82,11 @@ acm_certificate_arn = ""
 # Same rule as the compose profiles.
 # enable_secure_development = true
 
+# true when the event domain is proxied by Cloudflare (orange-cloud DNS), so
+# the sign-up and sign-in rate limits key on each player's CF-Connecting-IP
+# instead of one shared Cloudflare edge address.
+# behind_cloudflare = false
+
 # There is no transport setting: sync polls GitHub for score comments, and the
 # push transport that once needed a `score_ingest` variable here was removed in
 # v0.6 (issue #377, ADR 56).

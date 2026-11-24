@@ -374,6 +374,17 @@ ENV
   echo "$app_env" | grep -qx '      TRUSTED_CLIENT_IP_HEADER: fly-client-ip'
 }
 
+@test "render: CLIENT_IP_BEHIND_CLOUDFLARE in the env file reaches the app" {
+  need_docker
+  echo 'CLIENT_IP_BEHIND_CLOUDFLARE=true' >> "$BATS_TEST_TMPDIR/env"
+  render
+  # Fly-Client-IP is a Cloudflare edge address behind an orange-cloud domain;
+  # this is what moves the auth rate limits onto CF-Connecting-IP.
+  app_env="$(awk '/^  app:/{f=1;next} /^  [a-z]+:/{f=0} f' "$RENDERED")"
+  [ -n "$app_env" ]
+  echo "$app_env" | grep -qE '^      CLIENT_IP_BEHIND_CLOUDFLARE: "?true"?$'
+}
+
 @test "render: no other service gets TRUSTED_CLIENT_IP_HEADER" {
   need_docker
   render

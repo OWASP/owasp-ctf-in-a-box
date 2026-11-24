@@ -4115,6 +4115,22 @@ solve that was never ingested, is refused as outside the window, even if its
 first passing run was in time. sync reads each comment within a poll or two
 of it being written, so this only bites when sync was down across a re-run.
 
+**Amended (#821): the verdict's time, not the comment's last edit.** The
+score comment is upserted, and not only by judging: a push inside the re-run
+cooldown is not judged, but the workflow appends a "not scored" note to the
+existing comment. That edit moves `updated_at` and leaves the previous marker
+in place, so a verdict judged while frozen, before the scoring start or
+before a reset was re-dated into a live window and counted (found in the
+v2.0.0 end-to-end test). The judge now writes `judgedAt` (the run's own time,
+ISO 8601) into the marker, and `at` is that value. It comes from the same
+judge output as the score, so it is no more forgeable than the score itself,
+the property this ADR rests on. sync uses the comment's `updated_at` only
+when the marker has no `judgedAt` (a scorer image that predates it) or names
+a time after the comment, which no honest run produces; it skips a verdict
+whose `judgedAt` predates the reset epoch whatever the edit time says. The
+**Known edge** above now reads by the judge run, not the comment's last
+write: a re-run that does judge stamps its own time.
+
 **Upgrade order.** Either service can be upgraded first. A new scorer with an
 old sync gets no `at` and keeps the arrival-time rule: the effective freeze
 is checked when the score arrives (`503`, retried) and the solve is timed

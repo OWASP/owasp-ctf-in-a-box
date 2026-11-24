@@ -178,7 +178,7 @@ state; everything else that touches scores goes through it.
    lookup and for the freeze and reset reads, so it refuses to start without
    it (`ctf-sync: Secure Development needs Redis to attribute PRs to players`).
 6. `submitScore` (`sync/src/submit.js`) POSTs the validated payload with
-   `author` replaced by `player` (the resolved id), plus `at` — the comment's own GitHub `updated_at`, never a field of the marker —
+   `author` replaced by `player` (the resolved id), plus `at` — the verdict's time: the marker's `judgedAt`, written by the judge, or the comment's own GitHub `updated_at` when the marker has none or names a later time —
    to `POST /score` on `scorer` with a bearer token
    (`Authorization: Bearer ${cfg.scorerToken}`), over the compose network —
    that endpoint is reachable from inside the box and nowhere else. The
@@ -1040,7 +1040,8 @@ floor that keeps the rate inside 0..1.
 `paused` does not touch fork Actions or GitHub — PRs keep getting judged and
 commented on. The poller does not hold its cursor either: `sync/src/index.js`'s
 `tick()` reads `redis.isPaused()` only to write the `paused` heartbeat, and
-forwards every score with its comment's `updated_at`. The `scorer` reads the
+forwards every score with its verdict's time (the marker's `judgedAt`, or the
+comment's `updated_at` without one). The `scorer` reads the
 freeze, the window and the reset epoch on every `POST /score` that carries
 `at` (`store.readScoringPolicy()`) and refuses with a final `422` a score
 posted while any of them closed scoring (`scorer/src/serve.js`'s
@@ -1145,7 +1146,10 @@ have deduped them was just cleared), so the epoch is also the ingestion
 **watermark** (#551): a bot comment whose `updated_at` predates `resetAt` is
 marked seen and skipped (tallied once as `preReset` in the poll summary), while
 a re-run that edits the comment past the epoch is a new revision and lands as
-normal. The scorer applies the same watermark to each score's `at`, when it
+normal. sync also skips a verdict whose `judgedAt` predates `resetAt`,
+whatever the comment's `updated_at` says: the workflow edits the comment
+without judging (the cooldown note), and that edit must not carry a
+pre-reset verdict past the epoch. The scorer applies the same watermark to each score's `at`, when it
 judges the score and again inside the solve write's own script, and the reset
 writes the epoch before it sweeps a solve, so a score judged before the reset
 and written after the sweep is refused rather than restored (#791). The

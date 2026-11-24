@@ -157,7 +157,9 @@ the sections below are the enforceable contract behind it.
    string, at: string}`, where `player` is the kit's player id (a lowercase
    UUID, not a GitHub login), delivered as a bearer-authenticated JSON POST, and a
    success response is `202`. `at` is when the score was earned — for the
-   poll pipeline, the score comment's GitHub `updated_at` — and the scorer
+   poll pipeline, the marker's `judgedAt` (when the judge produced the
+   verdict), or the score comment's GitHub `updated_at` for a marker without
+   one — and the scorer
    times the solve by it and judges the scoring window, the freeze and the
    master-reset epoch at it ([ADR 67](decisions.md#adr-67-a-secure-development-solve-is-timed-and-judged-by-its-score-comment)).
    A `422` is a final refusal on that time (never retry it); a payload with

@@ -144,7 +144,7 @@ Work down this list — each item is a different subsystem:
    `scoringStartsAt/EndsAt`). An empty `scoringStartsAt` means the event has
    **not launched** and nothing scores — the usual cause right after an
    upgrade, since a blank start used to mean "always open" (#464). A score
-   is judged at its PR comment's time (ADR 67): one posted while frozen,
+   is judged at the time its PR was judged (ADR 67): one judged while frozen,
    before the launch or after the end **never counts**, not even after you
    unfreeze or set a start — the poller logs it as `refused (paused)` or
    `refused (outside-window)`. A score timed before the last master reset

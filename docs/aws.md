@@ -536,9 +536,10 @@ Container Insights. Until that exists, run the same pass by hand:
 
 ## Tear down
 
-`terraform destroy` deletes the cache and its automatic snapshots with it.
-The module takes no final snapshot, so export everything you want to keep
-**first**:
+`terraform destroy` deletes the cache and its automatic snapshots with it,
+and takes one final snapshot first, named `<name>-redis-final`. That snapshot
+is a backstop, not a replacement for the export, so still export everything
+you want to keep **first**:
 
 1. `/admin` → **Event** → **Event archive** → **Export**. It carries the
    authored content and settings, not contestant progress (see
@@ -553,6 +554,17 @@ Then:
 ```sh
 terraform destroy
 ```
+
+The final snapshot holds the whole event store, including flags, logins and
+sessions, and is billed until you delete it. Once you are sure you will not
+restore from it, delete it:
+
+```sh
+aws elasticache delete-snapshot --snapshot-name <name>-redis-final
+```
+
+A later `terraform destroy` of a stack with the same `name` fails while this
+snapshot still exists, because the next final snapshot would take its name.
 
 Afterwards, check for leftovers:
 

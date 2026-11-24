@@ -973,6 +973,21 @@ EOF
   echo "$output" | grep -qF 'BETTER_AUTH_SECRET=<redacted>'
 }
 
+@test "dry-run redacts CLOUDFLARE_ORIGIN_SECRET" {
+  need_docker
+  cd "$REPO"
+  echo 'CLOUDFLARE_ORIGIN_SECRET=FIXTUREORIGINSECRETuuuuuuuuuuuuuuuuuu' >> "$BATS_TEST_TMPDIR/env"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env"
+  [ "$status" -eq 0 ]
+  # Whoever holds this value can choose the address the auth rate limits key
+  # on, so it must never reach a terminal either.
+  if echo "$output" | grep -qF 'FIXTUREORIGINSECRETuuuu'; then
+    echo "LEAKED in dry-run output: CLOUDFLARE_ORIGIN_SECRET"
+    return 1
+  fi
+  echo "$output" | grep -qF 'CLOUDFLARE_ORIGIN_SECRET=<redacted>'
+}
+
 @test "dry-run still shows WHICH variables get set" {
   need_docker
   cd "$REPO"

@@ -817,10 +817,13 @@ trusts it only on requests your zone has marked with a secret:
    in once, and check the `ctf:rl:signin-ip:*` keys in Redis: the address is
    yours, not a Cloudflare one (`104.`, `172.6x.`, `162.158.`, `198.41.`).
 
-Rotate the secret outside busy periods, changing the rule and the setting
-together. Between the two changes requests fall back to the shared edge
-budget: nothing is refused for a wrong secret, but a whole room signing in at
-that moment can exhaust that one budget and get `429` until it resets.
+Rotate the secret outside busy periods: change the Cloudflare rule and the
+setting, then restart the app so it reads the new value (Fly: `deploy.sh
+--skip-build`; compose: recreate the app container; AWS: put the new value in
+SSM, then force a new deployment of the app service). Until both sides match,
+requests fall back to the shared edge budget: nothing is refused for a wrong
+secret, but a whole room signing in at that moment can exhaust that one
+budget and get `429` until it resets.
 
 **One rate-limiting rule, on the Free plan.** Cloudflare's Free plan includes
 exactly one rate-limiting rule, counted by IP over a 10-second window with a

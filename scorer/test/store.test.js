@@ -27,6 +27,14 @@ test("memory store keeps first-solve timestamps; replays no-op", async () => {
   assert.deepEqual(await store.getSolves("juice-shop"), {}); // targets isolated
 });
 
+test("memory store keeps the EARLIEST solve time whatever the arrival order (#821)", async () => {
+  const store = createMemoryStore();
+  await store.recordSolves("dvwa", "octocat", ["sqli-low"], T1);
+  await store.recordSolves("dvwa", "octocat", ["sqli-low"], T0); // judged earlier, presented later
+  await store.recordSolves("dvwa", "octocat", ["sqli-low"], T1);
+  assert.deepEqual(await store.getSolves("dvwa"), { "octocat:sqli-low": T0 });
+});
+
 test("redis store: one EVAL of the solve script via SRH pipeline, bearer token", async (t) => {
   const calls = [];
   const realFetch = globalThis.fetch;

@@ -2,8 +2,8 @@ export const SCHEMA_VERSION_KEY = "ctf:meta:schema-version";
 export const CURRENT_SCHEMA_VERSION = "2";
 
 // Solve store: one Redis hash per target, one field per (player, challenge).
-// Writes are monotonic — HSETNX semantics keep the FIRST solve timestamp and
-// make replays no-ops. Reads are one HGETALL per known target. The memory
+// Writes are monotonic — a solve keeps its EARLIEST timestamp, whatever order
+// the scores arrive in, and a replay is a no-op. Reads are one HGETALL per known target. The memory
 // store mirrors the same contract for tests/dev.
 
 export const solvesKey = (target) => `ctf:solves:${target}`;
@@ -29,7 +29,7 @@ export const LINK_GITHUB_PREFIX = "ctf:link:github:";
 
 // The solve write, judged against the master-reset epoch and the score hold
 // in the same EVAL, so no reset, delete or unlink can land between the checks
-// and the HSETNX.
+// and the write.
 //
 // The reset check comes first and reads `resetAt` from the settings hash at
 // write time, not the value the judge read: a score timed before the CURRENT
@@ -51,8 +51,12 @@ export const LINK_GITHUB_PREFIX = "ctf:link:github:";
 // resolved the player from (ARGV[3] non-empty), the link must still name this
 // player: one that moved or went since the resolution (an unlink or delete
 // that finished, a delete-all's link sweep) is 'unlinked', nothing written,
-// and the caller retries and re-resolves. Otherwise each `<player>:<id>` is
-// written with HSETNX, so the first solve time wins and a replay is a no-op.
+// and the caller retries and re-resolves. Otherwise each `<player>:<id>` keeps
+// the earlier of its stored time and this one: sync presents verdicts in
+// comment-edit order, which is not always the order they were judged in, so
+// first-written is not first-earned. A replay is a no-op. Times are compared as
+// strings, which orders them because serve.js normalizes every `at` with
+// toISOString().
 // KEYS: [1] ctf:solves:<target>, [2] ctf:score-hold:<player>, [3] ctf:auth:user,
 // [4] ctf:link:github:<login> (any key when ARGV[3] is empty),
 // [5] ctf:admin:settings
@@ -71,7 +75,9 @@ if redis.call('EXISTS', KEYS[2]) == 1 then
 end
 if ARGV[3] ~= '' and redis.call('GET', KEYS[4]) ~= ARGV[1] then return 'unlinked' end
 for i = 6, #ARGV do
-  redis.call('HSETNX', KEYS[1], ARGV[1] .. ':' .. ARGV[i], ARGV[2])
+  local field = ARGV[1] .. ':' .. ARGV[i]
+  local cur = redis.call('HGET', KEYS[1], field)
+  if not cur or ARGV[2] < cur then redis.call('HSET', KEYS[1], field, ARGV[2]) end
 end
 return 'ok'
 `;
@@ -157,7 +163,7 @@ export function createMemoryStore({ teams = [] } = {}) {
       if (!hash) hashes.set(solvesKey(target), (hash = new Map()));
       for (const id of ids) {
         const field = solveField(player, id);
-        if (!hash.has(field)) hash.set(field, at); // HSETNX: replays no-op
+        if (!hash.has(field) || at < hash.get(field)) hash.set(field, at); // earliest wins; replays no-op
       }
       return "ok";
     },

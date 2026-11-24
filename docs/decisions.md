@@ -4079,8 +4079,9 @@ epoch are judged at that time.
   it, marks the comment seen and never re-presents it, and does not count it
   as dropped: it is the rule working, and a counter every pause bumped would
   be a counter nobody reads. Otherwise the solve is recorded with that time,
-  `HSETNX` keeping the first one. The #583 tie-break reads the recorded times
-  and does not change.
+  keeping the earliest one (amended by #821 from first-written: verdicts can
+  reach the scorer out of judge order). The #583 tie-break reads the recorded
+  times and does not change.
 - **The freeze is recorded as intervals.** The settings hash held only a
   flag, which cannot say whether a past instant was frozen. The settings
   update script now keeps a pause log beside it, in the same atomic script:
@@ -4110,7 +4111,7 @@ epoch are judged at that time.
 **Known edge.** The score comment is upserted per PR, so `updated_at` is the
 time of its LAST run. A solve first ingested from a later re-run is timed by
 that re-run, not by the run that first passed. Solves ingested earlier keep
-their time (`HSETNX`). A PR re-run after the end of the event, carrying a
+their time (the solve write keeps the earliest). A PR re-run after the end of the event, carrying a
 solve that was never ingested, is refused as outside the window, even if its
 first passing run was in time. sync reads each comment within a poll or two
 of it being written, so this only bites when sync was down across a re-run.

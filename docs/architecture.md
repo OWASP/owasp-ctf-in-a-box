@@ -920,7 +920,7 @@ on a team they are not on) but keep the existence and membership checks
 clicking Leave.
 
 **Secure Development solves can be deleted but not kept deleted.** The scorer
-writes them with `HSETNX` so replays no-op, and the poller re-submits from PR
+keeps each one's earliest time so replays no-op, and the poller re-submits from PR
 comments — so a per-contestant reset clears them and the next re-score writes
 them back. A sync restart does not: the poller's cursor is in Redis
 (`ctf:sync:state`, below), so a restarted poller does not re-read the comments

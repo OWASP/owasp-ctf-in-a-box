@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getPlayerForWrite } from "@/lib/player";
+import { accountExists } from "@/lib/account-exists";
+import { getPlayer } from "@/lib/player";
 import { removeMember } from "@/lib/team-store";
 
 function statusForError(error: string): number {
@@ -9,7 +10,7 @@ function statusForError(error: string): number {
 }
 
 export async function POST(request: Request) {
-  const player = await getPlayerForWrite(request.headers);
+  const player = await getPlayer(request.headers);
   if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const playerId = player.id;
 
@@ -19,6 +20,10 @@ export async function POST(request: Request) {
 
   // `confirm: true` is the captain accepting the after-close warning;
   // only a literal true counts.
+  // The account check sits right before the write, after the body is read:
+  // a deleted player's cached session passes getPlayer, and a slow body
+  // must not widen the gap between the check and the write.
+  if (!(await accountExists(player.id))) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const result = await removeMember(playerId, slug, member, { confirmClosed: body.confirm === true });
   if (!result.ok && result.needsConfirm) {
     return NextResponse.json({ error: result.error, needsConfirm: true }, { status: 409 });

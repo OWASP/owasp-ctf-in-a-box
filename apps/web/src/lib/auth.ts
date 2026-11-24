@@ -3,7 +3,6 @@ import { APIError, createAuthMiddleware, getOAuthState, getSessionFromCtx } from
 import { nextCookies } from "better-auth/next-js";
 import { username } from "better-auth/plugins";
 import type { BetterAuthOptions } from "better-auth";
-import { accountExists } from "@/lib/account-exists";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
 import { errorLabel } from "@/lib/error-label";
 import { getGithubLink, linkOnUserWrite } from "@/lib/github-link";
@@ -135,6 +134,7 @@ export async function refuseDisabledProvider(ctx: AuthCtx): Promise<void> {
 /** What a database hook on the callback is about to write. */
 export type CallbackWrite = "user" | "account" | "session";
 
+type UserLookup = { internalAdapter?: { findUserById: (id: string) => Promise<unknown> } };
 type HookCtx = { path?: string; params?: Record<string, unknown> } | null | undefined;
 
 // One verdict per callback request: the parsed state object is the request's
@@ -167,9 +167,6 @@ export async function gateOAuthCallback(ctx: HookCtx, write: CallbackWrite): Pro
   const state = await getOAuthState().catch(() => null);
   if (state?.link) {
     if (write === "session" || provider !== "github") throw linkNotAllowed();
-    // A link started before an organizer deleted the account can complete
-    // after it: the account row would be written for a user that is gone.
-    if (write === "account") await assertLinkTargetExists(state.link.userId);
     return;
   }
   if (!state) return assertSignInEnabled(provider);
@@ -181,20 +178,23 @@ export async function gateOAuthCallback(ctx: HookCtx, write: CallbackWrite): Pro
   return verdict;
 }
 
-/** Refuses a link callback whose target account no longer exists, or cannot
- *  be confirmed (fail closed). */
-async function assertLinkTargetExists(userId: unknown): Promise<void> {
-  let exists = false;
-  if (typeof userId === "string") {
-    try {
-      exists = await accountExists(userId);
-    } catch (err) {
-      console.error(`[auth] could not confirm the account on the link callback: ${errorLabel(err)}`);
-      throw new APIError("SERVICE_UNAVAILABLE", { message: "Could not check your account. Try again.", code: "ACCOUNT_UNREADABLE" });
-    }
+/**
+ * Whether the user row for `userId` exists, asked of better-auth's own
+ * adapter so it reads the store this instance was built with. Throws
+ * SERVICE_UNAVAILABLE when it cannot tell (fail closed).
+ */
+async function userRowExists(context: UserLookup | undefined, userId: unknown, when: string): Promise<boolean> {
+  if (typeof userId !== "string") return false;
+  try {
+    if (!context?.internalAdapter) throw new Error("no auth adapter on this context");
+    return (await context.internalAdapter.findUserById(userId)) !== null;
+  } catch (err) {
+    console.error(`[auth] could not confirm the account ${when}: ${errorLabel(err)}`);
+    throw new APIError("SERVICE_UNAVAILABLE", { message: "Could not check your account. Try again.", code: "ACCOUNT_UNREADABLE" });
   }
-  if (!exists) throw new APIError("UNAUTHORIZED", { message: "This account no longer exists.", code: "ACCOUNT_DELETED" });
 }
+
+const accountDeleted = () => new APIError("UNAUTHORIZED", { message: "This account no longer exists.", code: "ACCOUNT_DELETED" });
 
 /**
  * The `/link-social` before hook for a deleted account. The session comes
@@ -207,16 +207,7 @@ export async function refuseDeletedAccount(ctx: AuthCtx): Promise<void> {
   if (ctx.path !== "/link-social") return;
   const session = await getSessionFromCtx(ctx);
   if (!session) return;
-  let exists: boolean;
-  try {
-    exists = await accountExists(session.user.id);
-  } catch (err) {
-    console.error(`[auth] could not confirm the account before linking: ${errorLabel(err)}`);
-    throw new APIError("SERVICE_UNAVAILABLE", { message: "Could not check your account. Try again.", code: "ACCOUNT_UNREADABLE" });
-  }
-  if (!exists) {
-    throw new APIError("UNAUTHORIZED", { message: "This account no longer exists.", code: "ACCOUNT_DELETED" });
-  }
+  if (!(await userRowExists(ctx.context as UserLookup, session.user.id, "before linking"))) throw accountDeleted();
 }
 
 /**

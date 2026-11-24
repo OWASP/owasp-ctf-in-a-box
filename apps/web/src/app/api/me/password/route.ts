@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { readBoundedBody } from "@/lib/bounded-body";
 import { errorLabel } from "@/lib/error-label";
-import { getPlayerForWrite } from "@/lib/player";
+import { accountExists } from "@/lib/account-exists";
+import { getPlayer } from "@/lib/player";
 import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
 
 /**
@@ -42,7 +43,7 @@ function apiErrorCode(err: unknown): string | null {
 }
 
 export async function POST(request: Request) {
-  const player = await getPlayerForWrite(request.headers);
+  const player = await getPlayer(request.headers);
   if (!player) return json({ error: "unauthorized" }, 401);
 
   const newPassword = await readNewPassword(request);
@@ -57,6 +58,10 @@ export async function POST(request: Request) {
   }
 
   try {
+    // The account check sits right before the write, after the body is read:
+    // a deleted player's cached session passes getPlayer, and a slow body
+    // must not widen the gap between the check and the write.
+    if (!(await accountExists(player.id))) return json({ error: "unauthorized" }, 401);
     await auth.api.setPassword({ headers: request.headers, body: { newPassword } });
   } catch (err) {
     const code = apiErrorCode(err);

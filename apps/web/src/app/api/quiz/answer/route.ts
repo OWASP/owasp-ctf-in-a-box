@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getPlayerForWrite } from "@/lib/player";
+import { accountExists } from "@/lib/account-exists";
+import { getPlayer } from "@/lib/player";
 import { logActivity } from "@/lib/activity-log";
 import { notifyFirstBlood } from "@/lib/announce/notify";
 import { isModuleLive } from "@/lib/enabled-modules";
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unavailable" }, { status: 403 });
   }
 
-  const player = await getPlayerForWrite(request.headers);
+  const player = await getPlayer(request.headers);
   if (!player) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const playerId = player.id;
 
@@ -94,6 +95,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
+  // The account check sits right before the write, after the body is read:
+  // a deleted player's cached session passes getPlayer, and a slow body
+  // must not widen the gap between the check and the write.
+  if (!(await accountExists(player.id))) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const result = await answerQuestion(playerId, questionId, choices, { dryRun: preview });
   if (result.ok) {
     // An admin preview (#464): graded by the same script, nothing recorded —

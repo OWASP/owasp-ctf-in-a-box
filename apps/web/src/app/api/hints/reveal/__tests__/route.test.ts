@@ -17,7 +17,8 @@ const { getSession, revealHint, resolveHintConfig, requireLaunchedApi, launchApi
   consumeRateLimit: vi.fn(),
 }));
 
-vi.mock("@/lib/account-exists", () => ({ accountExists: async () => true }));
+const accountExists = vi.hoisted(() => vi.fn<(id: string) => Promise<boolean>>(async () => true));
+vi.mock("@/lib/account-exists", () => ({ accountExists }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/launch", () => ({ requireLaunchedApi, launchApiAccess }));
@@ -57,6 +58,17 @@ beforeEach(() => {
   // route regressed to a second resolveHintConfig() read this mock's 999 would
   // surface and fail the `cost: 10` assertion below.
   resolveHintConfig.mockResolvedValue({ enabled: true, cost: 999 });
+});
+
+describe("a deleted player's still-cached session (#822)", () => {
+  it("401s and charges nothing once the account row is gone", async () => {
+    accountExists.mockResolvedValueOnce(false);
+    revealHint.mockResolvedValue({ ok: true, hint: "x", alreadyOwned: false, spent: 10, cost: 10 });
+    const res = await POST(req({ app: "quiz", id: "q1" }));
+    expect(res.status).toBe(401);
+    expect(accountExists).toHaveBeenCalledWith(ALICE_ID);
+    expect(revealHint).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/hints/reveal rate limiting", () => {

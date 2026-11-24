@@ -18,8 +18,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // carries `server-only` and the Upstash client — inert here (the hook never
 // fires at import time) but the marker import itself throws outside a Server
 // Component, so it is stubbed like every other suite does.
-const accountExists = vi.hoisted(() => vi.fn<(id: string) => Promise<boolean>>(async () => true));
-vi.mock("@/lib/account-exists", () => ({ accountExists }));
 vi.mock("server-only", () => ({}));
 
 const linkOnUserWrite = vi.hoisted(() => vi.fn<(user: unknown) => Promise<void>>(async () => {}));
@@ -289,42 +287,62 @@ describe("user.update.before", () => {
 
 describe("refuseDeletedAccount (/link-social before hook, #822)", () => {
   // The cookie cache outlives an organizer's delete by up to its max age;
-  // linking then would write rows for an account that is gone.
+  // linking then would write rows for an account that is gone. The check asks
+  // better-auth's own adapter, so it reads the store the instance was built on.
   const ID = "5f0c2a1e-7b3d-4c9e-8a21-0d6f4b9e3c71";
-  const ctx = (path: string) => ({ path }) as unknown as Parameters<typeof refuseDeletedAccount>[0];
+  let lookups: string[] = [];
+  let answer: () => Promise<unknown> = async () => null;
+  const ctx = (path: string) =>
+    ({
+      path,
+      context: {
+        internalAdapter: {
+          findUserById: (id: string) => {
+            lookups.push(id);
+            return answer();
+          },
+        },
+      },
+    }) as unknown as Parameters<typeof refuseDeletedAccount>[0];
   const status = async (p: Promise<unknown>) => {
     const err = await p.then(() => null, (e: unknown) => e);
     expect(err).toBeInstanceOf(APIError);
     return (err as APIError).status;
   };
+  beforeEach(() => {
+    lookups = [];
+    answer = async () => null;
+  });
 
   it("refuses a session whose account row is gone", async () => {
     getSessionFromCtx.mockResolvedValue({ user: { id: ID } });
-    accountExists.mockResolvedValueOnce(false);
+    answer = async () => null;
     expect(await status(refuseDeletedAccount(ctx("/link-social")))).toBe("UNAUTHORIZED");
-    expect(accountExists).toHaveBeenCalledWith(ID);
+    expect(lookups).toEqual([ID]);
   });
 
   it("lets an existing account through", async () => {
     getSessionFromCtx.mockResolvedValue({ user: { id: ID } });
-    accountExists.mockResolvedValueOnce(true);
+    answer = async () => ({ id: ID });
     await expect(refuseDeletedAccount(ctx("/link-social"))).resolves.toBeUndefined();
   });
 
-  it("fails closed when the account cannot be checked", async () => {
+  it("fails closed when the account cannot be checked, logging only the label", async () => {
     getSessionFromCtx.mockResolvedValue({ user: { id: ID } });
-    accountExists.mockRejectedValueOnce(new Error("upstash down"));
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    answer = () => Promise.reject(new Error("user lookup: NOAUTH"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await status(refuseDeletedAccount(ctx("/link-social")))).toBe("SERVICE_UNAVAILABLE");
-    err.mockRestore();
+    const logged = errors.mock.calls.map((c) => c.map(String).join(" ")).join("\n");
+    errors.mockRestore();
+    expect(logged).toContain("NOAUTH");
+    expect(logged).not.toContain(ID);
   });
 
   it("leaves other paths and a missing session to the endpoint", async () => {
     getSessionFromCtx.mockResolvedValue(null);
     await expect(refuseDeletedAccount(ctx("/link-social"))).resolves.toBeUndefined();
-    accountExists.mockClear();
     await expect(refuseDeletedAccount(ctx("/sign-in/social"))).resolves.toBeUndefined();
-    expect(accountExists).not.toHaveBeenCalled();
+    expect(lookups).toEqual([]);
   });
 });
 

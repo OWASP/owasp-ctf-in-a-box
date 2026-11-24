@@ -14,6 +14,8 @@ const m = vi.hoisted(() => ({
   upstashEval: vi.fn(),
   realConsume: null as null | ((...a: never[]) => Promise<unknown>),
 }));
+const accountExists = vi.hoisted(() => vi.fn<(id: string) => Promise<boolean>>(async () => true));
+vi.mock("@/lib/account-exists", () => ({ accountExists }));
 vi.mock("server-only", () => ({}));
 const SESSION_DATA = vi.hoisted(() => ({ name: "better-auth.session_data", attributes: { path: "/", httpOnly: true, sameSite: "lax", secure: false, maxAge: 300 } }));
 vi.mock("@/lib/auth", () => ({

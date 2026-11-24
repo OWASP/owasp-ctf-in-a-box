@@ -19,7 +19,8 @@ import { inspect } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 // The activity log, so the dry-run test below can see that nothing was logged.
 const activityLog = vi.hoisted(() => ({ logActivity: vi.fn(async () => {}) }));
-vi.mock("@/lib/account-exists", () => ({ accountExists: async () => true }));
+const accountExists = vi.hoisted(() => vi.fn<(id: string) => Promise<boolean>>(async () => true));
+vi.mock("@/lib/account-exists", () => ({ accountExists }));
 vi.mock("@/lib/activity-log", () => activityLog);
 // The first-blood hook (#590): asserted below, and mocked so no test can
 // reach the real announcer (Redis + Discord).
@@ -313,6 +314,14 @@ describe("POST /api/quiz/answer", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("401s and banks nothing once the account row is gone (#822)", async () => {
+    answerQuestion.mockResolvedValue({ ok: true, correct: true, points: 10 });
+    accountExists.mockResolvedValueOnce(false);
+    const res = await answerPOST(answerReq({ questionId: "q1", choices: ["b"] }));
+    expect(res.status).toBe(401);
+    expect(answerQuestion).not.toHaveBeenCalled();
   });
 
   it("200 with correct:true and points for a correct answer", async () => {

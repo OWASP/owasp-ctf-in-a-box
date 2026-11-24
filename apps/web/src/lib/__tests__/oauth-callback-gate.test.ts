@@ -6,8 +6,6 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const accountExists = vi.hoisted(() => vi.fn<(id: string) => Promise<boolean>>(async () => true));
-vi.mock("@/lib/account-exists", () => ({ accountExists }));
 vi.mock("server-only", () => ({}));
 
 const getGithubLink = vi.hoisted(() => vi.fn(async () => null));
@@ -175,19 +173,18 @@ describe("OAuth callback completion is gated on the GitHub sign-in switch", () =
     expect(db.session).toHaveLength(1);
   });
 
+  // better-auth itself refuses a link whose user row is gone; this pins that,
+  // so a link started before an organizer's delete cannot complete after it.
   it("writes no GitHub account when the player was deleted between starting the link and its callback (#822)", async () => {
     const { db, instance } = build();
     githubSwitch(true);
     const player = await signedInPlayer(instance);
     const flow = await start(instance, "/link-social", "github", player);
-    accountExists.mockResolvedValue(false); // the organizer deletes the account now
-    try {
-      const res = await callback(instance, "github", flow);
-      expect(errorOf(res) ?? String(res.status)).not.toBeNull();
-      expect(db.account.filter((a) => a.providerId === "github")).toEqual([]);
-    } finally {
-      accountExists.mockResolvedValue(true);
-    }
+    db.user.splice(0, db.user.length); // the organizer deletes the account now
+    const res = await callback(instance, "github", flow);
+    expect(res.status).toBe(302);
+    expect(errorOf(res)).toBe("unable_to_link_account");
+    expect(db.account.filter((a) => a.providerId === "github")).toEqual([]);
   });
 
   it("still completes a GitHub link with GitHub sign-in switched off", async () => {

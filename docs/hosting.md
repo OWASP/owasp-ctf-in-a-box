@@ -802,11 +802,28 @@ trusts it only on requests your zone has marked with a secret. Players
 behind one venue NAT still share that public address and its budget, which
 is sized for a room of about 650:
 
+0. **First, HTTPS all the way.** In Cloudflare set **SSL/TLS → Overview** to
+   **Full (strict)** and turn on **SSL/TLS → Edge Certificates → Always Use
+   HTTPS**. The secret travels in a request header, and in plain "Full" mode
+   a visitor's `http://` request reaches the origin over HTTP, where the
+   header can be read on the way and replayed.
 1. Generate a value: `openssl rand -hex 32`.
-2. Put it in `CLOUDFLARE_ORIGIN_SECRET` in `.env` (compose) or `.env.fly`
-   (Fly). On AWS set `behind_cloudflare = true` in `terraform.tfvars` and put
-   the value in SSM as `CLOUDFLARE_ORIGIN_SECRET` (`terraform output
-   next_steps` prints the command).
+2. Put it where the box reads it:
+   - **compose / Fly:** `CLOUDFLARE_ORIGIN_SECRET` in `.env` or `.env.fly`.
+   - **AWS:** the value goes in SSM before `behind_cloudflare` is turned on,
+     because a task that names a missing parameter never starts. On a stack
+     that is already up, put it there with the same command as the other
+     secrets (`terraform output next_steps` prints the prefix, key and
+     region), then set `behind_cloudflare = true`. On a fresh stack, do the
+     first `terraform apply` with `behind_cloudflare = false` (the KMS key and
+     the SSM prefix are created by that apply), put the value, then turn it
+     on:
+
+     ```sh
+     aws ssm put-parameter --region <region> --type SecureString \
+       --key-id <kms alias from next_steps> \
+       --name <ssm_prefix>/CLOUDFLARE_ORIGIN_SECRET --value "<the secret>"
+     ```
 3. In Cloudflare, pick the domain, then **Rules → Transform Rules → Modify
    Request Header → Create rule**: custom filter **Hostname equals** the
    event's host (exactly, for example `ctf.example.org`), action **Set
@@ -816,10 +833,9 @@ is sized for a room of about 650:
    the secret to every other origin in the zone, and whoever runs one of them
    could replay it.
 4. Apply it (Fly: `deploy.sh`; compose: recreate the app container; AWS:
-   `terraform apply` AFTER the SSM value exists, since `behind_cloudflare`
-   changes the app's task definition and a task naming a missing parameter
-   never starts), sign in once, and check the `ctf:rl:signin-ip:*` keys in Redis: the address is
-   yours, not a Cloudflare one (`104.`, `172.6x.`, `162.158.`, `198.41.`).
+   `terraform apply` with `behind_cloudflare = true`), sign in once, and
+   check the `ctf:rl:signin-ip:*` keys in Redis: the address is yours, not a
+   Cloudflare one (`104.`, `172.6x.`, `162.158.`, `198.41.`).
 
 Rotate the secret outside busy periods: change the Cloudflare rule and the
 setting, then restart the app so it reads the new value (Fly: `deploy.sh

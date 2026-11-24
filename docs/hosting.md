@@ -789,11 +789,67 @@ a **trustworthy** per-IP control can live: the app keys its sign-up and
 sign-in limits on the address of the hop that connected to the box's proxy
 (`Fly-Client-IP` on Fly, the rightmost `x-forwarded-for` entry behind Caddy or
 the ALB), never on a value the caller sets. Behind Cloudflare that is the
-edge's address, which is usable for a coarse limit on
-sign-up and sign-in
-([Operations](operations.md#account-sign-up-and-sign-in-limits)) but never a
-client identity. An unauthenticated `curl` loop against `/api/*` therefore
-still costs the box a session lookup per hit unless the edge stops it.
+edge's address, so every player shares one sign-up and one sign-in budget
+until you set up the origin secret below
+([Operations](operations.md#account-sign-up-and-sign-in-limits)). An
+unauthenticated `curl` loop against `/api/*` still costs the box a session
+lookup per hit unless the edge stops it.
+
+**The origin secret, so the limits key on each player's public address.**
+Cloudflare tells the box the player's public address in `CF-Connecting-IP`, but any Cloudflare account's
+Worker can call the origin directly and set that header to anything. The app
+trusts it only on requests your zone has marked with a secret. Players
+behind one venue NAT still share that public address and its budget, which
+is sized for a room of about 650:
+
+0. **First, HTTPS all the way.** In Cloudflare set **SSL/TLS → Overview** to
+   **Full (strict)** and turn on **SSL/TLS → Edge Certificates → Always Use
+   HTTPS**. The secret travels in a request header, and in plain "Full" mode
+   a visitor's `http://` request reaches the origin over HTTP, where the
+   header can be read on the way and replayed.
+1. Generate a value: `openssl rand -hex 32`.
+2. Put it where the box reads it:
+   - **compose / Fly:** `CLOUDFLARE_ORIGIN_SECRET` in `.env` or `.env.fly`.
+   - **AWS:** the value goes in SSM before `behind_cloudflare` is turned on,
+     because a task that names a missing parameter never starts. On a stack
+     that is already up, put it there with the same command as the other
+     secrets (`terraform output next_steps` prints the prefix, key and
+     region), then set `behind_cloudflare = true`. On a fresh stack, do the
+     first `terraform apply` with `behind_cloudflare = false` (the KMS key and
+     the SSM prefix are created by that apply), put the value, then turn it
+     on:
+
+     Read it from a private file, not the command line, so it stays out of
+     shell history and the process list:
+
+     ```sh
+     umask 077; openssl rand -hex 32 | tr -d '\n' > cf-origin-secret.txt
+     aws ssm put-parameter --region <region> --type SecureString \
+       --key-id <kms alias from next_steps> \
+       --name <ssm_prefix>/CLOUDFLARE_ORIGIN_SECRET --value file://cf-origin-secret.txt
+     # Paste the file's contents into the Cloudflare rule (step 3), then:
+     rm cf-origin-secret.txt
+     ```
+3. In Cloudflare, pick the domain, then **Rules → Transform Rules → Modify
+   Request Header → Create rule**: custom filter **Hostname equals** the
+   event's host (exactly, for example `ctf.example.org`), action **Set
+   static**, header name `x-ctf-origin-secret`, value the same secret.
+   Transform Rules are on the Free plan, and "Set" overwrites any copy a
+   client sent. Do not match all incoming requests: the rule would then send
+   the secret to every other origin in the zone, and whoever runs one of them
+   could replay it.
+4. Apply it (Fly: `deploy.sh`; compose: recreate the app container; AWS:
+   `terraform apply` with `behind_cloudflare = true`), sign in once, and
+   check the `ctf:rl:signin-ip:*` keys in Redis: the address is yours, not a
+   Cloudflare one (`104.`, `172.6x.`, `162.158.`, `198.41.`).
+
+Rotate the secret outside busy periods: change the Cloudflare rule and the
+setting, then restart the app so it reads the new value (Fly: `deploy.sh
+--skip-build`; compose: recreate the app container; AWS: put the new value in
+SSM, then force a new deployment of the app service). Until both sides match,
+requests fall back to the shared edge budget: nothing is refused for a wrong
+secret, but a whole room signing in at that moment can exhaust that one
+budget and get `429` until it resets.
 
 **One rate-limiting rule, on the Free plan.** Cloudflare's Free plan includes
 exactly one rate-limiting rule, counted by IP over a 10-second window with a

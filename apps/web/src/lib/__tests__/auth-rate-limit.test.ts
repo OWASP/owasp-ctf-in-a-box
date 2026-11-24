@@ -22,7 +22,7 @@ describe("limitAuthAttempt", () => {
     for (let i = 0; i < 60; i++) await limitAuthAttempt(ctx("/sign-up/email", `${Math.random()}, 10.0.0.1`));
     expect(mocks.consume).toHaveBeenCalledTimes(60);
     for (const c of mocks.consume.mock.calls) {
-      expect(c.slice(0, 4)).toEqual(["signup-ip", "10.0.0.1", 300, 600]);
+      expect(c.slice(0, 4)).toEqual(["signup-ip", "10.0.0.1", 1000, 600]);
       expect(c[4]).toEqual({ failClosed: true });
     }
   });
@@ -30,7 +30,7 @@ describe("limitAuthAttempt", () => {
   it("charges the address then address|username on sign-in", async () => {
     await limitAuthAttempt(ctx("/sign-in/username", "9.9.9.9, 10.0.0.1", { username: " Alice " }));
     expect(mocks.consume.mock.calls.map((c) => c.slice(0, 4))).toEqual([
-      ["signin-ip", "10.0.0.1", 600, 600],
+      ["signin-ip", "10.0.0.1", 2000, 600],
       ["signin-user", "10.0.0.1|alice", 10, 900],
     ]);
   });
@@ -52,7 +52,7 @@ describe("limitAuthAttempt", () => {
   // Each of these writes an OAuth state row, so a flood would fill the store.
   it.each(["/sign-in/social", "/link-social"])("charges the sign-in address bucket on %s", async (path) => {
     await limitAuthAttempt(ctx(path, "9.9.9.9, 10.0.0.1", { provider: "github" }));
-    expect(mocks.consume.mock.calls.map((c) => c.slice(0, 5))).toEqual([["signin-ip", "10.0.0.1", 600, 600, { failClosed: true }]]);
+    expect(mocks.consume.mock.calls.map((c) => c.slice(0, 5))).toEqual([["signin-ip", "10.0.0.1", 2000, 600, { failClosed: true }]]);
   });
 
   it("refuses /sign-in/social with 429 when the address bucket is spent", async () => {

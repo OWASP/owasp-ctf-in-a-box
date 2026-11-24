@@ -80,6 +80,9 @@ output "next_steps" {
          # Secure Development only:
          aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/GITHUB_APP_PRIVATE_KEY --value "$(base64 < app.private-key.pem | tr -d '\n')"
          aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/SCORER_TOKEN           --value "$(openssl rand -hex 24)"
+         # behind_cloudflare = true only, the SAME value as the zone's
+         # x-ctf-origin-secret Transform Rule (docs/hosting.md):
+         aws ssm put-parameter --region $R --type SecureString --key-id $K --name $P/CLOUDFLARE_ORIGIN_SECRET --value "<the value in the Cloudflare rule>"
 
        (REDIS_AUTH_TOKEN and SRH_CONNECTION_STRING are written there by
        Terraform, already under that key. ADMIN_CLAIM_CODE_HASH is written

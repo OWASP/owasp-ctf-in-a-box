@@ -1,4 +1,4 @@
-import { trustedClientIpHeader } from "@/lib/client-ip";
+import { cloudflareOriginSecret, trustedClientIpHeader } from "@/lib/client-ip";
 import { configuredProviders } from "@/lib/sign-in-providers";
 import { checkEventUrl } from "@/lib/secure-url";
 import { errorLabel } from "@/lib/error-label";
@@ -26,6 +26,7 @@ async function startDiscordAnnouncer(): Promise<void> {
  */
 export async function register(): Promise<void> {
   trustedClientIpHeader();
+  cloudflareOriginSecret();
 
   if ((process.env.SCORE_IMAGE ?? "").trim() !== "" && !configuredProviders().includes("github")) {
     console.error(

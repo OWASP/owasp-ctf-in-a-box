@@ -6,7 +6,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/account-exists", () => ({ accountExists: async () => true }));
+const accountExists = vi.hoisted(() => vi.fn<(id: string) => Promise<boolean>>(async () => true));
+vi.mock("@/lib/account-exists", () => ({ accountExists }));
 vi.mock("server-only", () => ({}));
 
 const getGithubLink = vi.hoisted(() => vi.fn(async () => null));
@@ -172,6 +173,21 @@ describe("OAuth callback completion is gated on the GitHub sign-in switch", () =
     expect(errorOf(res)).toBe("PROVIDER_DISABLED");
     expect(setsSession(res)).toBe(false);
     expect(db.session).toHaveLength(1);
+  });
+
+  it("writes no GitHub account when the player was deleted between starting the link and its callback (#822)", async () => {
+    const { db, instance } = build();
+    githubSwitch(true);
+    const player = await signedInPlayer(instance);
+    const flow = await start(instance, "/link-social", "github", player);
+    accountExists.mockResolvedValue(false); // the organizer deletes the account now
+    try {
+      const res = await callback(instance, "github", flow);
+      expect(errorOf(res) ?? String(res.status)).not.toBeNull();
+      expect(db.account.filter((a) => a.providerId === "github")).toEqual([]);
+    } finally {
+      accountExists.mockResolvedValue(true);
+    }
   });
 
   it("still completes a GitHub link with GitHub sign-in switched off", async () => {

@@ -1337,8 +1337,10 @@ until the next master reset, so a deleted player's PRs cannot be claimed by a
 new account. The deleted username is free again. The player's open browser
 can keep showing pages for up to five minutes (the signed session cache), but
 every write from it (team changes, flag and quiz submits, hint buys, profile
-changes, a GitHub link) is refused at once: each write checks that the
-account still exists.
+changes, a GitHub link, including one started before the delete) first checks
+that the account still exists and is refused when it does not. Only a write
+already past that check when the delete lands, a window of milliseconds, can
+still complete.
 A Secure Development score for that player still in flight is refused, so it
 cannot restore their solves: the delete puts the player's scores on hold
 (`ctf:score-hold:<player id>`) before it clears anything, and the scorer

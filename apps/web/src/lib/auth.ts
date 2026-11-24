@@ -167,6 +167,9 @@ export async function gateOAuthCallback(ctx: HookCtx, write: CallbackWrite): Pro
   const state = await getOAuthState().catch(() => null);
   if (state?.link) {
     if (write === "session" || provider !== "github") throw linkNotAllowed();
+    // A link started before an organizer deleted the account can complete
+    // after it: the account row would be written for a user that is gone.
+    if (write === "account") await assertLinkTargetExists(state.link.userId);
     return;
   }
   if (!state) return assertSignInEnabled(provider);
@@ -176,6 +179,21 @@ export async function gateOAuthCallback(ctx: HookCtx, write: CallbackWrite): Pro
     callbackVerdicts.set(state, verdict);
   }
   return verdict;
+}
+
+/** Refuses a link callback whose target account no longer exists, or cannot
+ *  be confirmed (fail closed). */
+async function assertLinkTargetExists(userId: unknown): Promise<void> {
+  let exists = false;
+  if (typeof userId === "string") {
+    try {
+      exists = await accountExists(userId);
+    } catch (err) {
+      console.error(`[auth] could not confirm the account on the link callback: ${errorLabel(err)}`);
+      throw new APIError("SERVICE_UNAVAILABLE", { message: "Could not check your account. Try again.", code: "ACCOUNT_UNREADABLE" });
+    }
+  }
+  if (!exists) throw new APIError("UNAUTHORIZED", { message: "This account no longer exists.", code: "ACCOUNT_DELETED" });
 }
 
 /**

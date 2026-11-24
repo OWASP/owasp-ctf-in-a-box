@@ -6,6 +6,28 @@ title: Scorer
 
 # Scorer
 
+The judge loads and validates only the selected `TARGET`; leaderboard serve mode
+loads the complete rubric and rejects malformed sibling targets. Validate the
+whole catalogue before deploying a scorer image.
+
+Readiness requires a 2xx response. Built-in targets use their health endpoints
+(Juice Shop's application-version endpoint, DVWA's login.php, WebGoat's login,
+and VulnerableApp's allEndPointJson); other targets use `APP_URL` itself.
+`APP_READY_TRIES` accepts integers from 1 to 600 (default 60), and
+`APP_READY_DELAY` accepts integer seconds from 0 to 60 (default 5).
+Only Security Shepherd may set `APP_READY_TRIES=0`, because its trusted
+bring-up script verifies readiness through an admin login. These environment
+settings are organizer-controlled configuration, not authentication credentials.
+A successful HTTP health response is a startup check, not proof of challenge
+correctness; stock, patched, and vacuous scoring gates remain necessary.
+
+When upgrading an existing event, remove `APP_READY_TRIES=0` for every target
+except Security Shepherd, replace non-integer retry settings, and confirm each
+target's readiness URL returns 2xx before rerunning the scorer. Otherwise the
+judge exits with `APP_READY_TRIES must be an integer between 0 and 600`,
+`APP_READY_DELAY must be an integer between 0 and 60`, the Security Shepherd
+exception error, or `never became reachable` after exhausting its retries.
+
 How to run scoring without any upstream access: author a rubric, build your
 own scorer image from the engine in `scorer/`, and close the whole
 scoring loop with components in this repo. For where the scorer sits in the

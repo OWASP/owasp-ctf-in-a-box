@@ -141,7 +141,8 @@ export async function judge(env = process.env, { fetchImpl = fetch } = {}) {
   if (tries === 0 && TARGET !== "securityshepherd") {
     throw new Error("judge: APP_READY_TRIES=0 is reserved for Security Shepherd's bring-up readiness check");
   }
-  const readinessUrl = joinUrl(APP_URL, getTarget(TARGET)?.readinessPath ?? "");
+  const readinessPath = getTarget(TARGET)?.readinessPath;
+  const readinessUrl = readinessPath ? joinUrl(APP_URL, readinessPath) : APP_URL;
   if (tries === 0) {
     console.error(`ctf-score-engine: readiness probe skipped (APP_READY_TRIES=0) — the bring-up script vouched for ${APP_URL}`);
   } else if (!(await waitForApp(readinessUrl, { tries, delayMs, fetchImpl }))) {

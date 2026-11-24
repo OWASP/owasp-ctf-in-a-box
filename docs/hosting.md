@@ -806,17 +806,21 @@ trusts it only on requests your zone has marked with a secret:
    the value in SSM as `CLOUDFLARE_ORIGIN_SECRET` (`terraform output
    next_steps` prints the command).
 3. In Cloudflare, pick the domain, then **Rules → Transform Rules → Modify
-   Request Header → Create rule**: match all incoming requests (or hostname
-   equals the event domain), action **Set static**, header name
-   `x-ctf-origin-secret`, value the same secret. Transform Rules are on the
-   Free plan. "Set" overwrites any copy a client sent.
+   Request Header → Create rule**: custom filter **Hostname equals** the
+   event's host (exactly, for example `ctf.example.org`), action **Set
+   static**, header name `x-ctf-origin-secret`, value the same secret.
+   Transform Rules are on the Free plan, and "Set" overwrites any copy a
+   client sent. Do not match all incoming requests: the rule would then send
+   the secret to every other origin in the zone, and whoever runs one of them
+   could replay it.
 4. Redeploy (Fly: `deploy.sh`; compose: recreate the app container), sign
    in once, and check the `ctf:rl:signin-ip:*` keys in Redis: the address is
    yours, not a Cloudflare one (`104.`, `172.6x.`, `162.158.`, `198.41.`).
 
-Rotate the secret by changing the rule and the setting together; requests
-between the two changes fall back to the shared edge budget, nothing is
-refused.
+Rotate the secret outside busy periods, changing the rule and the setting
+together. Between the two changes requests fall back to the shared edge
+budget: nothing is refused for a wrong secret, but a whole room signing in at
+that moment can exhaust that one budget and get `429` until it resets.
 
 **One rate-limiting rule, on the Free plan.** Cloudflare's Free plan includes
 exactly one rate-limiting rule, counted by IP over a 10-second window with a

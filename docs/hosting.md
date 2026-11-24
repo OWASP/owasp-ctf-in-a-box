@@ -815,8 +815,10 @@ is sized for a room of about 650:
    client sent. Do not match all incoming requests: the rule would then send
    the secret to every other origin in the zone, and whoever runs one of them
    could replay it.
-4. Redeploy (Fly: `deploy.sh`; compose: recreate the app container), sign
-   in once, and check the `ctf:rl:signin-ip:*` keys in Redis: the address is
+4. Apply it (Fly: `deploy.sh`; compose: recreate the app container; AWS:
+   `terraform apply` AFTER the SSM value exists, since `behind_cloudflare`
+   changes the app's task definition and a task naming a missing parameter
+   never starts), sign in once, and check the `ctf:rl:signin-ip:*` keys in Redis: the address is
    yours, not a Cloudflare one (`104.`, `172.6x.`, `162.158.`, `198.41.`).
 
 Rotate the secret outside busy periods: change the Cloudflare rule and the

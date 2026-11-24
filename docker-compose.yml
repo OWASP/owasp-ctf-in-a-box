@@ -53,6 +53,12 @@ services:
       # (docs/hosting.md). Read at runtime by the app, so it must be passed
       # through here or setting it in .env silently does nothing.
       ALLOW_INSECURE_EVENT_URL: ${ALLOW_INSECURE_EVENT_URL:-}
+      # Set when the domain is proxied by Cloudflare, to the value the zone's
+      # Transform Rule puts in x-ctf-origin-secret: the auth rate limits then
+      # key on CF-Connecting-IP for requests that carry it from a Cloudflare
+      # edge (apps/web/src/lib/client-ip.ts). Unset, every player behind one
+      # edge shares one budget.
+      CLOUDFLARE_ORIGIN_SECRET: ${CLOUDFLARE_ORIGIN_SECRET:-}
     # NOT depends_on scorer: the app reads the scorer over HTTP lazily, per
     # request, and depends_on does not wait for readiness anyway — so this
     # only ever expressed a start ORDER. Keeping it would have forced the

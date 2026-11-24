@@ -122,6 +122,15 @@ locals {
     trimspace(var.github_client_id) != "" ? [
       { name = "GITHUB_CLIENT_SECRET", valueFrom = "${local.secret_arn_prefix}/GITHUB_CLIENT_SECRET" },
     ] : [],
+    // Behind Cloudflare only: the value the zone's Transform Rule sets as
+    // x-ctf-origin-secret, which is what lets the auth rate limits trust
+    // CF-Connecting-IP (client-ip.ts). Listed only when used, like the line
+    // above: a task naming a parameter nobody created never starts. The
+    // execution role reads it through its ${ssm_prefix}/* grant (iam.tf,
+    // ReadThisEventsSecrets), like every other parameter here.
+    var.behind_cloudflare ? [
+      { name = "CLOUDFLARE_ORIGIN_SECRET", valueFrom = "${local.secret_arn_prefix}/CLOUDFLARE_ORIGIN_SECRET" },
+    ] : [],
   )
 
   // One SCORER_TOKEN, two readers: the scorer checks it on every POST /score

@@ -374,6 +374,19 @@ ENV
   echo "$app_env" | grep -qx '      TRUSTED_CLIENT_IP_HEADER: fly-client-ip'
 }
 
+@test "render: CLOUDFLARE_ORIGIN_SECRET reaches the app and no other service" {
+  need_docker
+  echo 'CLOUDFLARE_ORIGIN_SECRET=fixture-origin-secret-0123456789abcdef' >> "$BATS_TEST_TMPDIR/env"
+  render
+  # Fly-Client-IP is a Cloudflare edge address behind an orange-cloud domain;
+  # this is what moves the auth rate limits onto CF-Connecting-IP.
+  app_env="$(awk '/^  app:/{f=1;next} /^  [a-z]+:/{f=0} f' "$RENDERED")"
+  rest="$(awk '/^  app:/{f=0;next} /^  [a-z]+:/{f=1} f' "$RENDERED")"
+  [ -n "$app_env" ] && [ -n "$rest" ]
+  echo "$app_env" | grep -qE '^      CLOUDFLARE_ORIGIN_SECRET: "?fixture-origin-secret-0123456789abcdef"?$'
+  [ -z "$(echo "$rest" | grep -F 'fixture-origin-secret')" ]
+}
+
 @test "render: no other service gets TRUSTED_CLIENT_IP_HEADER" {
   need_docker
   render
@@ -958,6 +971,21 @@ EOF
     fi
   done
   echo "$output" | grep -qF 'BETTER_AUTH_SECRET=<redacted>'
+}
+
+@test "dry-run redacts CLOUDFLARE_ORIGIN_SECRET" {
+  need_docker
+  cd "$REPO"
+  echo 'CLOUDFLARE_ORIGIN_SECRET=FIXTUREORIGINSECRETuuuuuuuuuuuuuuuuuu' >> "$BATS_TEST_TMPDIR/env"
+  run ./deploy/fly/deploy.sh --dry-run --env-file "$BATS_TEST_TMPDIR/env"
+  [ "$status" -eq 0 ]
+  # Whoever holds this value can choose the address the auth rate limits key
+  # on, so it must never reach a terminal either.
+  if echo "$output" | grep -qF 'FIXTUREORIGINSECRETuuuu'; then
+    echo "LEAKED in dry-run output: CLOUDFLARE_ORIGIN_SECRET"
+    return 1
+  fi
+  echo "$output" | grep -qF 'CLOUDFLARE_ORIGIN_SECRET=<redacted>'
 }
 
 @test "dry-run still shows WHICH variables get set" {

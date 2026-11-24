@@ -5,7 +5,8 @@ import { username } from "better-auth/plugins";
 import type { BetterAuthOptions } from "better-auth";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
 import { errorLabel } from "@/lib/error-label";
-import { claimGithubLink, getGithubLink, isReleasedAndBlocked, linkOnUserWrite, releaseGithubLinkClaim } from "@/lib/github-link";
+import { LINK_PENDING_PREFIX, claimGithubLink, getGithubLink, isReleasedAndBlocked, linkOnUserWrite, releaseGithubLinkClaim } from "@/lib/github-link";
+import { setWriteFence } from "@/lib/auth-store/write-fence";
 import { recordSignIn } from "@/lib/activity-log";
 import { limitAuthAttempt } from "@/lib/auth-rate-limit";
 import { placeholderEmail } from "@/lib/placeholder-email";
@@ -287,7 +288,11 @@ const linkClaims = new WeakMap<object, { userId: string; token: string }>();
  * under the player's link claim (claimGithubLink), which each callback takes
  * first with its own token and releases once its row is written
  * (releaseGithubLinkClaimOnCallback): a callback that comes second is refused
- * at the claim or finds the first one's row, with nothing written. A retry of
+ * at the claim or finds the first one's row, with nothing written. The
+ * account write is fenced on the claim (the request's write fence, which the
+ * auth route opens), so a callback that stalls past the claim's expiry and
+ * reaches Redis after another one claimed is refused in the write's own
+ * EVAL; a request with no fence to set is refused before writing. A retry of
  * the same GitHub account updates its row and never reaches this hook. A
  * sign-in callback has no `link` and is left alone, so a GitHub sign-in still
  * follows a rename. Any unreadable step fails closed.
@@ -309,6 +314,10 @@ export async function refuseSecondGithubLinkOnCallback(ctx: HookCtx, account: un
   try {
     await assertNoGithubLink(userId);
     await assertNoOtherGithubAccount(ctx, userId, accountId);
+    if (!setWriteFence({ key: `${LINK_PENDING_PREFIX}${userId}`, member: token })) {
+      console.error("[auth] github link callback ran outside a write fence slot; refusing the write");
+      throw githubLinkUnreadable();
+    }
   } catch (err) {
     await releaseClaim(userId, token);
     throw err;
@@ -322,6 +331,9 @@ export async function releaseGithubLinkClaimOnCallback(ctx: HookCtx): Promise<vo
   const held = ctx ? linkClaims.get(ctx) : undefined;
   if (!ctx || !held) return;
   linkClaims.delete(ctx);
+  // Cleared first: a later write in this request is not the account write,
+  // and would be refused once the claim it was fenced on is gone.
+  setWriteFence(null);
   await releaseClaim(held.userId, held.token);
 }
 

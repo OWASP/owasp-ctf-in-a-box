@@ -20,13 +20,16 @@ export const LINK_AT_KEY = "ctf:link:at";
 export const RELINK_BLOCK_KEY = "ctf:relink:blocked";
 // The better-auth user rows hash: a restore checks the account row is still there.
 const AUTH_USER_ROWS = rowsKey(AUTH_PREFIX, "user");
-// String: `ctf:link:pending:<player id>` holds the token of the one profile
-// link callback allowed to write a GitHub account for that player, for at
-// most LINK_PENDING_TTL_MS. Under `ctf:link:*`, so deleting every account
-// sweeps it with the links.
+// Set: `ctf:link:pending:<player id>` holds the token of the one profile link
+// callback allowed to write a GitHub account for that player, for at most
+// LINK_PENDING_TTL_MS. The callback's account write is fenced on that member
+// (auth-store/write-fence.ts), so a write that reaches Redis after the claim
+// lapsed is refused. Under `ctf:link:*`, so deleting every account sweeps it
+// with the links.
 export const LINK_PENDING_PREFIX = "ctf:link:pending:";
-// A claim is released once its account row is written; the expiry only frees
-// one whose callback died between the claim and the write.
+// A claim is released once its account row is written; the expiry frees one
+// whose callback died or stalled between the claim and the write, and the
+// fence then refuses that write.
 export const LINK_PENDING_TTL_MS = 60_000;
 
 /** A stored link time, or null for anything but a safe decimal integer.
@@ -150,24 +153,27 @@ if ARGV[3] ~= '' then redis.call('HSET', KEYS[3], ARGV[1], ARGV[3]) end
 return 'restored'
 `;
 
-/** KEYS[1] pending key; ARGV[1] claim token. Releases the claim only while
- *  this token holds it, so a callback never frees another callback's claim. */
-export const RELEASE_CLAIM_SCRIPT = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('DEL', KEYS[1]) end
+/** KEYS[1] pending key; ARGV[1] claim token, ARGV[2] hold in ms. Claims only
+ *  while no callback holds the key: 1 claimed, 0 held. */
+export const CLAIM_LINK_SCRIPT = `
+if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+redis.call('SADD', KEYS[1], ARGV[1])
+redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[2]))
 return 1
 `;
 
 /**
  * Claims `playerId`'s link callback for one callback, named by its own random
- * `token`. SET NX: while it holds, no other callback can, one for the same
- * GitHub account included. Two link callbacks for one player overlap only
- * when both were started while the player was unlinked, and then both can
- * find no GitHub account on the player before either writes one. The claim is
- * taken before that check and released after the write, so the callback that
- * comes second is refused at the claim or finds the first one's account row,
- * and no second GitHub account is left on the player for a later sign-in to
- * rename the link to. Resolves false when another callback holds the claim.
- * Throws on a Redis error.
+ * `token`: while it holds, no other callback can, one for the same GitHub
+ * account included. Two link callbacks for one player overlap only when both
+ * were started while the player was unlinked, and then both can find no
+ * GitHub account on the player before either writes one. The claim is taken
+ * before that check and released after the write, and the write is fenced on
+ * it, so the callback that comes second is refused at the claim or finds the
+ * first one's account row, and one whose claim lapsed cannot write at all: no
+ * second GitHub account is left on the player for a later sign-in to rename
+ * the link to. Resolves false when another callback holds the claim. Throws
+ * on a Redis error.
  */
 export async function claimGithubLink(
   playerId: string,
@@ -175,16 +181,17 @@ export async function claimGithubLink(
   prefix: string = LINK_PENDING_PREFIX,
   holdMs: number = LINK_PENDING_TTL_MS,
 ): Promise<boolean> {
-  const [reply] = await upstashPipeline([["SET", `${prefix}${playerId}`, token, "NX", "PX", holdMs]]);
-  if (!reply || reply.error) throw new Error(`github link: claim SET failed: ${reply?.error ?? "no reply"}`);
-  if (reply.result !== "OK" && reply.result !== null) throw new Error("github link: unexpected claim reply");
-  return reply.result === "OK";
+  const reply = await upstashEval(CLAIM_LINK_SCRIPT, [`${prefix}${playerId}`], [token, holdMs]);
+  if (reply !== 1 && reply !== 0) throw new Error("github link: unexpected claim reply");
+  return reply === 1;
 }
 
-/** Releases `playerId`'s link claim if `token` holds it. Throws on a Redis
- *  error. */
+/** Releases `playerId`'s link claim if `token` holds it: SREM of this
+ *  callback's member only, so a callback never frees another one's claim, and
+ *  Redis drops the key once it holds none. Throws on a Redis error. */
 export async function releaseGithubLinkClaim(playerId: string, token: string, prefix: string = LINK_PENDING_PREFIX): Promise<void> {
-  await upstashEval(RELEASE_CLAIM_SCRIPT, [`${prefix}${playerId}`], [token]);
+  const [reply] = await upstashPipeline([["SREM", `${prefix}${playerId}`, token]]);
+  if (!reply || reply.error) throw new Error(`github link: claim release failed: ${reply?.error ?? "no reply"}`);
 }
 
 /** A link as TAKE_LINK_SCRIPT removed it: everything a restore needs. */

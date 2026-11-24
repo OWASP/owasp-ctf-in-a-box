@@ -14,6 +14,7 @@ import { authOptions } from "@/lib/auth";
 import * as keys from "@/lib/auth-store/keys";
 import { LINK_AT_KEY, LINK_PENDING_PREFIX, LINK_USER_PREFIX, linkKey } from "@/lib/github-link";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
+import { withWriteFenceSlot } from "@/lib/auth-store/write-fence";
 import { upstashPipeline as pipeline } from "@/lib/upstash";
 import { ADMIN_SETTINGS_KEY } from "@/lib/admin-store";
 import { ACTIVITY_LOG_KEY } from "@/lib/activity-keys";
@@ -105,8 +106,11 @@ async function build() {
     if (!state) throw new Error("link probe: /link-social returned no state");
     const stateCookies = started.headers.getSetCookie().map((c) => c.split(";")[0]);
     const cookie = [session.get("cookie"), ...stateCookies].join("; ");
+    // Inside a write fence slot, as the auth route runs every request.
     return ({ accountId, login, ghEmail }: ProbeBody) =>
-      probe({ body: { accountId, login, ghEmail }, query: { state }, params: { id: "github" }, headers: new Headers({ cookie }) });
+      withWriteFenceSlot(() =>
+        probe({ body: { accountId, login, ghEmail }, query: { state }, params: { id: "github" }, headers: new Headers({ cookie }) }),
+      );
   };
   const link = async ({ userId, ...body }: LinkInput) => (await startLink(userId))(body);
   return { prefix, instance, ctx, link, startLink };
@@ -429,7 +433,7 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
       expect(before.owner).toBe(u1.id);
       // Released once the row was written, so nothing is left to hold up an
       // organizer's unlink and a relink.
-      expect(await redis(["GET", `${LINK_PENDING_PREFIX}${u1.id}`])).toBeNull();
+      expect(await redis(["EXISTS", `${LINK_PENDING_PREFIX}${u1.id}`])).toBe(0);
 
       const err = await completeSecond({ accountId: "gh-6", login: second, ghEmail: "t2@github.example.test" }).then(
         () => null,
@@ -493,6 +497,45 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
       expect(await ia.findAccountByKey({ providerId: "github", accountId: loser })).toBeNull();
     });
 
+    it("refuses the account write of a link callback whose claim lapsed after its checks, and writes no row", async () => {
+      // A callback that stalls past the claim's expiry after passing its
+      // checks must not write: another callback may have claimed and linked
+      // meanwhile. The claim is dropped (as its expiry would) once this
+      // callback has read the player's account rows, so its next step is the
+      // fenced account write.
+      const { ctx, startLink } = await build();
+      const ia = ctx.internalAdapter;
+      const u1 = await kitUser(ia, "lapsed");
+      const login = freshLogin();
+      const complete = await startLink(u1.id);
+      const rowsRead = `:account:by:userId:${u1.id}`;
+      let dropped = false;
+      relay.hook = async (cmds, real) => {
+        const reply = await real(cmds);
+        if (!dropped && cmds.some((c) => c[0] === "SMEMBERS" && String(c[1]).endsWith(rowsRead))) {
+          dropped = true;
+          await real([["DEL", `${LINK_PENDING_PREFIX}${u1.id}`]]);
+        }
+        return reply;
+      };
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const outcome = await complete({ accountId: "gh-11", login, ghEmail: "l@github.example.test" }).then(
+        () => "linked",
+        () => "refused",
+      ).finally(() => {
+        relay.hook = null;
+        errors.mockRestore();
+      });
+
+      expect(dropped).toBe(true);
+      expect(outcome).toBe("refused");
+      expect(await ia.findAccountByKey({ providerId: "github", accountId: "gh-11" })).toBeNull();
+      expect((await ia.findAccounts(u1.id)).filter((a) => a.providerId === "github")).toEqual([]);
+      expect(await redis(["GET", `${LINK_USER_PREFIX}${u1.id}`])).toBeNull();
+      expect((await linkKeys(u1.id, login)).owner).toBeNull();
+    });
+
     it("refuses a second GitHub account for a player whose first link the kit refused, and lets the first retry", async () => {
       // A refused link (another player held the login) keeps its account row
       // with no link. A second account on top of it would let a later sign-in
@@ -519,7 +562,7 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
       expect(err?.body?.code).toBe("GITHUB_ALREADY_LINKED");
       expect((await ia.findAccounts(u1.id)).map((a) => a.accountId)).toEqual(["gh-9"]);
       expect((await linkKeys(u1.id, other)).owner).toBeNull();
-      expect(await redis(["GET", `${LINK_PENDING_PREFIX}${u1.id}`])).toBeNull();
+      expect(await redis(["EXISTS", `${LINK_PENDING_PREFIX}${u1.id}`])).toBe(0);
       await redis(["DEL", linkKey(login)]);
       expect(await link(firstTry)).toEqual({ linked: true });
       expect((await linkKeys(u1.id, login)).owner).toBe(u1.id);

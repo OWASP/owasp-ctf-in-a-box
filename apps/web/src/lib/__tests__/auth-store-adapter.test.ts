@@ -16,7 +16,7 @@ vi.mock("@/lib/upstash", () => ({ upstashPipeline: (cmds: unknown) => pipeline(c
 
 const { redisAdapter } = await import("@/lib/auth-store/redis-adapter");
 const { DEL_ROW_SCRIPT, PUT_ROW_SCRIPT } = await import("@/lib/auth-store/scripts");
-const { withWriteFence } = await import("@/lib/auth-store/write-fence");
+const { setWriteFence, withWriteFence, withWriteFenceSlot } = await import("@/lib/auth-store/write-fence");
 
 type Cmd = (string | number)[];
 
@@ -128,6 +128,25 @@ describe("redisAdapter (mocked pipeline)", () => {
     expect(JSON.stringify(del)).not.toContain("fence:key");
     // Outside the fence nothing extra is sent.
     await adapter.update({ model: "account", where: [w("id", "a1")], update: { password: "new" } });
+    expect(evalArgs()).toHaveLength(7);
+  });
+
+  it("fences the writes after setWriteFence in a slot, until it is cleared, and sets nothing outside one", async () => {
+    const account = { id: "a1", userId: "u", providerId: "credential", accountId: "u", password: "old" };
+    fakeRedis({ a1: JSON.stringify(account) });
+    const update = () => adapter.update({ model: "account", where: [w("id", "a1")], update: { password: "new" } });
+    await withWriteFenceSlot(async () => {
+      await update();
+      expect(evalArgs()).toHaveLength(7);
+      expect(setWriteFence({ key: "fence:key", member: "tok" })).toBe(true);
+      await update();
+      expect(evalArgs().slice(7)).toEqual(["", "0", "fence:key", "tok"]);
+      expect(setWriteFence(null)).toBe(true);
+      await update();
+      expect(evalArgs()).toHaveLength(7);
+    });
+    expect(setWriteFence({ key: "fence:key", member: "tok" })).toBe(false);
+    await update();
     expect(evalArgs()).toHaveLength(7);
   });
 

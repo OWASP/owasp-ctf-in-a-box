@@ -10,7 +10,14 @@ vi.mock("server-only", () => ({}));
 
 const getGithubLink = vi.hoisted(() => vi.fn(async () => null));
 const isReleasedAndBlocked = vi.hoisted(() => vi.fn<(login: string) => Promise<boolean>>(async () => false));
-vi.mock("@/lib/github-link", () => ({ linkOnUserWrite: vi.fn(async () => {}), getGithubLink, isReleasedAndBlocked, claimGithubLink: vi.fn(async () => true), releaseGithubLinkClaim: vi.fn(async () => {}) }));
+vi.mock("@/lib/github-link", () => ({
+  LINK_PENDING_PREFIX: "ctf:link:pending:",
+  linkOnUserWrite: vi.fn(async () => {}),
+  getGithubLink,
+  isReleasedAndBlocked,
+  claimGithubLink: vi.fn(async () => true),
+  releaseGithubLinkClaim: vi.fn(async () => {}),
+}));
 
 const getAdminSettings = vi.hoisted(() => vi.fn<() => Promise<unknown>>());
 vi.mock("@/lib/admin-store", async (orig) => ({
@@ -43,6 +50,7 @@ vi.hoisted(() => {
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { authOptions } from "@/lib/auth";
+import { withWriteFenceSlot } from "@/lib/auth-store/write-fence";
 
 type Row = Record<string, unknown>;
 type Db = { user: Row[]; account: Row[]; session: Row[]; verification: Row[] };
@@ -107,12 +115,15 @@ async function start(instance: Instance, path: "/sign-in/social" | "/link-social
   return { state: state!, cookie: [cookie, cookiesOf(res)].filter(Boolean).join("; ") };
 }
 
+// In a write fence slot, as the auth route runs every request.
 async function callback(instance: Instance, provider: string, flow: { state: string; cookie: string }) {
-  return instance.handler(
-    new Request(`${BASE}/callback/${provider}?code=auth-code&state=${encodeURIComponent(flow.state)}`, {
-      method: "GET",
-      headers: { cookie: flow.cookie, "x-forwarded-for": "10.0.0.1" },
-    }),
+  return withWriteFenceSlot(() =>
+    instance.handler(
+      new Request(`${BASE}/callback/${provider}?code=auth-code&state=${encodeURIComponent(flow.state)}`, {
+        method: "GET",
+        headers: { cookie: flow.cookie, "x-forwarded-for": "10.0.0.1" },
+      }),
+    ),
   );
 }
 

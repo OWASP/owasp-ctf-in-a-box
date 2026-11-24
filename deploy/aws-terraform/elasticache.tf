@@ -132,8 +132,9 @@ resource "aws_elasticache_replication_group" "main" {
 
   // `terraform destroy` deletes the automatic snapshots with the cache, so this
   // one is the only copy of contestant progress that outlives the stack. It
-  // holds flags, logins and sessions: docs/aws.md says how to export and delete
-  // it, and a later destroy under the same `name` fails while it exists.
+  // holds flags, logins and sessions, has no expiry and is billed until an
+  // organizer deletes it by hand: docs/aws.md says how. A later destroy under
+  // the same `name` fails while it exists.
   final_snapshot_identifier = "${var.name}-redis-final"
 
   apply_immediately = true

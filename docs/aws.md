@@ -549,6 +549,15 @@ you want to keep **first**:
    shell in the app container: `wget -qO- "$LEADERBOARD_API_URL/leaderboard"`.
 3. Run `./setup/ctf-setup.sh teardown` for the org, as on any other box.
 
+Then, on a stack first applied before the module took a final snapshot, apply
+once and check the setting is in the state. `terraform destroy` works from the
+applied state, so without this step it deletes the cache with no snapshot:
+
+```sh
+terraform apply   # review: an in-place update of aws_elasticache_replication_group.main
+terraform state show aws_elasticache_replication_group.main | grep final_snapshot_identifier
+```
+
 Then:
 
 ```sh
@@ -556,11 +565,12 @@ terraform destroy
 ```
 
 The final snapshot holds the whole event store, including flags, logins and
-sessions, and is billed until you delete it. Once you are sure you will not
-restore from it, delete it:
+sessions. It has no expiry, `cache_snapshot_retention_days` does not apply to
+it, and it is billed until you delete it. Once you are sure you will not
+restore from it, delete it in the stack's region:
 
 ```sh
-aws elasticache delete-snapshot --snapshot-name <name>-redis-final
+aws elasticache delete-snapshot --region <region> --snapshot-name <name>-redis-final
 ```
 
 A later `terraform destroy` of a stack with the same `name` fails while this

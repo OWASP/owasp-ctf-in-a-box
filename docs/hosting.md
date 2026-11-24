@@ -795,10 +795,12 @@ until you set up the origin secret below
 unauthenticated `curl` loop against `/api/*` still costs the box a session
 lookup per hit unless the edge stops it.
 
-**The origin secret, so the limits key on each player.** Cloudflare tells the
-box who the player is in `CF-Connecting-IP`, but any Cloudflare account's
+**The origin secret, so the limits key on each player's public address.**
+Cloudflare tells the box the player's public address in `CF-Connecting-IP`, but any Cloudflare account's
 Worker can call the origin directly and set that header to anything. The app
-trusts it only on requests your zone has marked with a secret:
+trusts it only on requests your zone has marked with a secret. Players
+behind one venue NAT still share that public address and its budget, which
+is sized for a room of about 650:
 
 1. Generate a value: `openssl rand -hex 32`.
 2. Put it in `CLOUDFLARE_ORIGIN_SECRET` in `.env` (compose) or `.env.fly`

@@ -4047,6 +4047,10 @@ unchanged; a further surface is still its own decision.
 
 ## ADR 67. A Secure Development solve is timed, and judged, by its score comment
 
+**Status.** Accepted; amended by #821: the time is the marker's `judgedAt`
+rather than the comment's last edit, and a solve keeps its earliest time
+rather than its first-written one (see the amendment after **Known edge**).
+
 **Context.** A Secure Development solve was timestamped when the scorer
 received it. Between a contestant's push and that moment sit the Actions run,
 the score comment and the sync poll, about four to five minutes at the
@@ -4079,9 +4083,8 @@ epoch are judged at that time.
   it, marks the comment seen and never re-presents it, and does not count it
   as dropped: it is the rule working, and a counter every pause bumped would
   be a counter nobody reads. Otherwise the solve is recorded with that time,
-  keeping the earliest one (amended by #821 from first-written: verdicts can
-  reach the scorer out of judge order). The #583 tie-break reads the recorded
-  times and does not change.
+  `HSETNX` keeping the first one. The #583 tie-break reads the recorded times
+  and does not change.
 - **The freeze is recorded as intervals.** The settings hash held only a
   flag, which cannot say whether a past instant was frozen. The settings
   update script now keeps a pause log beside it, in the same atomic script:
@@ -4111,7 +4114,7 @@ epoch are judged at that time.
 **Known edge.** The score comment is upserted per PR, so `updated_at` is the
 time of its LAST run. A solve first ingested from a later re-run is timed by
 that re-run, not by the run that first passed. Solves ingested earlier keep
-their time (the solve write keeps the earliest). A PR re-run after the end of the event, carrying a
+their time (`HSETNX`). A PR re-run after the end of the event, carrying a
 solve that was never ingested, is refused as outside the window, even if its
 first passing run was in time. sync reads each comment within a poll or two
 of it being written, so this only bites when sync was down across a re-run.
@@ -4130,7 +4133,10 @@ when the marker has no `judgedAt` (a scorer image that predates it) or names
 a time after the comment, which no honest run produces; it skips a verdict
 whose `judgedAt` predates the reset epoch whatever the edit time says. The
 **Known edge** above now reads by the judge run, not the comment's last
-write: a re-run that does judge stamps its own time.
+write: a re-run that does judge stamps its own time. Because sync presents
+verdicts in comment-edit order, which is no longer always judge order, the
+solve write keeps the earlier of the stored and incoming time instead of
+`HSETNX`'s first-written one; a replay is still a no-op.
 
 **Upgrade order.** Either service can be upgraded first. A new scorer with an
 old sync gets no `at` and keeps the arrival-time rule: the effective freeze

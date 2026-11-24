@@ -329,13 +329,12 @@ describe("refuseDeletedAccount (/link-social before hook, #822)", () => {
 
   it("fails closed when the account cannot be checked, logging only the label", async () => {
     getSessionFromCtx.mockResolvedValue({ user: { id: ID } });
-    answer = () => Promise.reject(new Error("user lookup: NOAUTH"));
+    answer = () => Promise.reject(decoratedError("user lookup: NOAUTH"));
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await status(refuseDeletedAccount(ctx("/link-social")))).toBe("SERVICE_UNAVAILABLE");
-    const logged = errors.mock.calls.map((c) => c.map(String).join(" ")).join("\n");
+    expectLabelOnly(errors, { label: "NOAUTH" });
+    expect(errors.mock.calls.flat().map(String).join(" ")).not.toContain(ID);
     errors.mockRestore();
-    expect(logged).toContain("NOAUTH");
-    expect(logged).not.toContain(ID);
   });
 
   it("leaves other paths and a missing session to the endpoint", async () => {

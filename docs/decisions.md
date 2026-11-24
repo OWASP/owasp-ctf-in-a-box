@@ -4047,6 +4047,10 @@ unchanged; a further surface is still its own decision.
 
 ## ADR 67. A Secure Development solve is timed, and judged, by its score comment
 
+**Status.** Accepted; amended by #821: the time is the marker's `judgedAt`
+rather than the comment's last edit, and a solve keeps its earliest time
+rather than its first-written one (see the amendment after **Known edge**).
+
 **Context.** A Secure Development solve was timestamped when the scorer
 received it. Between a contestant's push and that moment sit the Actions run,
 the score comment and the sync poll, about four to five minutes at the
@@ -4114,6 +4118,26 @@ their time (`HSETNX`). A PR re-run after the end of the event, carrying a
 solve that was never ingested, is refused as outside the window, even if its
 first passing run was in time. sync reads each comment within a poll or two
 of it being written, so this only bites when sync was down across a re-run.
+
+**Amended (#821): the verdict's time, not the comment's last edit.** The
+score comment is upserted, and not only by judging: a push inside the re-run
+cooldown is not judged, but the workflow appends a "not scored" note to the
+existing comment. That edit moves `updated_at` and leaves the previous marker
+in place, so a verdict judged while frozen, before the scoring start or
+before a reset was re-dated into a live window and counted (found in the
+v2.0.0 end-to-end test). The judge now writes `judgedAt` (the run's own time,
+ISO 8601) into the marker, and `at` is that value. It comes from the same
+judge output as the score, so it is no more forgeable than the score itself,
+the property this ADR rests on. sync uses the comment's `updated_at` only
+when the marker has no `judgedAt` (a scorer image that predates it) or its
+`judgedAt` is a full second or more after the comment (`updated_at` has
+whole-second precision), which no honest run produces; it skips a verdict
+whose `judgedAt` predates the reset epoch whatever the edit time says. The
+**Known edge** above now reads by the judge run, not the comment's last
+write: a re-run that does judge stamps its own time. Because sync presents
+verdicts in comment-edit order, which is no longer always judge order, the
+solve write keeps the earlier of the stored and incoming time instead of
+`HSETNX`'s first-written one; a replay is still a no-op.
 
 **Upgrade order.** Either service can be upgraded first. A new scorer with an
 old sync gets no `at` and keeps the arrival-time rule: the effective freeze

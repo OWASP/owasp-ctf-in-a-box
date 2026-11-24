@@ -456,8 +456,9 @@ resumes where the old one stopped:
   "srh restarts" above); sync then resumes on its own.
 
 Only deleting `ctf:sync:state` makes sync re-read every score comment from
-the start. That is safe for totals, because the scorer writes each solve with
-`HSETNX`, but it undoes any per-contestant reset and zeroes the counters.
+the start. That is safe for totals, because the scorer keeps each solve's
+earliest time and a replay adds nothing, but it undoes any per-contestant
+reset and zeroes the counters.
 
 To restart sync yourself, for example after you fix its configuration:
 

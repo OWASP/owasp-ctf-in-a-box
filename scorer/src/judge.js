@@ -64,9 +64,13 @@ export function progressBar(pct) {
 // the rubric) the table is replaced by a short note, but the counts and the
 // hidden ctf-score marker — which carries the full `solved` list the leaderboard
 // reads — are unchanged, so the team view keeps complete detail either way.
-export function renderReport({ challenges, solved, author, target, pr, sha, disclose = true }) {
+export function renderReport({ challenges, solved, author, target, pr, sha, judgedAt, disclose = true }) {
   const done = new Set(solved);
-  const marker = `<!-- ctf-score: ${JSON.stringify({ author, target, solved, pr, sha })} -->`;
+  // judgedAt is when THIS verdict was produced. sync scores the verdict at it
+  // rather than at the comment's updated_at, which the workflow also moves when
+  // it edits the comment without judging (the cooldown note).
+  const fields = typeof judgedAt === "string" ? { author, target, solved, pr, sha, judgedAt } : { author, target, solved, pr, sha };
+  const marker = `<!-- ctf-score: ${JSON.stringify(fields)} -->`;
   const totalPoints = challenges.reduce((sum, c) => sum + c.points, 0);
   const earnedPoints = challenges.reduce((sum, c) => sum + (done.has(c.id) ? c.points : 0), 0);
   const pct = totalPoints ? Math.round((earnedPoints / totalPoints) * 100) : 0;
@@ -192,7 +196,7 @@ export async function judge(env = process.env, { fetchImpl = fetch } = {}) {
   // for local/acceptance callers that run the judge directly.
   const outDir = env.CTF_OUT_DIR ?? env.GITHUB_WORKSPACE ?? "/github/workspace";
   const reportPath = join(outDir, "ctf-score.md");
-  writeFileSync(reportPath, renderReport({ challenges, solved, author, target: TARGET, pr, sha, disclose }));
+  writeFileSync(reportPath, renderReport({ challenges, solved, author, target: TARGET, pr, sha, judgedAt: new Date().toISOString(), disclose }));
 
   console.error(`ctf-score-engine: ${TARGET} judged — ${solved.length}/${challenges.length} patched (${reportPath})`);
   return { solved, total: challenges.length, reportPath };

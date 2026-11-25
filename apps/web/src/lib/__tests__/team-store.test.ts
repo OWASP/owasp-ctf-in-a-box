@@ -351,7 +351,7 @@ describe("registration window", () => {
       mocks.upstashEval.mockResolvedValueOnce("ok");
       const result = await store.createTeam("octocat", "Red Team");
       expect(result).toEqual({ ok: true, team: "red-team" });
-      expect(spy).toHaveBeenCalledWith(expect.stringContaining("isRegistrationClosed"), expect.stringContaining("redis down"));
+      expect(spy).toHaveBeenCalledWith(expect.stringContaining("team windows"), expect.stringContaining("redis down"));
     } finally {
       spy.mockRestore();
     }
@@ -366,7 +366,7 @@ describe("registration window", () => {
       mocks.upstashEval.mockResolvedValueOnce("ok");
       const result = await store.createTeam("octocat", "Red Team");
       expect(result).toEqual({ ok: true, team: "red-team" });
-      expect(spy).toHaveBeenCalledWith(expect.stringContaining("isRegistrationClosed"), expect.stringContaining("WRONGTYPE"));
+      expect(spy).toHaveBeenCalledWith(expect.stringContaining("team windows"), expect.stringContaining("WRONGTYPE"));
     } finally {
       spy.mockRestore();
     }
@@ -1473,6 +1473,17 @@ describe("team changes after scoring closes (#824)", () => {
     });
     windows(PAST);
     expect(await store.disbandTeam("captain", "red-team")).toEqual({ ok: false, error: store.SCORING_CLOSED_TEAM_ERROR });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("refuses joining, creating and playing solo once scoring has closed, so banked solves cannot enter the final standings", async () => {
+    const store = await loadStore(true);
+    windows(PAST);
+    expect(await store.joinTeam("octocat", "somecode")).toEqual({ ok: false, error: store.SCORING_CLOSED_TEAM_ERROR });
+    windows(PAST);
+    expect(await store.createTeam("octocat", "Late Team")).toEqual({ ok: false, error: store.SCORING_CLOSED_TEAM_ERROR });
+    windows(PAST);
+    expect(await store.createSoloTeam("octocat", "octocat")).toEqual({ ok: false, error: store.SCORING_CLOSED_TEAM_ERROR });
     expect(mocks.upstashEval).not.toHaveBeenCalled();
   });
 

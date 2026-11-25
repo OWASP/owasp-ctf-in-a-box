@@ -209,11 +209,14 @@ until it is confirmed, and an organizer can put the player back from
 **Support → Add to team** (see below).
 
 **Once scoring has closed, teams are final.** After **Scoring closes**
-(`scoringEndsAt`) has passed, a player cannot leave and a captain cannot
-remove a member or disband, confirmed or not: each would move points off the
-final standings. The request is refused with "Scoring has closed: teams are
-final". An organizer can still move people from **Support**. Before launch
-and during play nothing changes.
+(`scoringEndsAt`) has passed, a player cannot leave, join, create a team or
+play solo, and a captain cannot remove a member, disband, rename or issue a
+new code, confirmed or not: each would change the final standings (a join
+would carry banked Secure Development solves onto a team). The request is
+refused with "Scoring has closed: teams are final". An organizer can still
+move people from **Support**. Before launch and during play nothing changes.
+If the settings read fails, these actions are allowed and the failure is
+logged, the same fail-open direction as the registration check.
 
 ![A contestant's profile: the header shows their points plus one done-out-of-available stat per enabled module, and the team card below carries the join code, invite link and captain controls](assets/profile.jpg)
 

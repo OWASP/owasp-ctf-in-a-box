@@ -256,28 +256,29 @@ async function setMockTeam(slug: string): Promise<TeamActionResult> {
   return { ok: true, team: slug };
 }
 
-/** True when the organizer has closed the team-registration window. The
- *  admin store stores "0" for closed and leaves the field absent (⇒ open) by
- *  default, so a single HGET is enough. Roster-shrinking actions (leaveTeam)
- *  are exempt — players can always leave — so this guard is only applied to
- *  team-forming and captain roster mutations.
- *
- *  Fails OPEN on either read-error shape: a transport failure
- *  (`upstashPipeline` throws) or a resolved per-command error (decodes as
- *  every field absent, same as the `Array.isArray` guard below). Same
- *  reasoning as `resolveTeamMaxMembers` above it — a Redis blip must not
- *  itself block registration, and the join/create Lua script still validates
- *  every real invariant (one-team-per-player, capacity, name uniqueness)
- *  atomically regardless of what this check decided. */
-async function isRegistrationClosed(): Promise<boolean> {
-  return (await readTeamWindows()).registrationClosed;
+/** The refusal for a team-forming or roster change, or null when allowed:
+ *  scoring over first (teams are final, and a join would carry banked Secure
+ *  Development solves into the final standings), then registration closed.
+ *  Leaving, removing a member and disbanding are exits and skip the
+ *  registration check (they confirm instead), but not the scoring one. */
+async function teamWindowError(): Promise<string | null> {
+  const w = await readTeamWindows();
+  if (w.scoringOver) return SCORING_CLOSED_TEAM_ERROR;
+  return w.registrationClosed ? REGISTRATION_CLOSED_ERROR : null;
 }
 
 /** The registration window and whether scoring has ended, in one HMGET.
- *  `scoringOver` is true only after `scoringEndsAt` has passed: an event that
- *  has not launched yet is not over, so players can still leave before it.
- *  Both fail OPEN for the reason above; a Redis blip must not trap a player
- *  on a team during play. */
+ *  Registration is closed by the organizer's toggle ("0"; the field is absent,
+ *  i.e. open, by default) or outside its scheduled window. `scoringOver` is
+ *  true only after `scoringEndsAt` has passed: an event that has not launched
+ *  yet is not over.
+ *
+ *  Fails OPEN on either read-error shape: a transport failure
+ *  (`upstashPipeline` throws) or a resolved per-command error (decodes as
+ *  every field absent). Same reasoning as `resolveTeamMaxMembers` — a Redis
+ *  blip must not itself block registration or trap a player on a team, and
+ *  the join/create Lua script still validates every real invariant
+ *  (one-team-per-player, capacity, name uniqueness) atomically. */
 async function readTeamWindows(): Promise<{ registrationClosed: boolean; scoringOver: boolean }> {
   try {
     const [res] = await upstashPipeline([
@@ -288,7 +289,7 @@ async function readTeamWindows(): Promise<{ registrationClosed: boolean; scoring
       // transport failure, so it must be detected explicitly before the
       // Array.isArray decode below, which would otherwise treat it as
       // "every field absent" silently. Same fail-open verdict, but logged.
-      console.error("isRegistrationClosed: settings read failed, failing open:", errorLabel(new Error(res.error)));
+      console.error("team windows: settings read failed, failing open:", errorLabel(new Error(res.error)));
       return { registrationClosed: false, scoringOver: false };
     }
     const [open, startsAt, endsAt, scoringEndsAt] = Array.isArray(res.result) ? (res.result as (string | null)[]) : [];
@@ -298,7 +299,7 @@ async function readTeamWindows(): Promise<{ registrationClosed: boolean; scoring
     const scoringOver = outsideWindow(Date.now(), null, scoringEndsAt ?? null);
     return { registrationClosed, scoringOver };
   } catch (err) {
-    console.error("isRegistrationClosed: settings read failed, failing open:", errorLabel(err));
+    console.error("team windows: settings read failed, failing open:", errorLabel(err));
     return { registrationClosed: false, scoringOver: false };
   }
 }
@@ -397,7 +398,8 @@ export async function createTeam(playerId: string, name: string): Promise<TeamAc
   // with neither ("Команда", "赤") has no id; say so, not "required".
   if (!slug) return { ok: false, error: "A team name needs at least one letter a–z or digit 0–9" };
   if (!TEAM_WRITES_ENABLED) return setMockTeam(slug);
-  if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
+  const closed = await teamWindowError();
+  if (closed) return { ok: false, error: closed };
 
   const verdict = await attemptCreate(playerId, trimmed, slug);
   if (verdict === "already-on-team") return { ok: false, error: "Leave your current team before creating one" };
@@ -434,7 +436,8 @@ export async function createSoloTeam(playerId: string, name: string): Promise<Te
   // id-derived name keeps the one-click promise for those players too.
   const base = slugify(name) || `player-${playerId.slice(0, 8)}`;
   if (!TEAM_WRITES_ENABLED) return setMockTeam(base);
-  if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
+  const closed = await teamWindowError();
+  if (closed) return { ok: false, error: closed };
 
   // A display name can outrun the 32-character team name, so it is NOT
   // automatically a legal team name — clamped here, leaving room for the
@@ -467,7 +470,8 @@ export async function joinTeam(playerId: string, code: string): Promise<TeamActi
   const trimmedCode = code.trim();
   if (!trimmedCode) return { ok: false, error: "Join code is required" };
   if (!TEAM_WRITES_ENABLED) return setMockTeam(slugify(trimmedCode));
-  if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
+  const closed = await teamWindowError();
+  if (closed) return { ok: false, error: closed };
 
   const normalizedCode = trimmedCode.toLowerCase();
   const [codeRes] = await upstashPipeline([["GET", joinCodeKey(normalizedCode)]]);
@@ -570,7 +574,8 @@ export async function renameTeam(captainId: string, slug: string, newName: strin
   if (!checked.ok) return checked;
   const trimmed = checked.name;
   const newSlug = slugify(trimmed) || slug;
-  if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
+  const closed = await teamWindowError();
+  if (closed) return { ok: false, error: closed };
 
   const verdict = await upstashEval(RENAME_SCRIPT, [teamKey(slug), teamKey(newSlug)], [captainId, trimmed]);
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };
@@ -619,7 +624,8 @@ export async function disbandTeam(captainId: string, slug: string): Promise<Team
 /** Captain-only: invalidates the current join code and issues a new one. */
 export async function regenerateCode(captainId: string, slug: string): Promise<JoinCodeResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
-  if (await isRegistrationClosed()) return { ok: false, error: REGISTRATION_CLOSED_ERROR };
+  const closed = await teamWindowError();
+  if (closed) return { ok: false, error: closed };
   const newCode = await generateUniqueJoinCode();
 
   const verdict = await upstashEval(

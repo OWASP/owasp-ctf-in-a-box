@@ -686,10 +686,10 @@ test("a stop mid-batch submits nothing more and leaves the cursor at the first c
   const f = async (url, opts) => {
     const u = String(url);
     if (u.includes("/issues/comments")) {
-      // GitHub's `since` is inclusive (docs/architecture.md), which the cursor
-      // relies on to read the first unhandled comment again.
+      // An EXCLUSIVE `since`, as GitHub documents it: the first unhandled
+      // comment is read again only because the request overlaps the cursor.
       const since = new URL(u).searchParams.get("since");
-      const page = [c1, c2].filter((c) => !since || c.updated_at >= since);
+      const page = [c1, c2].filter((c) => !since || Date.parse(c.updated_at) > Date.parse(since));
       return new Response(JSON.stringify(page), { status: 200 });
     }
     if (u.endsWith("/score")) {

@@ -89,6 +89,10 @@ const comment = (id, updatedAt, login = "alice") => ({
   body: `<!-- ctf-score: ${JSON.stringify({ target: "vampi", pr: id, author: login, solved: ["api1"] })} -->`,
 });
 
+/** The `since` a poll sends for a stored cursor: one second before it
+ *  (sync/src/github.js), so a comment at the cursor is read again. */
+const polledFrom = (cursor) => new Date(Date.parse(cursor) - 1000).toISOString();
+
 /** A GitHub + scorer stand-in for the VAmPI repo that honours `since` the way
  *  the real API does (inclusive), and counts every score POST it receives. */
 function fakeWorld(comments) {
@@ -162,7 +166,7 @@ test("a restart with no disk resumes from the cursor stored in Redis and re-inge
   // Second task on a FRESH disk (Fargate): nothing on the filesystem at all.
   const world2 = fakeWorld(comments);
   await runMain({ cfg: cfgFor(tmp()), srh, world: world2 });
-  assert.deepEqual(world2.polls, ["2026-10-01T10:05:00Z"], "polled from the stored cursor, not from the beginning");
+  assert.deepEqual(world2.polls, [polledFrom("2026-10-01T10:05:00Z")], "polled from the stored cursor, not from the beginning");
   assert.equal(world2.posts.length, 0, "a restart must not re-submit comments it already ingested");
 });
 
@@ -214,7 +218,7 @@ test("an unreadable Redis at startup holds the poller: no tick, loud log, retry 
   const holds = logErr.filter((m) => /ctf:sync:state/.test(m) && /not polling/.test(m));
   assert.equal(holds.length, 2, `expected two hold lines, got ${JSON.stringify(logErr)}`);
   assert.deepEqual(sleeps, [1000, 1000, sleeps[2]]);
-  assert.deepEqual(world.polls, ["2026-10-01T10:05:00Z"], "once readable, it polls from the STORED cursor");
+  assert.deepEqual(world.polls, [polledFrom("2026-10-01T10:05:00Z")], "once readable, it polls from the STORED cursor");
   assert.equal(world.posts.length, 0);
 });
 
@@ -258,7 +262,7 @@ test("upgrade: with no Redis state yet, an existing state.json seeds it once and
   const world = fakeWorld([comment(1, "2026-10-01T10:00:00Z"), comment(2, "2026-10-01T10:05:00Z")]);
   const { logErr } = await runMain({ cfg, srh, world });
 
-  assert.deepEqual(world.polls, ["2026-10-01T10:05:00Z"], "the file's cursor carried over");
+  assert.deepEqual(world.polls, [polledFrom("2026-10-01T10:05:00Z")], "the file's cursor carried over");
   assert.equal(world.posts.length, 0);
   assert.equal(stored(srh).ingested, 5);
   assert.equal(stored(srh).dropped, 1);
@@ -333,7 +337,7 @@ test("upgrade: a legacy file that cannot be moved aside holds the poller until t
   const holds = logErr.filter((m) => /could not move/.test(m) && /not polling/.test(m));
   assert.equal(holds.length, 1, JSON.stringify(logErr));
   assert.equal(stored(srh).ingested, 2, "the seed reached Redis before the failed move");
-  assert.deepEqual(world.polls, ["2026-10-01T10:05:00Z"], "after the move it polls once, from the carried-over cursor");
+  assert.deepEqual(world.polls, [polledFrom("2026-10-01T10:05:00Z")], "after the move it polls once, from the carried-over cursor");
   assert.equal(world.posts.length, 0);
   assert.equal(existsSync(cfg.statePath), false);
   assert.equal(existsSync(`${cfg.statePath}.migrated`), true);

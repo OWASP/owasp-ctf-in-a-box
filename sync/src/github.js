@@ -11,7 +11,13 @@ export async function fetchNewScoreComments(cfg, repo, cursor, fetchImpl = fetch
   url.searchParams.set("per_page", "100");
   url.searchParams.set("sort", "updated");
   url.searchParams.set("direction", "asc");
-  if (cursor.since) url.searchParams.set("since", cursor.since);
+  // One second of overlap: GitHub documents `since` as "updated after", and
+  // the cursor can name the very comment still to be read (a failed submit,
+  // a stop mid-tick). Whatever the overlap re-reads is already marked seen.
+  if (cursor.since) {
+    const ms = Date.parse(cursor.since);
+    url.searchParams.set("since", Number.isFinite(ms) ? new Date(ms - 1000).toISOString() : cursor.since);
+  }
 
   const token = await cfg.getToken(fetchImpl);
   const headers = {

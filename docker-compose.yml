@@ -221,14 +221,16 @@ services:
     # back. unless-stopped would behave the same here; on-failure is kept as
     # the narrower policy.
     restart: on-failure
-    # A SIGTERM ends the tick in progress at its next comment, then saves the
-    # cursor with up to three retries: about 43 s at the store's 10 s timeout
-    # (main() in sync/src/index.js), plus the one comment in hand. A kill
-    # before that save rewinds the cursor, and a re-read can bring back a solve
-    # a per-contestant reset removed since, so this must cover it.
-    # deploy/fly/fly.toml's kill_timeout and the ECS stopTimeout in
-    # deploy/aws-terraform/ecs.tf must stay at or above it.
-    stop_grace_period: 90s
+    # A SIGTERM ends the tick at its next comment or held score, then saves the
+    # cursor with up to three retries (main() in sync/src/index.js). Worst
+    # case: the one item in hand, at most three 10 s Redis reads and a 40 s
+    # scorer POST (or a 15 s GitHub read), then about 43 s of saving, near
+    # 113 s. A kill before that save rewinds the cursor, and a re-read can
+    # bring back a solve a per-contestant reset removed since, so this must
+    # cover it. deploy/fly/fly.toml's kill_timeout and the ECS stopTimeout in
+    # deploy/aws-terraform/ecs.tf must stay at or above it (120 s is
+    # Fargate's maximum).
+    stop_grace_period: 120s
     environment:
       # The org the poller reads score comments from. sync refuses to start
       # when it is empty, logging `ctf-sync: GITHUB_ORG is not set` — so it

@@ -1,3 +1,4 @@
+import { GITHUB_TIMEOUT_MS } from "./github.js";
 import crypto from "node:crypto";
 
 const b64url = (input) => Buffer.from(input).toString("base64url");
@@ -36,7 +37,11 @@ export function makeAppAuth({ appId, privateKey, installationId, org, apiUrl = "
   let instId = installationId;
 
   async function ghJson(url, opts, what) {
-    const res = await opts.fetchImpl(url, { method: opts.method, headers: { authorization: `Bearer ${opts.jwt}`, ...GH_HEADERS } });
+    const res = await opts.fetchImpl(url, {
+      method: opts.method,
+      headers: { authorization: `Bearer ${opts.jwt}`, ...GH_HEADERS },
+      signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
+    });
     if (!res.ok) throw new Error(`GitHub ${res.status} ${what}`);
     return res.json();
   }
@@ -52,6 +57,7 @@ export function makeAppAuth({ appId, privateKey, installationId, org, apiUrl = "
       const res = await fetchImpl(`${apiUrl}/orgs/${encodeURIComponent(org)}/installation`, {
         method: "GET",
         headers: { authorization: `Bearer ${jwt}`, ...GH_HEADERS },
+        signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
       });
       if (res.status === 404) {
         throw new Error(`GitHub App is not installed on ${org}; install it there, or set GITHUB_APP_INSTALLATION_ID`);

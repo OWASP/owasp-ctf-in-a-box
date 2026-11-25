@@ -9,9 +9,16 @@
  *     a human.
  * Anything else throws, and the caller re-presents the comment next tick.
  */
+// Above the scorer's own 35 s drain cap (createDrain in scorer/src/serve.js),
+// so a slow write is not abandoned while the scorer is still finishing it. A
+// timeout throws like any network failure: the comment is re-presented, and a
+// write that landed anyway keeps its earliest time.
+export const SUBMIT_TIMEOUT_MS = 40_000;
+
 export async function submitScore(cfg, payload, fetchImpl = fetch) {
   const res = await fetchImpl(`${cfg.scorerUrl}/score`, {
     method: "POST",
+    signal: AbortSignal.timeout(SUBMIT_TIMEOUT_MS),
     headers: {
       authorization: `Bearer ${cfg.scorerToken}`,
       "content-type": "application/json",

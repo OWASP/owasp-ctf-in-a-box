@@ -685,7 +685,13 @@ test("a stop mid-batch submits nothing more and leaves the cursor at the first c
   const c2 = { ...ghComment(2), updated_at: "2026-08-13T12:00:00Z" };
   const f = async (url, opts) => {
     const u = String(url);
-    if (u.includes("/issues/comments")) return new Response(JSON.stringify([c1, c2]), { status: 200, headers: { etag: 'W/"e"' } });
+    if (u.includes("/issues/comments")) {
+      // GitHub's `since` is inclusive (docs/architecture.md), which the cursor
+      // relies on to read the first unhandled comment again.
+      const since = new URL(u).searchParams.get("since");
+      const page = [c1, c2].filter((c) => !since || c.updated_at >= since);
+      return new Response(JSON.stringify(page), { status: 200 });
+    }
     if (u.endsWith("/score")) {
       posts.push(JSON.parse(opts.body));
       stop = true; // SIGTERM lands while the first comment is being submitted
@@ -720,4 +726,15 @@ test("a stop before a target is polled leaves that target untouched", async () =
   await tick(CFG, state, { fetchImpl: f, log: () => {}, shouldStop: () => true });
   assert.equal(fetched, 0);
   assert.equal(state.repos.DVWA, undefined);
+});
+
+test("the GitHub poll is bounded by a timeout signal", async () => {
+  let signal;
+  const f = async (url, opts) => {
+    signal = opts.signal;
+    return new Response("[]", { status: 200 });
+  };
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {} });
+  assert.ok(signal instanceof AbortSignal, "the poll request carries an abort signal");
+  assert.equal(signal.aborted, false);
 });

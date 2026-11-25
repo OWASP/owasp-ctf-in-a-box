@@ -570,10 +570,10 @@ resource "aws_ecs_task_definition" "sync" {
     image     = var.sync_image
     essential = true
 
-    // Covers the final cursor save and its retries after SIGTERM, like the
-    // compose stop_grace_period (main() in sync/src/index.js). 120 is
+    // Covers the item in hand and the final cursor save after SIGTERM, like
+    // the compose stop_grace_period (main() in sync/src/index.js). 120 is
     // Fargate's maximum.
-    stopTimeout = 90
+    stopTimeout = 120
 
     environment = [
       { name = "UPSTASH_REDIS_REST_URL", value = local.upstash_url },

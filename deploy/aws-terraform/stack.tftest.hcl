@@ -335,8 +335,8 @@ run "secure_development_event_runs_scorer_and_sync" {
   }
 
   assert {
-    condition     = jsondecode(aws_ecs_task_definition.sync[0].container_definitions)[0].stopTimeout == 90
-    error_message = "sync needs a 90 s stopTimeout so its final cursor save is not killed at Fargate's 30 s default (docker-compose.yml's stop_grace_period)."
+    condition     = jsondecode(aws_ecs_task_definition.sync[0].container_definitions)[0].stopTimeout == 120
+    error_message = "sync needs a 120 s stopTimeout so its final cursor save is not killed at Fargate's 30 s default (docker-compose.yml's stop_grace_period)."
   }
 
   assert {

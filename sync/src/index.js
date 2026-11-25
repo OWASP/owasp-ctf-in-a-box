@@ -128,7 +128,17 @@ const freshRelease = () => ({ released: 0, accepted: 0, refused: 0, rejected: 0,
  * index or the window cannot be read; the caller logs that and polls anyway.
  * Logs carry counts and reasons, never a login, player id or PR.
  */
-export async function releaseHeldScores({ cfg, redis, fetchImpl = fetch, log = console.error, readWindow = () => redis.readScoringWindow(), targets = null }) {
+export async function releaseHeldScores({
+  cfg,
+  redis,
+  fetchImpl = fetch,
+  log = console.error,
+  readWindow = () => redis.readScoringWindow(),
+  targets = null,
+  // A SIGTERM: stop before the next author or entry. An entry already
+  // submitted finishes its release first, and the rest stay held.
+  shouldStop = () => false,
+}) {
   const counts = freshRelease();
   const enabled = targets ? new Set(targets) : null;
   const authors = await redis.heldAuthors();
@@ -136,6 +146,7 @@ export async function releaseHeldScores({ cfg, redis, fetchImpl = fetch, log = c
   const { endsAt } = await readWindow();
 
   for (const login of authors) {
+    if (shouldStop()) break;
     let entries = null;
     try {
       entries = await redis.heldFor(login);
@@ -164,6 +175,10 @@ export async function releaseHeldScores({ cfg, redis, fetchImpl = fetch, log = c
       }
       ready.sort((a, b) => a.atMs - b.atMs || (a.field < b.field ? -1 : a.field > b.field ? 1 : 0));
       for (let i = 0; i < ready.length; i++) {
+        if (shouldStop()) {
+          counts.kept += ready.length - i;
+          break;
+        }
         const { field, entry } = ready[i];
         // Exactly the scorer's contract: `repo` is a display name for the
         // admin list and is not sent. `login` is the link just resolved: the
@@ -281,7 +296,7 @@ export async function tick(cfg, state, deps = {}) {
   // the scorer first. A failure of the step itself leaves every held score in
   // place for the next tick and must not stop the poll.
   try {
-    const released = await releaseHeldScores({ cfg, redis, fetchImpl, log, readWindow, targets });
+    const released = await releaseHeldScores({ cfg, redis, fetchImpl, log, readWindow, targets, shouldStop });
     state.ingested += released.accepted;
     if (released.rejected > 0) {
       drop(`release: ${released.rejected} held score${released.rejected === 1 ? "" : "s"} rejected (4xx), dropped`, released.rejected);

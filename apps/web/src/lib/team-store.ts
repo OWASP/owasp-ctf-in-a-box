@@ -74,6 +74,10 @@ export type TeamInfo = {
 };
 
 const REGISTRATION_CLOSED_ERROR = "Team registration is closed";
+/** After scoring ends the teams are the final standings: a player leaving,
+ *  a captain removing someone or disbanding would move points off the
+ *  results. An organizer can still move people from /admin → Support. */
+export const SCORING_CLOSED_TEAM_ERROR = "Scoring has closed: teams are final";
 
 /** Leaving or being removed after registration closes is allowed, but it
  *  cannot be undone by the player: they can't join any team again, and the
@@ -266,9 +270,18 @@ async function setMockTeam(slug: string): Promise<TeamActionResult> {
  *  every real invariant (one-team-per-player, capacity, name uniqueness)
  *  atomically regardless of what this check decided. */
 async function isRegistrationClosed(): Promise<boolean> {
+  return (await readTeamWindows()).registrationClosed;
+}
+
+/** The registration window and whether scoring has ended, in one HMGET.
+ *  `scoringOver` is true only after `scoringEndsAt` has passed: an event that
+ *  has not launched yet is not over, so players can still leave before it.
+ *  Both fail OPEN for the reason above; a Redis blip must not trap a player
+ *  on a team during play. */
+async function readTeamWindows(): Promise<{ registrationClosed: boolean; scoringOver: boolean }> {
   try {
     const [res] = await upstashPipeline([
-      ["HMGET", ADMIN_SETTINGS_KEY, "teamRegistrationOpen", "registrationStartsAt", "registrationEndsAt"],
+      ["HMGET", ADMIN_SETTINGS_KEY, "teamRegistrationOpen", "registrationStartsAt", "registrationEndsAt", "scoringEndsAt"],
     ]);
     if (res.error) {
       // A resolved per-command error (e.g. WRONGTYPE) — not a thrown
@@ -276,16 +289,17 @@ async function isRegistrationClosed(): Promise<boolean> {
       // Array.isArray decode below, which would otherwise treat it as
       // "every field absent" silently. Same fail-open verdict, but logged.
       console.error("isRegistrationClosed: settings read failed, failing open:", errorLabel(new Error(res.error)));
-      return false;
+      return { registrationClosed: false, scoringOver: false };
     }
-    const [open, startsAt, endsAt] = Array.isArray(res.result) ? (res.result as (string | null)[]) : [];
+    const [open, startsAt, endsAt, scoringEndsAt] = Array.isArray(res.result) ? (res.result as (string | null)[]) : [];
     // Closed by the manual toggle OR by the scheduled registration window
     // (before start / after end). Mirrors admin-store's effectiveRegistrationOpen.
-    if (open === "0") return true;
-    return outsideWindow(Date.now(), startsAt ?? null, endsAt ?? null);
+    const registrationClosed = open === "0" || outsideWindow(Date.now(), startsAt ?? null, endsAt ?? null);
+    const scoringOver = outsideWindow(Date.now(), null, scoringEndsAt ?? null);
+    return { registrationClosed, scoringOver };
   } catch (err) {
     console.error("isRegistrationClosed: settings read failed, failing open:", errorLabel(err));
-    return false;
+    return { registrationClosed: false, scoringOver: false };
   }
 }
 
@@ -490,7 +504,9 @@ export async function leaveTeam(playerId: string, opts: { confirmClosed?: boolea
 
   const slug = await getUserTeamSlug(playerId);
   if (!slug) return { ok: true, team: null };
-  if (!opts.confirmClosed && (await isRegistrationClosed())) {
+  const windows = await readTeamWindows();
+  if (windows.scoringOver) return { ok: false, error: SCORING_CLOSED_TEAM_ERROR };
+  if (!opts.confirmClosed && windows.registrationClosed) {
     return { ok: false, needsConfirm: true, error: LEAVE_AFTER_CLOSE_WARNING };
   }
 
@@ -515,7 +531,9 @@ export async function removeMember(
   opts: { confirmClosed?: boolean } = {},
 ): Promise<TeamActionResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
-  if (!opts.confirmClosed && (await isRegistrationClosed())) {
+  const windows = await readTeamWindows();
+  if (windows.scoringOver) return { ok: false, error: SCORING_CLOSED_TEAM_ERROR };
+  if (!opts.confirmClosed && windows.registrationClosed) {
     // The warning names the member and what removing them costs, so only the
     // captain gets it, and only about someone on the team. The script below
     // stays the authority for the removal itself.
@@ -590,6 +608,8 @@ export async function disbandTeam(captainId: string, slug: string): Promise<Team
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
   // NOT gated by the registration window — disband is an exit for a captain (see
   // transferCaptain). Gating it would trap a captain when registration closes.
+  // It IS gated once scoring is over: disbanding then rewrites the results.
+  if ((await readTeamWindows()).scoringOver) return { ok: false, error: SCORING_CLOSED_TEAM_ERROR };
   const verdict = await upstashEval(DISBAND_SCRIPT, [teamKey(slug), membersKey(slug)], [captainId]);
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };
   if (verdict !== "ok") return { ok: false, error: "Team update failed. Try again" };

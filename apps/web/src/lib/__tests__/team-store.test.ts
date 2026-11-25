@@ -818,7 +818,8 @@ describe("captain roster actions", () => {
     expect(keys).toEqual(["ctf:team:red-team", "ctf:team:red-team:members"]);
     expect(script).toContain("SMEMBERS");
     expect(script).toContain("HGET', KEYS[1], 'joinCode'");
-    expect(mocks.upstashPipeline).not.toHaveBeenCalled();
+    // Its only read is the scoring-over check; the code is never read outside the script.
+    expect(mocks.upstashPipeline.mock.calls.map((c) => c[0][0][0])).toEqual(["HMGET"]);
   });
 
   it("issues a new join code and clears the old one", async () => {
@@ -1426,5 +1427,62 @@ describe("a create name with no letter or digit for its id", () => {
       error: "A team name needs at least one letter a–z or digit 0–9",
     });
     expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+});
+
+describe("team changes after scoring closes (#824)", () => {
+  const PAST = "2020-01-01T00:00:00.000Z";
+  const FUTURE = "2999-01-01T00:00:00.000Z";
+  const windows = (scoringEndsAt: string | null, regOpen: string | null = null) =>
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: [regOpen, null, null, scoringEndsAt] }]);
+
+  it("refuses leaving once scoringEndsAt has passed, even when confirmed, and writes nothing", async () => {
+    const store = await loadStore(true);
+    for (const confirmClosed of [false, true]) {
+      mocks.upstashPipeline.mockResolvedValueOnce([{ result: "red-team" }]);
+      windows(PAST);
+      expect(await store.leaveTeam("octocat", { confirmClosed })).toEqual({ ok: false, error: store.SCORING_CLOSED_TEAM_ERROR });
+    }
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("still lets a player leave before the end, and before launch (no scoringEndsAt)", async () => {
+    const store = await loadStore(true);
+    for (const end of [FUTURE, null]) {
+      mocks.upstashPipeline.mockResolvedValueOnce([{ result: "red-team" }]);
+      windows(end);
+      mocks.upstashEval.mockResolvedValueOnce("ok");
+      expect(await store.leaveTeam("octocat")).toEqual({ ok: true, team: null });
+    }
+  });
+
+  it("keeps the registration-closed confirm before the end of scoring", async () => {
+    const store = await loadStore(true);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "red-team" }]);
+    windows(FUTURE, "0");
+    const result = await store.leaveTeam("octocat");
+    expect(result).toMatchObject({ ok: false, needsConfirm: true });
+  });
+
+  it("refuses a captain removing a member or disbanding once scoring has closed", async () => {
+    const store = await loadStore(true);
+    windows(PAST);
+    expect(await store.removeMember("captain", "red-team", "member", { confirmClosed: true })).toEqual({
+      ok: false,
+      error: store.SCORING_CLOSED_TEAM_ERROR,
+    });
+    windows(PAST);
+    expect(await store.disbandTeam("captain", "red-team")).toEqual({ ok: false, error: store.SCORING_CLOSED_TEAM_ERROR });
+    expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("fails open when the settings read errors, so a blip never traps a player", async () => {
+    const store = await loadStore(true);
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "red-team" }]);
+    mocks.upstashPipeline.mockResolvedValueOnce([{ error: "WRONGTYPE" }]);
+    mocks.upstashEval.mockResolvedValueOnce("ok");
+    expect(await store.leaveTeam("octocat")).toEqual({ ok: true, team: null });
+    err.mockRestore();
   });
 });

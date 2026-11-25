@@ -119,8 +119,8 @@ test("2-comment batch: first fails 5xx, second succeeds 202; cursor stops at fir
   assert.equal(state.repos.DVWA.seen.includes(seenKey(1, "2026-08-13T11:00:00Z")), false);
   assert.equal(state.repos.DVWA.seen.includes(seenKey(2, "2026-08-13T11:01:00Z")), true);
 
-  // cursor stops at first failure's updated_at
-  assert.equal(state.repos.DVWA.since, "2026-08-13T11:00:00Z");
+  // cursor stops one second before the first failure's updated_at
+  assert.equal(state.repos.DVWA.since, "2026-08-13T10:59:59.000Z");
   assert.equal(state.repos.DVWA.etag, null);
 
   // second tick: fetch again from first comment's time, both succeed
@@ -187,7 +187,7 @@ test("after an author's comment fails, their later comments wait for it, unseen,
   assert.deepEqual(held, [], "nothing held while the older comment is unresolved");
   assert.equal(state.repos.DVWA.seen.includes(seenKey(2, "2026-08-13T11:05:00Z")), false, "the newer one stays unseen");
   assert.deepEqual(posts.map((p) => p.sha), ["abc"], "another author is not held back");
-  assert.equal(state.repos.DVWA.since, "2026-08-13T11:00:00Z");
+  assert.equal(state.repos.DVWA.since, "2026-08-13T10:59:59.000Z");
   await tick(CFG, state, { fetchImpl: f, log: () => {}, redis });
   assert.deepEqual(held, [seenKey(1, "2026-08-13T11:00:00Z"), seenKey(2, "2026-08-13T11:05:00Z")], "both held, oldest first");
 });
@@ -570,7 +570,7 @@ test("holdScore throwing un-marks the revision, stops the cursor and logs retrie
   const state = { repos: {} };
   await tick(CFG, state, { fetchImpl: f, log: (m) => logs.push(m), redis });
   assert.equal(state.repos.DVWA.seen.includes(seenKey(1, "2026-08-13T11:00:00Z")), false);
-  assert.equal(state.repos.DVWA.since, "2026-08-13T11:00:00Z");
+  assert.equal(state.repos.DVWA.since, "2026-08-13T10:59:59.000Z");
   assert.equal(state.repos.DVWA.etag, null);
   assert.match(logs.join("\n"), /1 retried/);
   fail = false;
@@ -686,10 +686,10 @@ test("a stop mid-batch submits nothing more and leaves the cursor at the first c
   const f = async (url, opts) => {
     const u = String(url);
     if (u.includes("/issues/comments")) {
-      // GitHub's `since` is inclusive (docs/architecture.md), which the cursor
-      // relies on to read the first unhandled comment again.
+      // An EXCLUSIVE `since`, as GitHub documents it: the first unhandled
+      // comment is read again because the cursor stops a second before it.
       const since = new URL(u).searchParams.get("since");
-      const page = [c1, c2].filter((c) => !since || c.updated_at >= since);
+      const page = [c1, c2].filter((c) => !since || Date.parse(c.updated_at) > Date.parse(since));
       return new Response(JSON.stringify(page), { status: 200 });
     }
     if (u.endsWith("/score")) {
@@ -703,7 +703,7 @@ test("a stop mid-batch submits nothing more and leaves the cursor at the first c
   await tick(CFG, state, { fetchImpl: f, log: () => {}, shouldStop: () => stop });
   assert.equal(posts.length, 1, "the comment in hand finishes; the next is not started");
   const rs = state.repos.DVWA;
-  assert.equal(rs.since, c2.updated_at, "the cursor stops at the first comment not handled");
+  assert.equal(rs.since, "2026-08-13T11:59:59.000Z", "the cursor stops just before the first comment not handled");
   assert.equal(rs.etag, null);
   assert.ok(rs.seen.includes(seenKey(1, c1.updated_at)));
   assert.ok(!rs.seen.includes(seenKey(2, c2.updated_at)));

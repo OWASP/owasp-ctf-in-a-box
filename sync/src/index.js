@@ -72,6 +72,15 @@ const freshTally = () => ({ ingested: 0, duplicate: 0, noMarker: 0, invalid: 0, 
  *  is neither is NOT a watermark: skipping on a junk epoch would silently lose
  *  every score, so it is treated as "no reset", the same direction
  *  `getResetAt` takes on a read error. */
+/** The cursor for a batch that stopped at a comment still to be read (a
+ *  failed submit, a stop): one second before it, so the next poll reads it
+ *  even if GitHub's `since` excludes the boundary. What the overlap re-reads
+ *  is already marked seen. */
+function oneSecondBefore(iso) {
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? new Date(ms - 1000).toISOString() : iso;
+}
+
 function resetEpochMs(resetAt) {
   if (typeof resetAt !== "string" || resetAt === "") return null;
   const ms = /^\d+$/.test(resetAt) ? Number(resetAt) : Date.parse(resetAt);
@@ -215,7 +224,7 @@ export async function releaseHeldScores({
 export async function tick(cfg, state, deps = {}) {
   // `shouldStop` (a SIGTERM in main()) ends the tick at the next comment
   // boundary: the comments handled so far are marked seen, and the cursor
-  // stops at the first one not handled, as it does for a failed submit, so a
+  // stops just before the first one not handled, as it does for a failed submit, so a
   // stop neither drops a score nor re-reads one already handled.
   const { fetchImpl = fetch, log = console.error, redis = null, shouldStop = () => false } = deps;
   // Every read below (freeze, targets, reset epoch, PR author links) is a
@@ -446,7 +455,7 @@ export async function tick(cfg, state, deps = {}) {
     const summary = summarize(repo, tally);
     if (summary) log(summary);
     // advance cursor to first failure or to full batch, reset etag if any failure
-    rs.since = stopAt ?? result.cursor.since;
+    rs.since = stopAt ? oneSecondBefore(stopAt) : result.cursor.since;
     rs.etag = stopAt ? null : result.cursor.etag;
   }
 

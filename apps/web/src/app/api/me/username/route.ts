@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { readBoundedBody } from "@/lib/bounded-body";
 import { errorLabel } from "@/lib/error-label";
+import { accountExists } from "@/lib/account-exists";
 import { getPlayer } from "@/lib/player";
 import { consumeRateLimit, RATE_LIMITS } from "@/lib/rate-limit-store";
 import { setUsernameOnce } from "@/lib/username-store";
@@ -85,6 +86,10 @@ export async function POST(request: Request) {
 
   let result: Awaited<ReturnType<typeof setUsernameOnce>>;
   try {
+    // The account check sits right before the write, after the body is read:
+    // a deleted player's cached session passes getPlayer, and a slow body
+    // must not widen the gap between the check and the write.
+    if (!(await accountExists(player.id))) return json({ error: "unauthorized" }, 401);
     result = await setUsernameOnce(player.id, username);
   } catch (err) {
     console.error(`[username] pick failed: ${errorLabel(err)}`);

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { accountExists } from "@/lib/account-exists";
 import { getPlayer } from "@/lib/player";
 import { launchApiAccess } from "@/lib/launch";
 import { revealHint } from "@/lib/hint-store";
@@ -55,6 +56,10 @@ export async function POST(request: Request) {
   // An admin on a Jeopardy challenge contestants cannot see reads its hint
   // as a dry run, like a preview: shown, never charged.
   const dryRun = preview || (app === "classic" && id !== "" && (await adminSeesHidden(playerId, id)));
+  // The account check sits right before the write, after the body is read:
+  // a deleted player's cached session passes getPlayer, and a slow body
+  // must not widen the gap between the check and the write.
+  if (!(await accountExists(player.id))) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const result = await revealHint(playerId, app, id, typeof quotedCost === "number" ? { dryRun, quotedCost } : { dryRun });
   if (!result.ok && "repriced" in result) {
     // 409: the confirmed price is stale. Only the new price goes back, so

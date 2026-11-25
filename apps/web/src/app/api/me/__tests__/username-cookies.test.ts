@@ -4,6 +4,7 @@
 // per-login budget is faked.
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/account-exists", () => ({ accountExists: async () => true }));
 vi.mock("server-only", () => ({}));
 vi.hoisted(() => {
   process.env.BETTER_AUTH_URL ??= "http://localhost:3000";

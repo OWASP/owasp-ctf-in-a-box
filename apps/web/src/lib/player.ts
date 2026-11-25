@@ -1,5 +1,6 @@
 import "server-only";
 
+import { accountExists } from "@/lib/account-exists";
 import { auth } from "@/lib/auth";
 import { AUTH_PREFIX, rowsKey } from "@/lib/auth-store/keys";
 import { displayNameOf, type NameParts } from "@/lib/display-name";
@@ -33,6 +34,20 @@ export async function getPlayer(headers: Headers): Promise<Player | null> {
   const user = session?.user as (NameParts & { image?: string | null }) | undefined;
   if (!user || typeof user.id !== "string" || !PLAYER_ID_RE.test(user.id)) return null;
   return toPlayer(user);
+}
+
+/**
+ * The signed-in player for a WRITE: `getPlayer`, then a Redis read that the
+ * account still exists. `getPlayer` trusts the signed session cookie cache for
+ * up to its max age, so a deleted player's device keeps a valid-looking
+ * session that long; a write route acting on it would create records for an
+ * account that is gone. Null when there is no player or the account was
+ * deleted. Throws on a Redis error (fail closed: the route answers 5xx).
+ */
+export async function getPlayerForWrite(headers: Headers): Promise<Player | null> {
+  const player = await getPlayer(headers);
+  if (!player) return null;
+  return (await accountExists(player.id)) ? player : null;
 }
 
 /**

@@ -444,6 +444,12 @@ On top of that, the render:
 - **drops `restart:`** — Fly Machines reject Docker's `unless-stopped`
   (flyctl 0.4.120 refuses the machine update over it), so every container
   inherits the machine's own `on-failure` policy
+- **drops `stop_grace_period:`** — `fly.toml` sets `kill_timeout = 120`
+  instead, so a stop waits long enough for the scorer to finish a score write
+  and for sync to save its poll cursor. That is the machine's stop timeout;
+  whether flyctl's compose support passes it on to each container is not yet
+  verified ([#836](https://github.com/OWASP/owasp-ctf-in-a-box/issues/836)),
+  so until it is, a Fly redeploy may still cut that drain short
 - **sets `TRUSTED_CLIENT_IP_HEADER: fly-client-ip` on the app** — Fly's proxy
   appends the app's own address as the rightmost `X-Forwarded-For` entry, so
   the rule compose and AWS use would put every player on one sign-up and

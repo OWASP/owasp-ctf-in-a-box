@@ -517,12 +517,14 @@ export async function main(deps = {}) {
   const persist = async () => {
     try {
       await redis.writePollState(state);
+      return true;
     } catch (err) {
       // Not fatal: the in-memory state stays authoritative for this process
       // and the next tick writes again. Only a restart before a write lands
       // rewinds the cursor to the last one that did, and the re-read that
       // causes is idempotent (the scorer's HSETNX).
       logErr(`ctf-sync: could not save poll state to Redis (${SYNC_STATE_KEY}): ${err.message} — retrying next tick`);
+      return false;
     }
   };
 
@@ -541,9 +543,15 @@ export async function main(deps = {}) {
   for (;;) {
     idle = false;
     await runTick(cfg, state, { redis });
-    await persist();
+    let saved = await persist();
     if (stopping) {
-      logErr("ctf-sync: stopping");
+      // There is no next tick to retry a failed save: try a few more times, or
+      // the next start resumes from the older cursor (safe, but it re-reads).
+      for (let i = 0; !saved && i < 3; i++) {
+        await sleep(1000);
+        saved = await persist();
+      }
+      logErr(saved ? "ctf-sync: stopping" : "ctf-sync: stopping; the last poll cursor was not saved");
       return exit(0);
     }
     idle = true;

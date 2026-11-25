@@ -246,3 +246,31 @@ test("SIGTERM while sleeping between ticks exits 0 at once", async () => {
   assert.deepEqual(calls.exit, [0]);
   assert.ok(calls.logErr.includes("ctf-sync: stopping"));
 });
+
+test("SIGTERM during a tick retries a failed final cursor save before exiting", async () => {
+  let stop;
+  let writes = 0;
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    onStop: (fn) => {
+      stop = fn;
+    },
+    makeRedisImpl: () => ({
+      ensureCompatible: async () => {},
+      readPollState: async () => null,
+      writePollState: async () => {
+        writes++;
+        if (writes === 2) throw new Error("NOAUTH"); // the post-tick save fails once
+      },
+    }),
+    runTick: async (cfg, state) => {
+      stop();
+      return state;
+    },
+    sleep: (ms) => calls.sleep.push(ms),
+  });
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+  assert.equal(writes, 3, "seed write, failed save, successful retry");
+  assert.deepEqual(calls.exit, [0]);
+  assert.ok(calls.logErr.includes("ctf-sync: stopping"));
+});

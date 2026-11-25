@@ -512,12 +512,13 @@ export async function serve(
   if (useRedis) await waitForCompatibleRedis(store, { log });
   const server = await startServer({ rubric, store, token, port });
   // SIGTERM (docker stop, a redeploy): stop accepting connections and let
-  // the requests in flight finish their score writes, then exit; the timer
-  // only bounds a client that holds a connection open.
+  // the requests in flight finish their score writes, then exit. The backstop
+  // is longer than a store request's own timeout, so it bounds only a client
+  // holding a connection open, never a write still in progress.
   onStop(() => {
     log("ctf-score-engine: stopping");
     server.close(() => exit(0));
-    setTimeout(() => exit(0), 8000).unref();
+    setTimeout(() => exit(0), 11_000).unref();
   });
   log(
     `ctf-score-engine: serving on :${server.address().port} ` +

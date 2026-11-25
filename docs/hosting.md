@@ -731,8 +731,8 @@ events, not during one.
 recognizable v1 event data, startup is refused, logged once as `Redis
 compatibility check failed: …`. A Redis that is still starting is not a
 refusal: the app, scorer and sync each log `waiting for Redis (…), retrying`
-and keep trying for about a minute, then exit with `Redis did not answer after
-N tries`. A box already running a
+and keep trying, 30 tries two seconds apart (longer when each try times out),
+then exit with `Redis did not answer after N tries`. A box already running a
 pre-release v2 build may also be refused: its v2 data may not have the schema
 marker yet, so it is indistinguishable from legacy data. Before deploying this
 release, export the event and run the master reset on that box, just as for a

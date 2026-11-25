@@ -334,3 +334,29 @@ test("SIGTERM between ticks after a failed cursor save retries the save before e
   assert.deepEqual(calls.exit, [0]);
   assert.ok(calls.logErr.includes("ctf-sync: stopping"), JSON.stringify(calls.logErr));
 });
+
+test("SIGTERM while waiting for Redis exits 0 at once, before any state load or tick", async () => {
+  let stop;
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    redisWaitMs: 5,
+    onStop: (fn) => {
+      stop = fn;
+    },
+    makeRedisImpl: () => ({
+      ensureCompatible: async () => {
+        throw new Error("fetch failed"); // srh still starting
+      },
+    }),
+    sleep: (ms) => {
+      calls.sleep.push(ms);
+      stop(); // the signal lands during the wait
+    },
+  });
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+  assert.equal(typeof stop, "function", "the handler exists before the Redis wait");
+  assert.deepEqual(calls.exit, [0]);
+  assert.equal(calls.readState, 0, "no state load");
+  assert.deepEqual(calls.tick, []);
+  assert.ok(calls.logErr.includes("ctf-sync: stopping"), JSON.stringify(calls.logErr));
+});

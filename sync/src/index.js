@@ -515,6 +515,32 @@ export async function main(deps = {}) {
     return exit(1);
   }
 
+  // One stop handler for the whole run, registered before the Redis wait and
+  // the state load: until the first tick there is nothing to save, so a stop
+  // then exits at once. After that, a stop during a tick ends it at its next
+  // comment (tick's `shouldStop`) and the loop saves the cursor; one between
+  // ticks exits at once if the cursor is saved, or retries the save first.
+  let starting = true;
+  let stopping = false;
+  let idle = false;
+  let saved = true;
+  let finalSave = null;
+  let saveAndExit = null;
+  onStop(() => {
+    if (stopping) return;
+    stopping = true;
+    if (starting || (idle && saved)) {
+      logErr("ctf-sync: stopping");
+      exit(0);
+      return;
+    }
+    if (!idle) return;
+    finalSave = saveAndExit();
+    // Awaited by the loop once its sleep returns; this only keeps the
+    // rejection from reading as unhandled before then.
+    finalSave.catch(() => {});
+  });
+
   // A refusal (v1 data, an unknown schema) is final. Anything else is Redis
   // not answering yet, usually srh still starting next to this container: wait
   // it out with its own log line, so a slow start never reads like the v1-data
@@ -532,8 +558,10 @@ export async function main(deps = {}) {
         logErr(`ctf-sync: Redis did not answer after ${attempt} tries: ${err.message}`);
         return exit(1);
       }
+      if (stopping) return;
       if (attempt === 1 || attempt % 10 === 0) logErr(`ctf-sync: waiting for Redis (${err.message}), retrying`);
       await sleep(redisWaitMs);
+      if (stopping) return;
     }
   }
 
@@ -561,18 +589,9 @@ export async function main(deps = {}) {
     }
   };
 
-  // SIGTERM (docker stop, a redeploy) ends a running tick at its next comment
-  // boundary (tick's `shouldStop`), persists the cursor, then exits; one that
-  // lands between ticks exits at once.
-  // A stop between ticks with the cursor saved exits at once; one whose last
-  // save failed retries it first, the same as a stop during a tick.
-  let stopping = false;
-  let idle = false;
-  let saved = true;
-  let finalSave = null;
   // There is no next tick to retry a failed save: try a few more times, or
-  // the next start resumes from the older cursor (safe, but it re-reads).
-  const saveAndExit = async () => {
+  // the next start resumes from the older cursor and re-reads from there.
+  saveAndExit = async () => {
     for (let i = 0; !saved && i < 3; i++) {
       await sleep(1000);
       saved = await persist();
@@ -580,20 +599,8 @@ export async function main(deps = {}) {
     logErr(saved ? "ctf-sync: stopping" : "ctf-sync: stopping; the last poll cursor was not saved");
     return exit(0);
   };
-  onStop(() => {
-    if (stopping) return;
-    stopping = true;
-    if (!idle) return;
-    if (saved) {
-      logErr("ctf-sync: stopping");
-      exit(0);
-      return;
-    }
-    finalSave = saveAndExit();
-    // Awaited by the loop once its sleep returns; this only keeps the
-    // rejection from reading as unhandled before then.
-    finalSave.catch(() => {});
-  });
+  starting = false;
+  if (stopping) return saveAndExit();
 
   for (;;) {
     idle = false;

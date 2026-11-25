@@ -1075,3 +1075,29 @@ test("score: a body that finishes arriving after the stop began answers 503, whi
     await new Promise((r) => server.close(r));
   }
 });
+
+test("waitForCompatibleRedis: a stop during the wait ends it without throwing", async () => {
+  let attempts = 0;
+  let stopped = false;
+  const store = { ensureCompatible: async () => { attempts++; stopped = true; throw new Error("fetch failed"); } };
+  const up = await waitForCompatibleRedis(store, { log: () => {}, sleep: async () => {}, shouldStop: () => stopped });
+  assert.equal(up, false);
+  assert.equal(attempts, 1, "no retry after the stop");
+});
+
+test("serve(): SIGTERM during the Redis wait exits 0 at once, without listening", async () => {
+  let stop;
+  const exits = [];
+  const logs = [];
+  const fetchImpl = async () => {
+    stop(); // the signal lands while srh is still starting
+    throw new Error("fetch failed");
+  };
+  const server = await serve(
+    { SCORER_TOKEN: TOKEN, RUBRIC_DIR, PORT: "0", UPSTASH_REDIS_REST_URL: "http://srh:80", UPSTASH_REDIS_REST_TOKEN: "t" },
+    { log: (m) => logs.push(m), fetchImpl, onStop: (fn) => { stop = fn; }, exit: (code) => exits.push(code) },
+  );
+  assert.equal(server, null, "the server never listened");
+  assert.deepEqual(exits, [0]);
+  assert.ok(logs.includes("ctf-score-engine: stopping"));
+});

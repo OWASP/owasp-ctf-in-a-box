@@ -479,22 +479,31 @@ function parsePort(raw) {
 /** Runs the startup compatibility check, waiting out a Redis that is not
  *  answering yet (srh still starting) with its own log line, so a slow start
  *  never reads like the v1-data refusal. A refusal is rethrown at once; a
- *  Redis that never answers throws after `tries`. */
+ *  Redis that never answers throws after `tries`. Resolves true once Redis
+ *  answers, or false when `shouldStop` (a SIGTERM during the wait) ends it. */
 export async function waitForCompatibleRedis(
   store,
-  { log = console.error, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), waitMs = 2000, tries = 30 } = {},
+  {
+    log = console.error,
+    sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+    waitMs = 2000,
+    tries = 30,
+    shouldStop = () => false,
+  } = {},
 ) {
   for (let attempt = 1; ; attempt++) {
     try {
       await store.ensureCompatible();
-      return;
+      return true;
     } catch (err) {
       if (err instanceof IncompatibleRedisError) {
         throw new IncompatibleRedisError(`Redis compatibility check failed: ${err.message}`);
       }
       if (attempt >= tries) throw new Error(`Redis did not answer after ${attempt} tries: ${err.message}`);
+      if (shouldStop()) return false;
       if (attempt === 1 || attempt % 10 === 0) log(`ctf-score-engine: waiting for Redis (${err.message}), retrying`);
       await sleep(waitMs);
+      if (shouldStop()) return false;
     }
   }
 }
@@ -580,10 +589,22 @@ export async function serve(
   const rubric = loadRubric(env.RUBRIC_DIR);
   const useRedis = Boolean(env.UPSTASH_REDIS_REST_URL);
   const store = useRedis ? createRedisStore({ url: env.UPSTASH_REDIS_REST_URL, token: env.UPSTASH_REDIS_REST_TOKEN, log, ...(fetchImpl ? { fetchImpl } : {}) }) : createMemoryStore();
-  if (useRedis) await waitForCompatibleRedis(store, { log });
+  // One stop handler for the whole run, registered before the Redis wait: a
+  // stop that lands before the server listens has nothing in flight and
+  // exits at once; after that it drains (createDrain).
+  let stopEarly = false;
+  let stopServer = null;
+  onStop(() => {
+    if (stopServer) return stopServer();
+    if (stopEarly) return;
+    stopEarly = true;
+    log("ctf-score-engine: stopping");
+    exit(0);
+  });
+  if (useRedis && !(await waitForCompatibleRedis(store, { log, shouldStop: () => stopEarly }))) return null;
   const drain = createDrain({ exit, log });
   const server = await startServer({ rubric, store, token, port, work: drain.work });
-  onStop(() => drain.stop(server));
+  stopServer = () => drain.stop(server);
   log(
     `ctf-score-engine: serving on :${server.address().port} ` +
       `(${rubric ? `${rubric.targets.size} rubric target(s)` : "no rubric — degenerate mode"}, ` +

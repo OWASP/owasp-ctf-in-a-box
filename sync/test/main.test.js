@@ -360,3 +360,33 @@ test("SIGTERM while waiting for Redis exits 0 at once, before any state load or 
   assert.deepEqual(calls.tick, []);
   assert.ok(calls.logErr.includes("ctf-sync: stopping"), JSON.stringify(calls.logErr));
 });
+
+test("SIGTERM with every cursor save failing retries twice, then exits 0 on the older cursor", async () => {
+  let stop;
+  let writes = 0;
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    onStop: (fn) => {
+      stop = fn;
+    },
+    makeRedisImpl: () => ({
+      ensureCompatible: async () => {},
+      readPollState: async () => null,
+      writePollState: async () => {
+        if (++writes > 1) throw new Error("NOAUTH"); // every save after the seed fails
+      },
+    }),
+    runTick: async (cfg, state) => {
+      stop();
+      return state;
+    },
+    sleep: (ms) => calls.sleep.push(ms),
+  });
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+  // The bound the stop grace period is sized for (docker-compose.yml): one
+  // save and two retries a second apart, no more.
+  assert.equal(writes, 4, "seed write, the post-tick save, two retries");
+  assert.deepEqual(calls.sleep, [1000, 1000]);
+  assert.deepEqual(calls.exit, [0]);
+  assert.ok(calls.logErr.includes("ctf-sync: stopping; the last poll cursor was not saved"));
+});

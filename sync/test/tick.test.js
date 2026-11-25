@@ -738,3 +738,12 @@ test("the GitHub poll is bounded by a timeout signal", async () => {
   assert.ok(signal instanceof AbortSignal, "the poll request carries an abort signal");
   assert.equal(signal.aborted, false);
 });
+
+test("a stopped tick skips the heartbeat, so the cursor save follows at once", async () => {
+  let status = 0;
+  const f = async () => new Response("[]", { status: 200 });
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, shouldStop: () => true, redis: { ...redisStub, writeStatus: async () => { status++; } } });
+  assert.equal(status, 0);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis: { ...redisStub, writeStatus: async () => { status++; } } });
+  assert.equal(status, 1, "an ordinary tick still writes it");
+});

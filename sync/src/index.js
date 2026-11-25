@@ -459,6 +459,9 @@ export async function tick(cfg, state, deps = {}) {
     rs.etag = stopAt ? null : result.cursor.etag;
   }
 
+  // A stopped tick skips the heartbeat: the cursor save that follows is what
+  // the stop grace period is budgeted for, and a stale heartbeat is harmless.
+  if (shouldStop()) return state;
   await writeStatusSafely(redis, log, {
     lastPollAt: nowIso(),
     ingested: state.ingested,
@@ -582,8 +585,9 @@ export async function main(deps = {}) {
     } catch (err) {
       // Not fatal: the in-memory state stays authoritative for this process
       // and the next tick writes again. Only a restart before a write lands
-      // rewinds the cursor to the last one that did, and the re-read that
-      // causes is idempotent (the scorer's HSETNX).
+      // rewinds the cursor to the last one that did; the re-read that causes
+      // counts no point twice, but can bring back a solve a per-contestant
+      // reset removed since (see loadDurableState).
       logErr(`ctf-sync: could not save poll state to Redis (${SYNC_STATE_KEY}): ${err.message} — retrying next tick`);
       return false;
     }
@@ -592,7 +596,9 @@ export async function main(deps = {}) {
   // There is no next tick to retry a failed save: try a few more times, or
   // the next start resumes from the older cursor and re-reads from there.
   saveAndExit = async () => {
-    for (let i = 0; !saved && i < 3; i++) {
+    // Two retries keep the whole stop inside sync's 120 s grace period
+    // (docker-compose.yml).
+    for (let i = 0; !saved && i < 2; i++) {
       await sleep(1000);
       saved = await persist();
     }

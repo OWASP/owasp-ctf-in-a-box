@@ -222,10 +222,11 @@ services:
     # the narrower policy.
     restart: on-failure
     # A SIGTERM ends the tick at its next comment or held score, then saves the
-    # cursor with up to three retries (main() in sync/src/index.js). Worst
-    # case: the one item in hand, at most three 10 s Redis reads and a 40 s
-    # scorer POST (or a 15 s GitHub read), then about 43 s of saving, near
-    # 113 s. A kill before that save rewinds the cursor, and a re-read can
+    # cursor with up to two retries (main() in sync/src/index.js), skipping
+    # the heartbeat. Worst case: the one item in hand, at most four 10 s Redis
+    # reads and a 40 s scorer POST (or a GitHub token and poll, 15 s per
+    # request, under 45 s), then about 32 s of
+    # saving (a save and two retries a second apart), near 112 s. A kill before that save rewinds the cursor, and a re-read can
     # bring back a solve a per-contestant reset removed since, so this must
     # cover it. deploy/fly/fly.toml's kill_timeout and the ECS stopTimeout in
     # deploy/aws-terraform/ecs.tf must stay at or above it (120 s is

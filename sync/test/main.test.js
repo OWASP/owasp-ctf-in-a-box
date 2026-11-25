@@ -209,22 +209,52 @@ test("gives up with a distinct line when Redis never answers", async () => {
   assert.deepEqual(calls.tick, []);
 });
 
-test("SIGTERM during a tick lets it finish and persist, then exits 0", async () => {
+function deferred() {
+  let resolve;
+  const promise = new Promise((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+test("SIGTERM during a tick lets it finish and saves its cursor before exiting 0", async () => {
   let stop;
+  const tick = deferred();
+  const save = deferred();
+  const saved = [];
+  let writes = 0;
   const { deps, calls } = spyDeps({
     load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
     onStop: (fn) => {
       stop = fn;
     },
+    makeRedisImpl: () => ({
+      ensureCompatible: async () => {},
+      readPollState: async () => null,
+      writePollState: async (s) => {
+        if (++writes === 2) await save.promise; // the post-tick save, held open
+        saved.push(JSON.parse(JSON.stringify(s)));
+      },
+    }),
     runTick: async (cfg, state) => {
       calls.tick.push(state);
       stop(); // the signal lands mid-tick
+      await tick.promise;
+      state.repos.vampi = { cursor: "advanced" }; // the tick's progress
       return state;
     },
   });
-  await assert.rejects(() => main(deps), (err) => err === STOP);
-  assert.equal(calls.tick.length, 1);
-  assert.ok(calls.pollState.length >= 2, "the tick's cursor was persisted before exiting");
+  const run = main(deps);
+  const settle = () => new Promise((r) => setImmediate(r));
+  await settle();
+  assert.deepEqual(calls.exit, [], "the tick in progress is not cut off");
+  tick.resolve();
+  await settle();
+  assert.equal(writes, 2, "the post-tick save started");
+  assert.deepEqual(calls.exit, [], "it does not exit before the save completes");
+  save.resolve();
+  await assert.rejects(run, (err) => err === STOP);
+  assert.deepEqual(saved.at(-1).repos.vampi, { cursor: "advanced" }, "the saved cursor carries the tick's progress");
   assert.deepEqual(calls.exit, [0]);
   assert.deepEqual(calls.sleep, [], "it never slept after the signal");
 });

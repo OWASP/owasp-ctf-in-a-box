@@ -39,6 +39,13 @@
 app = "owasp-ctf"
 primary_region = "iad"
 
+# How long a machine stop (a redeploy, `fly machine stop`) waits after SIGTERM
+# before killing the containers. It stands in for docker-compose.yml's
+# per-service `stop_grace_period`, which the render drops, so it must stay at
+# or above the largest of those (sync's): below it, a cursor save or a score
+# write still draining is killed. Fly's default is 5 s.
+kill_timeout = 90
+
 # Generated and gitignored. Written at the REPO ROOT, not next to this file,
 # and that is forced by flyctl rather than chosen.
 #

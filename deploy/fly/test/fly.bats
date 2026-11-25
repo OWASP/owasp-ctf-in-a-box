@@ -627,6 +627,17 @@ ENV
   [ -z "$(grep -E '^    stop_grace_period:' "$RENDERED")" ]
 }
 
+@test "fly.toml: kill_timeout covers every compose stop_grace_period it replaces" {
+  kill=$(sed -n 's/^kill_timeout = \([0-9][0-9]*\)$/\1/p' "$REPO/deploy/fly/fly.toml")
+  [ -n "$kill" ]
+  graces=$(sed -n 's/^    stop_grace_period: \([0-9][0-9]*\)s$/\1/p' "$REPO/docker-compose.yml")
+  # Anti-vacuous: the compose file must still declare grace periods to compare.
+  [ -n "$graces" ]
+  for g in $graces; do
+    [ "$kill" -ge "$g" ] || { echo "kill_timeout $kill is below a stop_grace_period of ${g}s"; return 1; }
+  done
+}
+
 @test "render: no service is left with an empty environment key" {
   need_docker
   render

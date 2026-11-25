@@ -292,8 +292,8 @@ indent == 4 && section == "services" {
   # restart:  Fly Machines reject `unless-stopped`; without the key each
   #           container inherits the machine `on-failure` policy (header, 6).
   # stop_grace_period: a compose stop timeout; a Fly machine stop is bounded
-  #           by the machine kill timeout instead, so the key would promise
-  #           a grace Fly does not give.
+  #           by the machine kill timeout instead, which fly.toml sets as
+  #           kill_timeout to cover the largest of these.
   if (key == "build" || key == "volumes" || key == "networks" || key == "profiles" || key == "restart" || key == "stop_grace_period") {
     skip_indent = 4
     next

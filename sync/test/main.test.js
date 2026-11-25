@@ -98,6 +98,7 @@ test("a valid config proceeds: state, redis, then the poll loop", async () => {
   assert.equal(calls.tick.length, 1);
   assert.equal(calls.tick[0].cfg, cfg);
   assert.equal(calls.tick[0].opts.redis.fake, "redis");
+  assert.equal(calls.tick[0].opts.shouldStop(), false, "the tick is told to stop only after a signal");
   // With Redis, the tick's state is persisted to Redis before sleeping (once
   // to establish the key, once after the tick) and the file is not written.
   assert.equal(calls.pollState.length, 2);
@@ -236,9 +237,10 @@ test("SIGTERM during a tick lets it finish and saves its cursor before exiting 0
         saved.push(JSON.parse(JSON.stringify(s)));
       },
     }),
-    runTick: async (cfg, state) => {
+    runTick: async (cfg, state, opts) => {
       calls.tick.push(state);
       stop(); // the signal lands mid-tick
+      assert.equal(opts.shouldStop(), true, "the tick is told to wrap up");
       await tick.promise;
       state.repos.vampi = { cursor: "advanced" }; // the tick's progress
       return state;

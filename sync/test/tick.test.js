@@ -677,3 +677,47 @@ test("the window is read at most once per tick, shared by the release step and t
   await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis });
   assert.equal(reads, 1);
 });
+
+test("a stop mid-batch submits nothing more and leaves the cursor at the first comment not handled", async () => {
+  const posts = [];
+  let stop = false;
+  const c1 = { ...ghComment(1), updated_at: "2026-08-13T11:00:00Z" };
+  const c2 = { ...ghComment(2), updated_at: "2026-08-13T12:00:00Z" };
+  const f = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/issues/comments")) return new Response(JSON.stringify([c1, c2]), { status: 200, headers: { etag: 'W/"e"' } });
+    if (u.endsWith("/score")) {
+      posts.push(JSON.parse(opts.body));
+      stop = true; // SIGTERM lands while the first comment is being submitted
+      return new Response(null, { status: 202 });
+    }
+    throw new Error(`unexpected url ${u}`);
+  };
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, shouldStop: () => stop });
+  assert.equal(posts.length, 1, "the comment in hand finishes; the next is not started");
+  const rs = state.repos.DVWA;
+  assert.equal(rs.since, c2.updated_at, "the cursor stops at the first comment not handled");
+  assert.equal(rs.etag, null);
+  assert.ok(rs.seen.includes(seenKey(1, c1.updated_at)));
+  assert.ok(!rs.seen.includes(seenKey(2, c2.updated_at)));
+  // The next process re-reads from there: the handled comment is deduped, not
+  // re-submitted, and the unhandled one is submitted once.
+  stop = false;
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, shouldStop: () => stop });
+  assert.equal(posts.length, 2);
+  assert.equal(posts[1].sha, "abc");
+  assert.equal(rs.seen.includes(seenKey(2, c2.updated_at)), true);
+});
+
+test("a stop before a target is polled leaves that target untouched", async () => {
+  let fetched = 0;
+  const f = async () => {
+    fetched++;
+    return new Response("[]", { status: 200 });
+  };
+  const state = { repos: {} };
+  await tick(CFG, state, { fetchImpl: f, log: () => {}, shouldStop: () => true });
+  assert.equal(fetched, 0);
+  assert.equal(state.repos.DVWA, undefined);
+});

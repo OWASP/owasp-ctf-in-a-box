@@ -221,13 +221,13 @@ services:
     # back. unless-stopped would behave the same here; on-failure is kept as
     # the narrower policy.
     restart: on-failure
-    # A SIGTERM lets the tick in progress finish, then saves the cursor with up
-    # to three retries: about 43 s at the store's 10 s timeout (main() in
-    # sync/src/index.js), plus what is left of the tick. A tick that runs past
-    # this is killed, which is safe: the next start re-reads from the last
-    # saved cursor, and a re-read score is a no-op. deploy/fly/fly.toml's
-    # kill_timeout and the ECS stopTimeout in deploy/aws-terraform/ecs.tf
-    # must stay at or above it.
+    # A SIGTERM ends the tick in progress at its next comment, then saves the
+    # cursor with up to three retries: about 43 s at the store's 10 s timeout
+    # (main() in sync/src/index.js), plus the one comment in hand. A kill
+    # before that save rewinds the cursor, and a re-read can bring back a solve
+    # a per-contestant reset removed since, so this must cover it.
+    # deploy/fly/fly.toml's kill_timeout and the ECS stopTimeout in
+    # deploy/aws-terraform/ecs.tf must stay at or above it.
     stop_grace_period: 90s
     environment:
       # The org the poller reads score comments from. sync refuses to start

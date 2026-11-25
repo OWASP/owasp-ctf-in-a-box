@@ -198,7 +198,11 @@ export async function releaseHeldScores({ cfg, redis, fetchImpl = fetch, log = c
 }
 
 export async function tick(cfg, state, deps = {}) {
-  const { fetchImpl = fetch, log = console.error, redis = null } = deps;
+  // `shouldStop` (a SIGTERM in main()) ends the tick at the next comment
+  // boundary: the comments handled so far are marked seen, and the cursor
+  // stops at the first one not handled, as it does for a failed submit, so a
+  // stop neither drops a score nor re-reads one already handled.
+  const { fetchImpl = fetch, log = console.error, redis = null, shouldStop = () => false } = deps;
   // Every read below (freeze, targets, reset epoch, PR author links) is a
   // Redis read; main() refuses to start without a client, and a tick without
   // one must not guess.
@@ -289,6 +293,7 @@ export async function tick(cfg, state, deps = {}) {
   let reposPolled = 0;
   let lastError = null;
   for (const target of targets) {
+    if (shouldStop()) break;
     reposPolled++;
     const repo = REPO_NAMES[target];
     const rs = repoState(state, repo);
@@ -309,6 +314,10 @@ export async function tick(cfg, state, deps = {}) {
     // the first failure, so next tick reads them again in order.
     const failedAuthors = new Set();
     for (const c of result.comments) {
+      if (shouldStop()) {
+        stopAt ??= c.updated_at;
+        break;
+      }
       // Keyed on the comment REVISION, not its id — the workflow upserts one
       // comment per target, so the id alone made a re-scored PR unreachable.
       if (!markSeen(rs, c.id, c.updated_at)) {
@@ -528,8 +537,9 @@ export async function main(deps = {}) {
     }
   };
 
-  // SIGTERM (docker stop, a redeploy) lets a tick that is running finish and
-  // persist its cursor, then exits; one that lands between ticks exits at once.
+  // SIGTERM (docker stop, a redeploy) ends a running tick at its next comment
+  // boundary (tick's `shouldStop`), persists the cursor, then exits; one that
+  // lands between ticks exits at once.
   // A stop between ticks with the cursor saved exits at once; one whose last
   // save failed retries it first, the same as a stop during a tick.
   let stopping = false;
@@ -563,7 +573,7 @@ export async function main(deps = {}) {
 
   for (;;) {
     idle = false;
-    await runTick(cfg, state, { redis });
+    await runTick(cfg, state, { redis, shouldStop: () => stopping });
     saved = await persist();
     if (stopping) return saveAndExit();
     idle = true;

@@ -740,7 +740,8 @@ describe("captain roster actions", () => {
     expect(result).toEqual({ ok: true, team: "red-team" });
     const [script, keys, args] = mocks.upstashEval.mock.calls[0];
     expect(keys).toEqual(["ctf:team:red-team", "ctf:team:red-team:members", "ctf:user:member2"]);
-    expect(args).toEqual(["captain", "member2"]);
+    // The last argument is the scoring deadline the script re-checks ('' = none).
+    expect(args).toEqual(["captain", "member2", ""]);
     expect(script).toContain("SREM");
   });
 
@@ -1485,6 +1486,23 @@ describe("team changes after scoring closes (#824)", () => {
     windows(PAST);
     expect(await store.createSoloTeam("octocat", "octocat")).toEqual({ ok: false, error: store.SCORING_CLOSED_TEAM_ERROR });
     expect(mocks.upstashEval).not.toHaveBeenCalled();
+  });
+
+  it("passes the deadline into every membership script and maps its in-script refusal (#824)", async () => {
+    const store = await loadStore(true);
+    const endsMs = String(Date.parse(FUTURE));
+    // The read sees an open event; the script runs after the close and refuses.
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "red-team" }]);
+    windows(FUTURE);
+    mocks.upstashEval.mockResolvedValueOnce("scoring-closed");
+    expect(await store.leaveTeam("octocat")).toEqual({ ok: false, error: store.SCORING_CLOSED_TEAM_ERROR });
+    expect(mocks.upstashEval.mock.calls[0][2].at(-1)).toBe(endsMs);
+    expect(mocks.upstashEval.mock.calls[0][0]).toContain("redis.call('TIME')");
+
+    windows(FUTURE);
+    mocks.upstashEval.mockResolvedValueOnce("scoring-closed");
+    expect(await store.disbandTeam("captain", "red-team")).toEqual({ ok: false, error: store.SCORING_CLOSED_TEAM_ERROR });
+    expect(mocks.upstashEval.mock.calls[1][2].at(-1)).toBe(endsMs);
   });
 
   it("fails open when the settings read errors, so a blip never traps a player", async () => {

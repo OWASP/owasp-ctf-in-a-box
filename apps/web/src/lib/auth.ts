@@ -5,7 +5,7 @@ import { username } from "better-auth/plugins";
 import type { BetterAuthOptions } from "better-auth";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
 import { errorLabel } from "@/lib/error-label";
-import { getGithubLink, linkOnUserWrite } from "@/lib/github-link";
+import { getGithubLink, isReleasedAndBlocked, linkOnUserWrite } from "@/lib/github-link";
 import { recordSignIn } from "@/lib/activity-log";
 import { limitAuthAttempt } from "@/lib/auth-rate-limit";
 import { placeholderEmail } from "@/lib/placeholder-email";
@@ -176,6 +176,31 @@ export async function gateOAuthCallback(ctx: HookCtx, write: CallbackWrite): Pro
     callbackVerdicts.set(state, verdict);
   }
   return verdict;
+}
+
+/**
+ * A GitHub sign-in that would create an account for a login an organizer's
+ * delete released and blocked (`ctf:relink:blocked`, until the next master
+ * reset). Without it, a deleted player clicks "Sign in with GitHub" and gets
+ * a fresh account straight away. Runs on the user create of a sign-in
+ * callback only: a link never creates a user, and a returning player still
+ * has a row (an update, not a create). Throwing rolls back the user and
+ * account rows together; an unreadable blocklist refuses (fail closed).
+ */
+export async function refuseBlockedGithubSignIn(user: Record<string, unknown> | null | undefined, ctx: HookCtx): Promise<void> {
+  if (ctx?.path !== "/callback/:id") return;
+  const login = user?.login;
+  if (typeof login !== "string" || login === "") return;
+  let blocked: boolean;
+  try {
+    blocked = await isReleasedAndBlocked(login);
+  } catch (err) {
+    console.error(`[auth] could not read the re-link blocklist on sign-in: ${errorLabel(err)}`);
+    throw new APIError("SERVICE_UNAVAILABLE", { message: "Could not check this GitHub account. Try again.", code: "GITHUB_BLOCKLIST_UNREADABLE" });
+  }
+  if (blocked) {
+    throw new APIError("FORBIDDEN", { message: "This GitHub account cannot sign in to this event.", code: "GITHUB_BLOCKED" });
+  }
 }
 
 /**
@@ -420,7 +445,10 @@ export const authOptions = {
     // gateOAuthCallback first.
     user: {
       create: {
-        before: async (_user, ctx) => gateOAuthCallback(ctx, "user"),
+        before: async (user, ctx) => {
+          await gateOAuthCallback(ctx, "user");
+          await refuseBlockedGithubSignIn(user, ctx);
+        },
         after: async (user) => linkOnUserWrite(user),
       },
       update: {

@@ -1332,16 +1332,18 @@ link back either, and the login stays blocked until the next master reset.
 **Delete contestant.** Removes the account, its sessions, progress, team
 membership and held scores. A team captain is refused, and so is an
 organizer: revoke their admin access first. The player's GitHub login is
-added to a blocklist (`ctf:relink:blocked`) and cannot link to any account
-until the next master reset, so a deleted player's PRs cannot be claimed by a
-new account. The deleted username is free again. The player's open browser
-can keep showing pages for up to five minutes (the signed session cache), but
-every write from it (team changes, flag and quiz submits, hint buys, profile
-changes, a GitHub link, including one started before the delete) checks
-that the account still exists right before it writes, after reading the
-request, and is refused when it does not. A write that has already passed
-that check when the delete lands can still complete: the check is not part of
-the store's own write script.
+added to a blocklist (`ctf:relink:blocked`) and, until the next master
+reset, cannot link to any account or sign in with GitHub (the sign-in is
+refused with `GITHUB_BLOCKED`), so a deleted player's PRs cannot be claimed by
+a new account and the player cannot come straight back through GitHub. They
+can still create a username and password account. The deleted username is
+free again. The player's open browser can keep showing pages for up to five
+minutes (the signed session cache), but every write from it (team changes,
+flag and quiz submits, hint buys, profile changes, a GitHub link, including
+one started before the delete) checks that the account still exists right
+before it writes, after reading the request, and is refused when it does not.
+A write that has already passed that check when the delete lands can still
+complete: the check is not part of the store's own write script.
 A Secure Development score for that player still in flight is refused, so it
 cannot restore their solves: the delete puts the player's scores on hold
 (`ctf:score-hold:<player id>`) before it clears anything, and the scorer

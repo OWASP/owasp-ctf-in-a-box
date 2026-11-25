@@ -14,6 +14,7 @@ import {
   resolveGithubLogin,
   restoreGithubLink,
   takeGithubLink,
+  isReleasedAndBlocked,
 } from "@/lib/github-link";
 
 beforeEach(() => {
@@ -202,5 +203,27 @@ describe("github link", () => {
       expect(line).toContain("Error: boom");
       expect(line).not.toContain("octo");
     });
+  });
+});
+
+describe("isReleasedAndBlocked (#823)", () => {
+  it("is true only for a blocklisted login that no player is linked to", async () => {
+    upstash.upstashPipeline.mockResolvedValue([{ result: 1 }, { result: null }]);
+    expect(await isReleasedAndBlocked("OctoCat")).toBe(true);
+    expect(upstash.upstashPipeline).toHaveBeenCalledWith([
+      ["SISMEMBER", "ctf:relink:blocked", "octocat"],
+      ["GET", "ctf:link:github:octocat"],
+    ]);
+    upstash.upstashPipeline.mockResolvedValue([{ result: 1 }, { result: "11111111-1111-4111-8111-111111111111" }]);
+    expect(await isReleasedAndBlocked("octocat")).toBe(false);
+    upstash.upstashPipeline.mockResolvedValue([{ result: 0 }, { result: null }]);
+    expect(await isReleasedAndBlocked("octocat")).toBe(false);
+  });
+
+  it("throws on a per-command error instead of reading it as not blocked", async () => {
+    upstash.upstashPipeline.mockResolvedValue([{ error: "WRONGTYPE" }, { result: null }]);
+    await expect(isReleasedAndBlocked("octocat")).rejects.toThrow(/SISMEMBER failed: WRONGTYPE/);
+    upstash.upstashPipeline.mockResolvedValue([{ result: 1 }, { error: "NOAUTH" }]);
+    await expect(isReleasedAndBlocked("octocat")).rejects.toThrow(/GET failed: NOAUTH/);
   });
 });

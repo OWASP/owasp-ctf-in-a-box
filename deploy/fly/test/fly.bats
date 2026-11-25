@@ -619,6 +619,14 @@ ENV
   [ -z "$(grep -E '^    restart:' "$RENDERED")" ]
 }
 
+@test "render: no stop_grace_period key survives (Fly's kill timeout governs)" {
+  need_docker
+  # Anti-vacuous: the source must still declare it, or this passes on nothing.
+  grep -qE '^    stop_grace_period: ' "$REPO/docker-compose.yml"
+  render
+  [ -z "$(grep -E '^    stop_grace_period:' "$RENDERED")" ]
+}
+
 @test "render: no service is left with an empty environment key" {
   need_docker
   render

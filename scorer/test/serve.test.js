@@ -944,7 +944,7 @@ test("a store error on the solve write answers 5xx, never 202 or 422", async (t)
 });
 
 // ── waiting for Redis, and stopping (#825) ───────────────────────────────────
-import { waitForCompatibleRedis } from "../src/serve.js";
+import { createDrain, waitForCompatibleRedis } from "../src/serve.js";
 import { IncompatibleRedisError } from "../src/store.js";
 
 test("waitForCompatibleRedis: waits out a Redis that is not answering yet, with its own log line", async () => {
@@ -959,7 +959,13 @@ test("waitForCompatibleRedis: waits out a Redis that is not answering yet, with 
 test("waitForCompatibleRedis: a refusal is rethrown at once, never waited on", async () => {
   let attempts = 0;
   const store = { ensureCompatible: async () => { attempts++; throw new IncompatibleRedisError("Incompatible Redis data detected (matching fingerprint: ctf:user:*)"); } };
-  await assert.rejects(waitForCompatibleRedis(store, { log: () => {}, sleep: async () => {} }), IncompatibleRedisError);
+  await assert.rejects(
+    waitForCompatibleRedis(store, { log: () => {}, sleep: async () => {} }),
+    (err) =>
+      err instanceof IncompatibleRedisError &&
+      // The documented refusal line (docs/hosting.md), logged once by index.js.
+      err.message === "Redis compatibility check failed: Incompatible Redis data detected (matching fingerprint: ctf:user:*)",
+  );
   assert.equal(attempts, 1);
 });
 
@@ -984,4 +990,53 @@ test("serve(): SIGTERM closes the server and exits 0", async () => {
   await new Promise((resolve) => server.on("close", resolve));
   assert.deepEqual(exits.slice(0, 1), [0]);
   assert.ok(logs.includes("ctf-score-engine: stopping"));
+});
+
+// createDrain with hand-run timers: [idle backstop, cap] in the order stop() sets them.
+function drainHarness() {
+  const exits = [];
+  const timers = [];
+  let closed;
+  const drain = createDrain({ exit: (c) => exits.push(c), log: () => {}, setTimer: (fn, ms) => timers.push({ fn, ms }) });
+  const server = { close: (cb) => { closed = cb; }, closeIdleConnections() {} };
+  return { drain, server, exits, timers, close: () => closed() };
+}
+
+test("createDrain: a score past its body read holds the exit past the idle backstop until it finishes", () => {
+  const h = drainHarness();
+  h.drain.work.enter();
+  h.drain.stop(h.server);
+  assert.deepEqual(h.timers.map((t) => t.ms), [11_000, 35_000]);
+  h.timers[0].fn(); // 11 s: a policy read and a write can still be running
+  assert.deepEqual(h.exits, [], "an in-flight score is not cut off at the idle backstop");
+  h.drain.work.leave();
+  assert.deepEqual(h.exits, [0]);
+  h.timers[1].fn();
+  assert.deepEqual(h.exits, [0], "exits once");
+});
+
+test("createDrain: with no score in progress, a held connection stops delaying the exit at the idle backstop", () => {
+  const h = drainHarness();
+  h.drain.stop(h.server);
+  assert.deepEqual(h.exits, []);
+  h.timers[0].fn();
+  assert.deepEqual(h.exits, [0]);
+});
+
+test("createDrain: a score that never finishes is bounded by the cap", () => {
+  const h = drainHarness();
+  h.drain.work.enter();
+  h.drain.stop(h.server);
+  h.timers[0].fn();
+  h.timers[1].fn();
+  assert.deepEqual(h.exits, [0]);
+});
+
+test("createDrain: the server closing exits at once, and only once", () => {
+  const h = drainHarness();
+  h.drain.stop(h.server);
+  h.close();
+  h.timers[0].fn();
+  h.timers[1].fn();
+  assert.deepEqual(h.exits, [0]);
 });

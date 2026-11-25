@@ -92,6 +92,10 @@ services:
     image: ${SCORE_IMAGE:-ghcr.io/owasp-ctf/score:latest}
     command: ["score", "serve"]
     restart: unless-stopped
+    # Above the scorer's 35 s drain cap (createDrain in scorer/src/serve.js),
+    # so a score write in flight at `docker stop` finishes instead of being
+    # killed at compose's 10 s default.
+    stop_grace_period: 40s
     environment:
       UPSTASH_REDIS_REST_URL: http://srh:80
       UPSTASH_REDIS_REST_TOKEN: ${SRH_TOKEN}
@@ -216,6 +220,10 @@ services:
     # back. unless-stopped would behave the same here; on-failure is kept as
     # the narrower policy.
     restart: on-failure
+    # A SIGTERM lets the tick in progress finish and retries a failed cursor
+    # save up to three times at the store's 10 s timeout (main() in
+    # sync/src/index.js); compose's 10 s default would kill that save.
+    stop_grace_period: 40s
     environment:
       # The org the poller reads score comments from. sync refuses to start
       # when it is empty, logging `ctf-sync: GITHUB_ORG is not set` — so it

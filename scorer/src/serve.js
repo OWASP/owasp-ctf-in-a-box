@@ -84,7 +84,7 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-export function createHandler({ rubric = null, store, token, now = () => new Date().toISOString() }) {
+export function createHandler({ rubric = null, store, token, now = () => new Date().toISOString(), work = { enter() {}, leave() {} } }) {
   if (!token) throw new Error("refusing to start: set CTF_SCORE_BEARER_TOKEN or SCORER_TOKEN");
   // Without a rubric the board can only cover targets this process has seen
   // solves for — degenerate, but honest.
@@ -147,6 +147,17 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
       }
       body += chunk;
     }
+    // From here on the request does store work, which a shutdown waits for;
+    // a body still arriving is not (see createDrain).
+    work.enter();
+    try {
+      return await scoreBody(res, body);
+    } finally {
+      work.leave();
+    }
+  }
+
+  async function scoreBody(res, body) {
     let data;
     try {
       data = JSON.parse(body);
@@ -476,12 +487,62 @@ export async function waitForCompatibleRedis(
       await store.ensureCompatible();
       return;
     } catch (err) {
-      if (err instanceof IncompatibleRedisError) throw err;
+      if (err instanceof IncompatibleRedisError) {
+        throw new IncompatibleRedisError(`Redis compatibility check failed: ${err.message}`);
+      }
       if (attempt >= tries) throw new Error(`Redis did not answer after ${attempt} tries: ${err.message}`);
       if (attempt === 1 || attempt % 10 === 0) log(`ctf-score-engine: waiting for Redis (${err.message}), retrying`);
       await sleep(waitMs);
     }
   }
+}
+
+/** SIGTERM handling for `score serve`: stop accepting connections and exit
+ *  once the open ones end. A score already past its body read is waited for,
+ *  up to `capMs`, which covers its policy read and its write at the store's
+ *  10 s request timeout each, with margin; the container's stop grace period
+ *  (docker-compose.yml) must stay above it. After `idleMs`, a connection with
+ *  no score in progress (a stalled upload, a held keep-alive) no longer
+ *  delays the exit. */
+export function createDrain({
+  exit,
+  log,
+  idleMs = 11_000,
+  capMs = 35_000,
+  setTimer = (fn, ms) => setTimeout(fn, ms).unref(),
+}) {
+  let busy = 0;
+  let stopping = false;
+  let patient = false;
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    exit(0);
+  };
+  return {
+    work: {
+      enter() {
+        busy++;
+      },
+      leave() {
+        busy--;
+        if (patient && busy === 0) finish();
+      },
+    },
+    stop(server) {
+      if (stopping) return;
+      stopping = true;
+      log("ctf-score-engine: stopping");
+      server.close(finish);
+      server.closeIdleConnections?.();
+      setTimer(() => {
+        if (busy === 0) finish();
+        else patient = true;
+      }, idleMs);
+      setTimer(finish, capMs);
+    },
+  };
 }
 
 /** Process entry for `score serve`: validates env, loads the rubric, picks
@@ -510,16 +571,9 @@ export async function serve(
   const useRedis = Boolean(env.UPSTASH_REDIS_REST_URL);
   const store = useRedis ? createRedisStore({ url: env.UPSTASH_REDIS_REST_URL, token: env.UPSTASH_REDIS_REST_TOKEN, log, ...(fetchImpl ? { fetchImpl } : {}) }) : createMemoryStore();
   if (useRedis) await waitForCompatibleRedis(store, { log });
-  const server = await startServer({ rubric, store, token, port });
-  // SIGTERM (docker stop, a redeploy): stop accepting connections and let
-  // the requests in flight finish their score writes, then exit. The backstop
-  // is longer than a store request's own timeout, so it bounds only a client
-  // holding a connection open, never a write still in progress.
-  onStop(() => {
-    log("ctf-score-engine: stopping");
-    server.close(() => exit(0));
-    setTimeout(() => exit(0), 11_000).unref();
-  });
+  const drain = createDrain({ exit, log });
+  const server = await startServer({ rubric, store, token, port, work: drain.work });
+  onStop(() => drain.stop(server));
   log(
     `ctf-score-engine: serving on :${server.address().port} ` +
       `(${rubric ? `${rubric.targets.size} rubric target(s)` : "no rubric — degenerate mode"}, ` +

@@ -530,33 +530,46 @@ export async function main(deps = {}) {
 
   // SIGTERM (docker stop, a redeploy) lets a tick that is running finish and
   // persist its cursor, then exits; one that lands between ticks exits at once.
+  // A stop between ticks with the cursor saved exits at once; one whose last
+  // save failed retries it first, the same as a stop during a tick.
   let stopping = false;
   let idle = false;
+  let saved = true;
+  let finalSave = null;
+  // There is no next tick to retry a failed save: try a few more times, or
+  // the next start resumes from the older cursor (safe, but it re-reads).
+  const saveAndExit = async () => {
+    for (let i = 0; !saved && i < 3; i++) {
+      await sleep(1000);
+      saved = await persist();
+    }
+    logErr(saved ? "ctf-sync: stopping" : "ctf-sync: stopping; the last poll cursor was not saved");
+    return exit(0);
+  };
   onStop(() => {
+    if (stopping) return;
     stopping = true;
-    if (idle) {
+    if (!idle) return;
+    if (saved) {
       logErr("ctf-sync: stopping");
       exit(0);
+      return;
     }
+    finalSave = saveAndExit();
+    // Awaited by the loop once its sleep returns; this only keeps the
+    // rejection from reading as unhandled before then.
+    finalSave.catch(() => {});
   });
 
   for (;;) {
     idle = false;
     await runTick(cfg, state, { redis });
-    let saved = await persist();
-    if (stopping) {
-      // There is no next tick to retry a failed save: try a few more times, or
-      // the next start resumes from the older cursor (safe, but it re-reads).
-      for (let i = 0; !saved && i < 3; i++) {
-        await sleep(1000);
-        saved = await persist();
-      }
-      logErr(saved ? "ctf-sync: stopping" : "ctf-sync: stopping; the last poll cursor was not saved");
-      return exit(0);
-    }
+    saved = await persist();
+    if (stopping) return saveAndExit();
     idle = true;
     const jitter = cfg.pollIntervalMs * 0.2 * (2 * Math.random() - 1);
     await sleep(cfg.pollIntervalMs + jitter);
+    if (finalSave) return finalSave;
   }
 }
 

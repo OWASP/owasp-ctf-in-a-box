@@ -459,42 +459,62 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
       const u1 = await kitUser(ia, "overlap");
       const logins = { "gh-7": freshLogin(), "gh-8": freshLogin() };
       const completions = await Promise.all([startLink(u1.id), startLink(u1.id)]);
-      // Each completion's read of the player's account rows is held until the
-      // other one reaches its own read, or 300 ms pass, so the reads overlap
-      // whatever the scheduling. Without the claim both would reach it and
-      // find no GitHub row; with it the second is refused before reading.
+      // The first completion's read of the player's account rows is held until
+      // the second completion has been refused. Without the claim the second
+      // would reach the same read and find no GitHub row; with it the second
+      // is refused before reading, while the first still holds its claim.
       const rowsRead = `:account:by:userId:${u1.id}`;
       let reads = 0;
-      let bothRead!: () => void;
-      const overlap = new Promise<void>((resolve) => (bothRead = resolve));
+      let firstHeld!: () => void;
+      const held = new Promise<void>((resolve) => (firstHeld = resolve));
+      let releaseFirst!: () => void;
+      const release = new Promise<void>((resolve) => (releaseFirst = resolve));
       relay.hook = async (cmds, real) => {
         if (cmds.some((c) => c[0] === "SMEMBERS" && String(c[1]).endsWith(rowsRead))) {
-          if (++reads === 2) bothRead();
-          await Promise.race([overlap, new Promise((resolve) => setTimeout(resolve, 300))]);
+          if (++reads === 1) {
+            firstHeld();
+            await release;
+          }
         }
         return real(cmds);
       };
+      // Fails a stalled test instead of letting it resolve on its own schedule.
+      const watchdog = <T,>(p: Promise<T>, what: string) =>
+        Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`watchdog: ${what}`)), 5000))]);
 
-      const results = await Promise.allSettled([
-        completions[0]({ accountId: "gh-7", login: logins["gh-7"], ghEmail: "o1@github.example.test" }),
-        completions[1]({ accountId: "gh-8", login: logins["gh-8"], ghEmail: "o2@github.example.test" }),
-      ]).finally(() => {
+      const first = completions[0]({ accountId: "gh-7", login: logins["gh-7"], ghEmail: "o1@github.example.test" }).then(
+        (value) => ({ value }),
+        (reason: unknown) => ({ reason }),
+      );
+      let readsAtRefusal = -1;
+      let second: { value?: unknown; reason?: unknown };
+      try {
+        await watchdog(held, "first completion never reached its account-row read");
+        second = await watchdog(
+          completions[1]({ accountId: "gh-8", login: logins["gh-8"], ghEmail: "o2@github.example.test" }).then(
+            (value) => ({ value }),
+            (reason: unknown) => ({ reason }),
+          ),
+          "second completion was neither linked nor refused",
+        );
+        readsAtRefusal = reads;
+      } finally {
+        releaseFirst();
+      }
+      const firstResult = await watchdog(first, "first completion never finished").finally(() => {
         relay.hook = null;
       });
 
+      expect(readsAtRefusal).toBe(1);
+      expect(second.value).toBeUndefined();
+      expect((second.reason as { body?: { code?: string } }).body?.code).toBe("GITHUB_ALREADY_LINKED");
+      expect(firstResult).toEqual({ value: { linked: true } });
       expect(reads).toBe(1);
-      const linked = results.filter((r) => r.status === "fulfilled");
-      const refused = results.filter((r) => r.status === "rejected");
-      expect(linked.map((r) => r.value)).toEqual([{ linked: true }]);
-      expect(refused.map((r) => (r.reason as { body?: { code?: string } }).body?.code)).toEqual(["GITHUB_ALREADY_LINKED"]);
-      const accounts = (await ia.findAccounts(u1.id)).map((a) => a.accountId);
-      expect(accounts).toHaveLength(1);
-      const winner = accounts[0] as keyof typeof logins;
-      const loser = winner === "gh-7" ? "gh-8" : "gh-7";
-      expect(await redis(["GET", `${LINK_USER_PREFIX}${u1.id}`])).toBe(logins[winner]);
-      expect((await linkKeys(u1.id, logins[winner])).owner).toBe(u1.id);
-      expect((await linkKeys(u1.id, logins[loser])).owner).toBeNull();
-      expect(await ia.findAccountByKey({ providerId: "github", accountId: loser })).toBeNull();
+      expect((await ia.findAccounts(u1.id)).map((a) => a.accountId)).toEqual(["gh-7"]);
+      expect(await redis(["GET", `${LINK_USER_PREFIX}${u1.id}`])).toBe(logins["gh-7"]);
+      expect((await linkKeys(u1.id, logins["gh-7"])).owner).toBe(u1.id);
+      expect((await linkKeys(u1.id, logins["gh-8"])).owner).toBeNull();
+      expect(await ia.findAccountByKey({ providerId: "github", accountId: "gh-8" })).toBeNull();
     });
 
     it("refuses the account write of a link callback whose claim lapsed after its checks, and writes no row", async () => {

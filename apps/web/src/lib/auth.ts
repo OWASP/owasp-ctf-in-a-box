@@ -134,6 +134,7 @@ export async function refuseDisabledProvider(ctx: AuthCtx): Promise<void> {
 /** What a database hook on the callback is about to write. */
 export type CallbackWrite = "user" | "account" | "session";
 
+type UserLookup = { internalAdapter?: { findUserById: (id: string) => Promise<unknown> } };
 type HookCtx = { path?: string; params?: Record<string, unknown> } | null | undefined;
 
 // One verdict per callback request: the parsed state object is the request's
@@ -200,6 +201,38 @@ export async function refuseBlockedGithubSignIn(user: Record<string, unknown> | 
   if (blocked) {
     throw new APIError("FORBIDDEN", { message: "This GitHub account cannot sign in to this event.", code: "GITHUB_BLOCKED" });
   }
+}
+
+/**
+ * Whether the user row for `userId` exists, asked of better-auth's own
+ * adapter so it reads the store this instance was built with. Throws
+ * SERVICE_UNAVAILABLE when it cannot tell (fail closed).
+ */
+async function userRowExists(context: UserLookup | undefined, userId: unknown, when: string): Promise<boolean> {
+  if (typeof userId !== "string") return false;
+  try {
+    if (!context?.internalAdapter) throw new Error("no auth adapter on this context");
+    return (await context.internalAdapter.findUserById(userId)) !== null;
+  } catch (err) {
+    console.error(`[auth] could not confirm the account ${when}: ${errorLabel(err)}`);
+    throw new APIError("SERVICE_UNAVAILABLE", { message: "Could not check your account. Try again.", code: "ACCOUNT_UNREADABLE" });
+  }
+}
+
+const accountDeleted = () => new APIError("UNAUTHORIZED", { message: "This account no longer exists.", code: "ACCOUNT_DELETED" });
+
+/**
+ * The `/link-social` before hook for a deleted account. The session comes
+ * from the signed cookie cache, which outlives an organizer's delete by up to
+ * its max age; linking then would write an account row and a GitHub link for
+ * a user that no longer exists. An unreadable check fails closed. A request
+ * with no session is left to the endpoint, which answers 401.
+ */
+export async function refuseDeletedAccount(ctx: AuthCtx): Promise<void> {
+  if (ctx.path !== "/link-social") return;
+  const session = await getSessionFromCtx(ctx);
+  if (!session) return;
+  if (!(await userRowExists(ctx.context as UserLookup, session.user.id, "before linking"))) throw accountDeleted();
 }
 
 /**
@@ -444,6 +477,7 @@ export const authOptions = {
       await refuseSignUpFields(ctx);
       await refuseClientOAuthParams(ctx);
       await refuseDisabledProvider(ctx);
+      await refuseDeletedAccount(ctx);
       await refuseSecondGithubLink(ctx);
     }),
     // Sign-in timestamps for the admin activity log. The after hook runs on

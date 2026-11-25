@@ -208,6 +208,20 @@ describe("OAuth callback completion is gated on the GitHub sign-in switch", () =
     expect(db.session).toHaveLength(1);
   });
 
+  // better-auth itself refuses a link whose user row is gone; this pins that,
+  // so a link started before an organizer's delete cannot complete after it.
+  it("writes no GitHub account when the player was deleted between starting the link and its callback (#822)", async () => {
+    const { db, instance } = build();
+    githubSwitch(true);
+    const player = await signedInPlayer(instance);
+    const flow = await start(instance, "/link-social", "github", player);
+    db.user.splice(0, db.user.length); // the organizer deletes the account now
+    const res = await callback(instance, "github", flow);
+    expect(res.status).toBe(302);
+    expect(errorOf(res)).toBe("unable_to_link_account");
+    expect(db.account.filter((a) => a.providerId === "github")).toEqual([]);
+  });
+
   it("still completes a GitHub link with GitHub sign-in switched off", async () => {
     const { db, instance } = build();
     githubSwitch(false);

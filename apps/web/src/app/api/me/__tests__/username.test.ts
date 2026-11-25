@@ -14,13 +14,15 @@ const m = vi.hoisted(() => ({
   upstashEval: vi.fn(),
   realConsume: null as null | ((...a: never[]) => Promise<unknown>),
 }));
+const accountExists = vi.hoisted(() => vi.fn<(id: string) => Promise<boolean>>(async () => true));
+vi.mock("@/lib/account-exists", () => ({ accountExists }));
 vi.mock("server-only", () => ({}));
 const SESSION_DATA = vi.hoisted(() => ({ name: "better-auth.session_data", attributes: { path: "/", httpOnly: true, sameSite: "lax", secure: false, maxAge: 300 } }));
 vi.mock("@/lib/auth", () => ({
   auth: { api: { getSession: m.getSession }, $context: Promise.resolve({ authCookies: { sessionData: SESSION_DATA } }) },
 }));
 vi.mock("@/lib/upstash", () => ({ upstashEval: m.upstashEval }));
-vi.mock("@/lib/player", () => ({ getPlayer: m.getPlayer }));
+vi.mock("@/lib/player", () => ({ getPlayer: m.getPlayer, getPlayerForWrite: m.getPlayer }));
 vi.mock("@/lib/username-store", () => ({ setUsernameOnce: m.setUsernameOnce }));
 vi.mock("@/lib/rate-limit-store", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/rate-limit-store")>();

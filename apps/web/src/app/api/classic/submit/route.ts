@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { adminSeesHidden } from "@/lib/classic-visibility";
 import { isAdminPlayer } from "@/lib/admin-auth";
+import { accountExists } from "@/lib/account-exists";
 import { getPlayer } from "@/lib/player";
 import { logActivity } from "@/lib/activity-log";
 import { isModuleLive } from "@/lib/enabled-modules";
@@ -109,6 +110,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
+  // The account check sits right before the write, after the body is read:
+  // a deleted player's cached session passes getPlayer, and a slow body
+  // must not widen the gap between the check and the write.
+  if (!(await accountExists(player.id))) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const result = await submitFlag(playerId, challengeId, flag, { dryRun });
   if (result.ok) {
     // An admin preview (#464): graded by the same script, nothing recorded —

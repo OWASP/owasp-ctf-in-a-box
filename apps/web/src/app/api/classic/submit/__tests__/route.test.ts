@@ -10,6 +10,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 // The activity log, so the dry-run test below can see that nothing was logged.
 const activityLog = vi.hoisted(() => ({ logActivity: vi.fn(async () => {}) }));
+const accountExists = vi.hoisted(() => vi.fn<(id: string) => Promise<boolean>>(async () => true));
+vi.mock("@/lib/account-exists", () => ({ accountExists }));
 vi.mock("@/lib/activity-log", () => activityLog);
 import { vi } from "vitest";
 
@@ -237,6 +239,15 @@ describe("POST /api/classic/submit", () => {
     storeReturns({ ok: true, correct: false });
     const body = await (await POST(req({ challengeId: "c-1", flag: "CTF{secret}" }))).json();
     expect(JSON.stringify(body)).not.toContain("CTF{secret}");
+  });
+
+  it("401s and banks nothing once the account row is gone (#822)", async () => {
+    session("alice");
+    storeReturns({ ok: true, correct: true, points: 50 });
+    accountExists.mockResolvedValueOnce(false);
+    const res = await POST(req({ challengeId: "c-1", flag: "CTF{x}" }));
+    expect(res.status).toBe(401);
+    expect(submitFlag).not.toHaveBeenCalled();
   });
 
   it("200s with correct:true and points for a correct flag", async () => {

@@ -370,6 +370,74 @@ test("a marker cannot choose its own `at`: the comment's time wins", async () =>
   assert.equal(posts[0].at, c.updated_at);
 });
 
+// ── the judge's own time (#821) ──────────────────────────────────────────────
+// The workflow edits the comment without re-judging (the cooldown note), which
+// moves updated_at but leaves the old verdict in place. A verdict judged while
+// frozen, before the start or before a reset must keep its own time, or the
+// edit re-dates it into a live window and it counts.
+
+const judged = (judgedAt) =>
+  `<!-- ctf-score: {"author":"octocat","target":"dvwa","solved":["sqli-low"],"pr":7,"sha":"abc","judgedAt":"${judgedAt}"} -->`;
+
+test("a marker's judgedAt is the score's `at`, not the comment's later edit time (#821)", async () => {
+  const posts = [];
+  const c = ghComment(31, judged("2026-08-13T10:44:00.000Z"));
+  c.updated_at = "2026-08-13T10:47:19Z"; // the cooldown note, three minutes later
+  const f = routes(() => new Response(JSON.stringify([c]), { status: 200 }), 202, posts);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {} });
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].at, "2026-08-13T10:44:00.000Z");
+});
+
+test("a judgedAt in the same second as the comment keeps its own time: updated_at has no milliseconds (#821)", async () => {
+  const posts = [];
+  const c = ghComment(35, judged("2026-08-13T11:00:00.500Z")); // updated_at 11:00:00Z
+  const f = routes(() => new Response(JSON.stringify([c]), { status: 200 }), 202, posts);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {} });
+  assert.equal(posts[0].at, "2026-08-13T11:00:00.500Z");
+});
+
+test("a judgedAt a full second or more after the comment falls back to the comment's time (#821)", async () => {
+  const posts = [];
+  const c = ghComment(36, judged("2026-08-13T11:00:01.000Z"));
+  const f = routes(() => new Response(JSON.stringify([c]), { status: 200 }), 202, posts);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {} });
+  assert.equal(posts[0].at, c.updated_at);
+});
+
+test("a judgedAt later than the comment, or unparseable, falls back to the comment's time (#821)", async () => {
+  for (const judgedAt of ["2026-08-13T12:00:00.000Z", "not-a-date", ""]) {
+    const posts = [];
+    const c = ghComment(32, judged(judgedAt));
+    const f = routes(() => new Response(JSON.stringify([c]), { status: 200 }), 202, posts);
+    await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {} });
+    assert.equal(posts[0].at, c.updated_at, `judgedAt=${judgedAt}`);
+  }
+});
+
+test("a verdict judged before a reset is skipped even when the comment was edited after it (#821)", async () => {
+  const posts = [];
+  const resetAt = String(Date.parse("2026-08-13T11:10:00Z"));
+  const c = ghComment(33, judged("2026-08-13T11:00:00.000Z"));
+  c.updated_at = "2026-08-13T11:20:00Z"; // a cooldown edit after the reset
+  const f = routes(() => new Response(JSON.stringify([c]), { status: 200, headers: {} }), 202, posts);
+  const logs = [];
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: (m) => logs.push(m), redis: withReset(resetAt) });
+  assert.equal(posts.length, 0, "the pre-reset verdict never reaches the scorer");
+  assert.ok(logs.some((l) => /preReset/.test(l)), JSON.stringify(logs));
+});
+
+test("a held score keeps the judge's time, so its release is judged at it (#821)", async () => {
+  const held = [];
+  const c = ghComment(34, judged("2026-08-13T10:44:00.000Z").replace("octocat", "stranger"));
+  c.updated_at = "2026-08-13T10:47:19Z";
+  const f = routes(() => new Response(JSON.stringify([c]), { status: 200 }), 202, []);
+  const redis = { ...redisStub, holdScore: async (...a) => held.push(a) };
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(held.length, 1);
+  assert.equal(held[0][2].at, "2026-08-13T10:44:00.000Z");
+});
+
 // A 422 is the scorer's final verdict on WHEN the score was posted (during a
 // freeze, outside the window, before a reset). The rule worked as intended,
 // so it is not a drop: no counter an organizer has to chase, but one log

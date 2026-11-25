@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { accountExists } from "@/lib/account-exists";
 import { getPlayer } from "@/lib/player";
 import { disbandTeam } from "@/lib/team-store";
 
@@ -16,6 +17,10 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const slug = typeof body.slug === "string" ? body.slug : "";
 
+  // The account check sits right before the write, after the body is read:
+  // a deleted player's cached session passes getPlayer, and a slow body
+  // must not widen the gap between the check and the write.
+  if (!(await accountExists(player.id))) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const result = await disbandTeam(playerId, slug);
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: statusForError(result.error) });
   return NextResponse.json({ team: result.team });

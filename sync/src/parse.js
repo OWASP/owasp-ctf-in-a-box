@@ -34,5 +34,8 @@ export function parseScoreComment(body, { targets }) {
     solved,
     pr: Number(data.pr ?? 0) || 0,
     sha: typeof data.sha === "string" ? data.sha : "",
+    // When the judge produced this verdict; null when absent or unusable (a
+    // marker from a scorer image that predates the field).
+    judgedAt: typeof data.judgedAt === "string" && Number.isFinite(Date.parse(data.judgedAt)) ? data.judgedAt : null,
   };
 }

@@ -337,6 +337,19 @@ export async function tick(cfg, state, deps = {}) {
         }
         continue;
       }
+      // The verdict's own time: the judge's judgedAt, unless it is missing
+      // (an older scorer image) or later than the comment, which no honest
+      // run produces. updated_at has whole-second precision, so a judgedAt in
+      // the same second as the comment is not later. updated_at alone is not the verdict's time: the
+      // workflow also edits the comment without judging (the cooldown note),
+      // and that edit would carry a frozen, pre-start or pre-reset verdict
+      // into a live window.
+      const at =
+        payload.judgedAt !== null && !(Date.parse(payload.judgedAt) >= Date.parse(c.updated_at) + 1000) ? payload.judgedAt : c.updated_at;
+      if (resetMs !== null && Date.parse(at) < resetMs) {
+        tally.preReset++;
+        continue;
+      }
       const authorKey = String(payload.author).toLowerCase();
       if (failedAuthors.has(authorKey)) {
         rs.seen = rs.seen.filter((k) => k !== seenKey(c.id, c.updated_at));
@@ -345,9 +358,9 @@ export async function tick(cfg, state, deps = {}) {
         continue;
       }
       try {
-        // The comment's own GitHub time, never a field of the marker: the
-        // scorer times the solve by it and judges the window and the freeze
-        // at it.
+        // The verdict's time (above): the scorer times the solve by it and
+        // judges the window and the freeze at it. A marker field named `at`
+        // is never read.
         // Resolved inside the try so a Redis error un-marks the comment like
         // a transient submit failure: the next poll retries it.
         // A link made at or after the close is no link: the score is held
@@ -355,7 +368,7 @@ export async function tick(cfg, state, deps = {}) {
         const link = await redis.resolveGithubLink(payload.author);
         if (!link || linkAfterClose(link, (await readWindow()).endsAt)) {
           await redis.holdScore(payload.author, seenKey(c.id, c.updated_at), {
-            target: payload.target, solved: payload.solved, pr: payload.pr, sha: payload.sha, at: c.updated_at, repo,
+            target: payload.target, solved: payload.solved, pr: payload.pr, sha: payload.sha, at, repo,
           });
           tally.held++;
           log(`submit ${repo}#${payload.pr}: held (PR author not linked yet)`);
@@ -373,7 +386,7 @@ export async function tick(cfg, state, deps = {}) {
         );
         if (waiting) {
           await redis.holdScore(payload.author, seenKey(c.id, c.updated_at), {
-            target: payload.target, solved: payload.solved, pr: payload.pr, sha: payload.sha, at: c.updated_at, repo,
+            target: payload.target, solved: payload.solved, pr: payload.pr, sha: payload.sha, at, repo,
           });
           tally.held++;
           log(`submit ${repo}#${payload.pr}: held (an older held score for this target goes first)`);
@@ -383,8 +396,8 @@ export async function tick(cfg, state, deps = {}) {
         // The login goes as the one `player` was resolved from: the scorer
         // writes only while that link still names this player, and answers
         // 503 (retried here, re-resolved next tick) once it moved.
-        const { author: _login, ...rest } = payload;
-        const verdict = await submitScore(cfg, { player, login: authorKey, ...rest, at: c.updated_at }, fetchImpl);
+        const { author: _login, judgedAt: _judgedAt, ...rest } = payload;
+        const verdict = await submitScore(cfg, { player, login: authorKey, ...rest, at }, fetchImpl);
         if (verdict.outcome === "accepted") {
           state.ingested++;
           tally.ingested++;

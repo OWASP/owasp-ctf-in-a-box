@@ -208,6 +208,16 @@ points leave the team's total. The warning says so, the request is refused
 until it is confirmed, and an organizer can put the player back from
 **Support → Add to team** (see below).
 
+**Once scoring has closed, teams are final.** After **Scoring closes**
+(`scoringEndsAt`) has passed, a player cannot leave, join, create a team or
+play solo, and a captain cannot remove a member, disband, rename or issue a
+new code, confirmed or not: each would change the final standings (a join
+would carry banked Secure Development solves onto a team). The request is
+refused with "Scoring has closed: teams are final". An organizer can still
+move people from **Support**. Before launch and during play nothing changes.
+If the settings read fails, these actions are allowed and the failure is
+logged, the same fail-open direction as the registration check.
+
 ![A contestant's profile: the header shows their points plus one done-out-of-available stat per enabled module, and the team card below carries the join code, invite link and captain controls](assets/profile.jpg)
 
 <sup>The profile is where teams live day to day: the join code and invite link
@@ -1332,9 +1342,18 @@ link back either, and the login stays blocked until the next master reset.
 **Delete contestant.** Removes the account, its sessions, progress, team
 membership and held scores. A team captain is refused, and so is an
 organizer: revoke their admin access first. The player's GitHub login is
-added to a blocklist (`ctf:relink:blocked`) and cannot link to any account
-until the next master reset, so a deleted player's PRs cannot be claimed by a
-new account. The deleted username is free again.
+added to a blocklist (`ctf:relink:blocked`) and, until the next master
+reset, cannot link to any account or sign in with GitHub (the sign-in is
+refused with `GITHUB_BLOCKED`), so a deleted player's PRs cannot be claimed by
+a new account and the player cannot come straight back through GitHub. They
+can still create a username and password account. The deleted username is
+free again. The player's open browser can keep showing pages for up to five
+minutes (the signed session cache), but every write from it (team changes,
+flag and quiz submits, hint buys, profile changes, a GitHub link, including
+one started before the delete) checks that the account still exists right
+before it writes, after reading the request, and is refused when it does not.
+A write that has already passed that check when the delete lands can still
+complete: the check is not part of the store's own write script.
 A Secure Development score for that player still in flight is refused, so it
 cannot restore their solves: the delete puts the player's scores on hold
 (`ctf:score-hold:<player id>`) before it clears anything, and the scorer

@@ -51,7 +51,9 @@ One image (`scorer/Dockerfile`), two modes:
   app's `/challenges` page prefers over its static per-app cards), and `GET
   /healthz`. Everything but `POST /score` is unauthenticated — it is all
   public catalogue and standings data. `POST /score` times each solve by the
-  payload's `at` (the score comment's time, which sync sends) and refuses
+  payload's `at` (the verdict's time, which sync sends: the marker's
+  `judgedAt`, or the score comment's time for a marker without one or whose
+  `judgedAt` is a second or more after the comment) and refuses
   with a final `422` a score posted before the launch, outside the scoring
   window, during a recorded freeze or before the last master reset (a freeze
   hand-set on the settings hash, with no recorded start, holds it with a

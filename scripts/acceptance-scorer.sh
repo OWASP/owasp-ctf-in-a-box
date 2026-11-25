@@ -370,6 +370,13 @@ expect_code 202 "$(score_at early-bird 2001-02-03T04:05:06Z)" "a score posted du
 curl -sf "http://127.0.0.1:$FREEZE_PORT/leaderboard" | grep -q "\"player\":\"$(player_for early-bird)\",\"points\":[0-9]*,\"lastSolveAt\":\"2001-02-03T04:05:06.000Z\"" \
   || { echo "FAIL: early-bird's solve was not timed by its comment"; exit 1; }
 
+echo "--- verdict time: an earlier verdict presented after a later one keeps the earlier time"
+expect_code 202 "$(score_at late-then-early 2001-03-01T00:00:00Z)" "the later verdict, presented first"
+expect_code 202 "$(score_at late-then-early 2001-02-01T00:00:00Z)" "the earlier verdict, presented second"
+expect_code 202 "$(score_at late-then-early 2001-04-01T00:00:00Z)" "a still later replay"
+curl -sf "http://127.0.0.1:$FREEZE_PORT/leaderboard" | grep -q "\"player\":\"$(player_for late-then-early)\",\"points\":[0-9]*,\"lastSolveAt\":\"2001-02-01T00:00:00.000Z\"" \
+  || { echo "FAIL: the solve did not keep its earliest verdict time"; exit 1; }
+
 echo "--- comment time: frozen since T, a score from before T scores and one from T on is refused"
 redis_freeze HSET ctf:admin:settings paused 1 pausedSince 2020-01-01T00:00:00.000Z
 expect_code 202 "$(score_at before-freeze 2019-12-31T23:59:59Z)" "a score posted before the freeze, read during it"

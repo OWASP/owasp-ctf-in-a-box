@@ -5,7 +5,7 @@ import { username } from "better-auth/plugins";
 import type { BetterAuthOptions } from "better-auth";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
 import { errorLabel } from "@/lib/error-label";
-import { getGithubLink, linkOnUserWrite } from "@/lib/github-link";
+import { getGithubLink, isReleasedAndBlocked, linkOnUserWrite } from "@/lib/github-link";
 import { recordSignIn } from "@/lib/activity-log";
 import { limitAuthAttempt } from "@/lib/auth-rate-limit";
 import { placeholderEmail } from "@/lib/placeholder-email";
@@ -134,6 +134,7 @@ export async function refuseDisabledProvider(ctx: AuthCtx): Promise<void> {
 /** What a database hook on the callback is about to write. */
 export type CallbackWrite = "user" | "account" | "session";
 
+type UserLookup = { internalAdapter?: { findUserById: (id: string) => Promise<unknown> } };
 type HookCtx = { path?: string; params?: Record<string, unknown> } | null | undefined;
 
 // One verdict per callback request: the parsed state object is the request's
@@ -175,6 +176,63 @@ export async function gateOAuthCallback(ctx: HookCtx, write: CallbackWrite): Pro
     callbackVerdicts.set(state, verdict);
   }
   return verdict;
+}
+
+/**
+ * A GitHub sign-in that would create an account for a login an organizer's
+ * delete released and blocked (`ctf:relink:blocked`, until the next master
+ * reset). Without it, a deleted player clicks "Sign in with GitHub" and gets
+ * a fresh account straight away. Runs on the user create of a sign-in
+ * callback only: a link never creates a user, and a returning player still
+ * has a row (an update, not a create). Throwing rolls back the user and
+ * account rows together; an unreadable blocklist refuses (fail closed).
+ */
+export async function refuseBlockedGithubSignIn(user: Record<string, unknown> | null | undefined, ctx: HookCtx): Promise<void> {
+  if (ctx?.path !== "/callback/:id") return;
+  const login = user?.login;
+  if (typeof login !== "string" || login === "") return;
+  let blocked: boolean;
+  try {
+    blocked = await isReleasedAndBlocked(login);
+  } catch (err) {
+    console.error(`[auth] could not read the re-link blocklist on sign-in: ${errorLabel(err)}`);
+    throw new APIError("SERVICE_UNAVAILABLE", { message: "Could not check this GitHub account. Try again.", code: "GITHUB_BLOCKLIST_UNREADABLE" });
+  }
+  if (blocked) {
+    throw new APIError("FORBIDDEN", { message: "This GitHub account cannot sign in to this event.", code: "GITHUB_BLOCKED" });
+  }
+}
+
+/**
+ * Whether the user row for `userId` exists, asked of better-auth's own
+ * adapter so it reads the store this instance was built with. Throws
+ * SERVICE_UNAVAILABLE when it cannot tell (fail closed).
+ */
+async function userRowExists(context: UserLookup | undefined, userId: unknown, when: string): Promise<boolean> {
+  if (typeof userId !== "string") return false;
+  try {
+    if (!context?.internalAdapter) throw new Error("no auth adapter on this context");
+    return (await context.internalAdapter.findUserById(userId)) !== null;
+  } catch (err) {
+    console.error(`[auth] could not confirm the account ${when}: ${errorLabel(err)}`);
+    throw new APIError("SERVICE_UNAVAILABLE", { message: "Could not check your account. Try again.", code: "ACCOUNT_UNREADABLE" });
+  }
+}
+
+const accountDeleted = () => new APIError("UNAUTHORIZED", { message: "This account no longer exists.", code: "ACCOUNT_DELETED" });
+
+/**
+ * The `/link-social` before hook for a deleted account. The session comes
+ * from the signed cookie cache, which outlives an organizer's delete by up to
+ * its max age; linking then would write an account row and a GitHub link for
+ * a user that no longer exists. An unreadable check fails closed. A request
+ * with no session is left to the endpoint, which answers 401.
+ */
+export async function refuseDeletedAccount(ctx: AuthCtx): Promise<void> {
+  if (ctx.path !== "/link-social") return;
+  const session = await getSessionFromCtx(ctx);
+  if (!session) return;
+  if (!(await userRowExists(ctx.context as UserLookup, session.user.id, "before linking"))) throw accountDeleted();
 }
 
 /**
@@ -387,7 +445,10 @@ export const authOptions = {
     // gateOAuthCallback first.
     user: {
       create: {
-        before: async (_user, ctx) => gateOAuthCallback(ctx, "user"),
+        before: async (user, ctx) => {
+          await gateOAuthCallback(ctx, "user");
+          await refuseBlockedGithubSignIn(user, ctx);
+        },
         after: async (user) => linkOnUserWrite(user),
       },
       update: {
@@ -416,6 +477,7 @@ export const authOptions = {
       await refuseSignUpFields(ctx);
       await refuseClientOAuthParams(ctx);
       await refuseDisabledProvider(ctx);
+      await refuseDeletedAccount(ctx);
       await refuseSecondGithubLink(ctx);
     }),
     // Sign-in timestamps for the admin activity log. The after hook runs on

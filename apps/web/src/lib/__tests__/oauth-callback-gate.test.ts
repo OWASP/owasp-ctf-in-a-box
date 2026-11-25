@@ -9,7 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 const getGithubLink = vi.hoisted(() => vi.fn(async () => null));
-vi.mock("@/lib/github-link", () => ({ linkOnUserWrite: vi.fn(async () => {}), getGithubLink }));
+const isReleasedAndBlocked = vi.hoisted(() => vi.fn<(login: string) => Promise<boolean>>(async () => false));
+vi.mock("@/lib/github-link", () => ({ linkOnUserWrite: vi.fn(async () => {}), getGithubLink, isReleasedAndBlocked }));
 
 const getAdminSettings = vi.hoisted(() => vi.fn<() => Promise<unknown>>());
 vi.mock("@/lib/admin-store", async (orig) => ({
@@ -135,6 +136,40 @@ describe("OAuth callback completion is gated on the GitHub sign-in switch", () =
     getAdminSettings.mockReset();
   });
 
+  it("refuses a GitHub sign-in for a login a delete released and blocked, and creates no account (#823)", async () => {
+    const { db, instance } = build();
+    githubSwitch(true);
+    isReleasedAndBlocked.mockImplementation(async (login) => login === "octocat");
+    try {
+      const users = db.user.length;
+      const res = await callback(instance, "github", await start(instance, "/sign-in/social", "github"));
+      expect(errorOf(res)).toBe("GITHUB_BLOCKED");
+      expect(setsSession(res)).toBe(false);
+      expect(db.user).toHaveLength(users);
+      expect(db.account.filter((a) => a.providerId === "github")).toEqual([]);
+      expect(isReleasedAndBlocked).toHaveBeenCalledWith("octocat");
+    } finally {
+      isReleasedAndBlocked.mockImplementation(async () => false);
+    }
+  });
+
+  it("refuses the sign-in when the blocklist cannot be read (#823)", async () => {
+    const { db, instance } = build();
+    githubSwitch(true);
+    isReleasedAndBlocked.mockImplementation(async () => {
+      throw new Error("blocklist: NOAUTH");
+    });
+    try {
+      const users = db.user.length;
+      const res = await callback(instance, "github", await start(instance, "/sign-in/social", "github"));
+      expect(errorOf(res)).toBe("GITHUB_BLOCKLIST_UNREADABLE");
+      expect(setsSession(res)).toBe(false);
+      expect(db.user).toHaveLength(users);
+    } finally {
+      isReleasedAndBlocked.mockImplementation(async () => false);
+    }
+  });
+
   it("completes a GitHub sign-in with the switch on (the control)", async () => {
     const { db, instance } = build();
     githubSwitch(true);
@@ -171,6 +206,20 @@ describe("OAuth callback completion is gated on the GitHub sign-in switch", () =
     expect(errorOf(res)).toBe("PROVIDER_DISABLED");
     expect(setsSession(res)).toBe(false);
     expect(db.session).toHaveLength(1);
+  });
+
+  // better-auth itself refuses a link whose user row is gone; this pins that,
+  // so a link started before an organizer's delete cannot complete after it.
+  it("writes no GitHub account when the player was deleted between starting the link and its callback (#822)", async () => {
+    const { db, instance } = build();
+    githubSwitch(true);
+    const player = await signedInPlayer(instance);
+    const flow = await start(instance, "/link-social", "github", player);
+    db.user.splice(0, db.user.length); // the organizer deletes the account now
+    const res = await callback(instance, "github", flow);
+    expect(res.status).toBe(302);
+    expect(errorOf(res)).toBe("unable_to_link_account");
+    expect(db.account.filter((a) => a.providerId === "github")).toEqual([]);
   });
 
   it("still completes a GitHub link with GitHub sign-in switched off", async () => {

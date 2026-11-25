@@ -25,6 +25,8 @@ const {
   }),
 );
 
+const accountExists = vi.hoisted(() => vi.fn<(id: string) => Promise<boolean>>());
+vi.mock("@/lib/account-exists", () => ({ accountExists }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/team-store", () => ({
@@ -75,6 +77,37 @@ beforeEach(() => {
   leaveTeam.mockReset();
   getSession.mockResolvedValue(SESSION);
   consumeRateLimit.mockResolvedValue({ allowed: true });
+  accountExists.mockReset();
+  accountExists.mockResolvedValue(true);
+});
+
+describe("a deleted player's still-cached session (#822)", () => {
+  const routes = {
+    create: () => createPOST(req({ name: "ghost-test" })),
+    join: () => joinPOST(req({ code: "abc123" })),
+    remove: () => removePOST(req({ member: "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e30" })),
+    rename: () => renamePOST(req({ name: "x" })),
+    transfer: () => transferPOST(req({ to: "0b9e4f3c-1d2a-4c5b-8e6f-7a8b9c0d1e30" })),
+    disband: () => disbandPOST(req()),
+    regen: () => regenPOST(req()),
+    solo: () => soloPOST(req()),
+    leave: () => leavePOST(req()),
+  };
+  const writes = [createTeam, joinTeam, removeMember, renameTeam, transferCaptain, disbandTeam, regenerateCode, createSoloTeam, leaveTeam];
+
+  it.each(Object.keys(routes))("%s answers 401 and writes nothing once the account row is gone", async (name) => {
+    accountExists.mockResolvedValue(false);
+    const res = await routes[name as keyof typeof routes]();
+    expect(res.status).toBe(401);
+    expect(accountExists).toHaveBeenCalledWith(ALICE);
+    for (const w of writes) expect(w).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the account check cannot read Redis", async () => {
+    accountExists.mockRejectedValue(new Error("upstash down"));
+    await expect(createPOST(req({ name: "ghost-test" }))).rejects.toThrow(/upstash down/);
+    expect(createTeam).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/team/join rate limiting", () => {

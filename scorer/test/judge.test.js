@@ -281,6 +281,22 @@ test("renderReport pins column layout and JSON key order", () => {
   assert.ok(md.includes('<!-- ctf-score: {"author":"octocat","target":"juice-shop","solved":[],"pr":7,"sha":"abc123"} -->'));
 });
 
+test("renderReport stamps the verdict's judgedAt into the sync marker (#821)", () => {
+  const md = renderReport({
+    challenges: [{ id: "a", name: "A", points: 2 }],
+    solved: ["a"],
+    author: "octocat",
+    target: "juice-shop",
+    pr: 7,
+    sha: "abc123",
+    judgedAt: "2026-08-13T10:44:00.000Z",
+  });
+  assert.ok(
+    md.includes('<!-- ctf-score: {"author":"octocat","target":"juice-shop","solved":["a"],"pr":7,"sha":"abc123","judgedAt":"2026-08-13T10:44:00.000Z"} -->'),
+    md,
+  );
+});
+
 test("renderReport shows a points-based progress bar", () => {
   // 3 of 4 points earned -> 75%; bar is 20 cells, round(0.75*20)=15 filled.
   const md = renderReport({

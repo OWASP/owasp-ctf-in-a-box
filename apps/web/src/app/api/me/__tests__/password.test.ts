@@ -13,9 +13,11 @@ const m = vi.hoisted(() => ({
   upstashEval: vi.fn(),
   realConsume: null as null | ((...a: never[]) => Promise<unknown>),
 }));
+const accountExists = vi.hoisted(() => vi.fn<(id: string) => Promise<boolean>>(async () => true));
+vi.mock("@/lib/account-exists", () => ({ accountExists }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth", () => ({ auth: { api: { setPassword: m.setPassword } } }));
-vi.mock("@/lib/player", () => ({ getPlayer: m.getPlayer }));
+vi.mock("@/lib/player", () => ({ getPlayer: m.getPlayer, getPlayerForWrite: m.getPlayer }));
 vi.mock("@/lib/upstash", () => ({ upstashEval: m.upstashEval }));
 vi.mock("@/lib/rate-limit-store", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/rate-limit-store")>();

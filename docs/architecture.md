@@ -160,9 +160,10 @@ state; everything else that touches scores goes through it.
    `ctf:sd:held:*` (counted in the `held` tally bucket, never in `dropped`)
    and the login is never logged. Each tick, before the comment
    pass, sync releases held scores whose author linked before `scoringEndsAt`
-   (or the event has no end), oldest comment first, POSTing each at its
-   ORIGINAL comment time, so the scorer still judges the window, freeze and
-   reset against that time (ADR 67). A link made at or after the close does
+   (or the event has no end), oldest comment first, POSTing each at the time
+   it was held with, its verdict's time (the marker's `judgedAt`, or the
+   comment's time without one), so the scorer still judges the window, freeze
+   and reset against that time (ADR 67). A link made at or after the close does
    not release: the admin list shows it as `unclaimed`. The close is the
    current `scoringEndsAt`, read every tick, so an organizer who moves the
    end later than the link lets that score release; an unclaimed score is
@@ -178,7 +179,7 @@ state; everything else that touches scores goes through it.
    lookup and for the freeze and reset reads, so it refuses to start without
    it (`ctf-sync: Secure Development needs Redis to attribute PRs to players`).
 6. `submitScore` (`sync/src/submit.js`) POSTs the validated payload with
-   `author` replaced by `player` (the resolved id), plus `at` — the comment's own GitHub `updated_at`, never a field of the marker —
+   `author` replaced by `player` (the resolved id), plus `at` — the verdict's time: the marker's `judgedAt`, written by the judge, or the comment's own GitHub `updated_at` when the marker has none or its `judgedAt` is a full second or more after the comment —
    to `POST /score` on `scorer` with a bearer token
    (`Authorization: Bearer ${cfg.scorerToken}`), over the compose network —
    that endpoint is reachable from inside the box and nowhere else. The
@@ -920,7 +921,7 @@ on a team they are not on) but keep the existence and membership checks
 clicking Leave.
 
 **Secure Development solves can be deleted but not kept deleted.** The scorer
-writes them with `HSETNX` so replays no-op, and the poller re-submits from PR
+keeps each one's earliest time so replays no-op, and the poller re-submits from PR
 comments — so a per-contestant reset clears them and the next re-score writes
 them back. A sync restart does not: the poller's cursor is in Redis
 (`ctf:sync:state`, below), so a restarted poller does not re-read the comments
@@ -1040,7 +1041,8 @@ floor that keeps the rate inside 0..1.
 `paused` does not touch fork Actions or GitHub — PRs keep getting judged and
 commented on. The poller does not hold its cursor either: `sync/src/index.js`'s
 `tick()` reads `redis.isPaused()` only to write the `paused` heartbeat, and
-forwards every score with its comment's `updated_at`. The `scorer` reads the
+forwards every score with its verdict's time (the marker's `judgedAt`, or the
+comment's `updated_at` without one). The `scorer` reads the
 freeze, the window and the reset epoch on every `POST /score` that carries
 `at` (`store.readScoringPolicy()`) and refuses with a final `422` a score
 posted while any of them closed scoring (`scorer/src/serve.js`'s
@@ -1145,7 +1147,10 @@ have deduped them was just cleared), so the epoch is also the ingestion
 **watermark** (#551): a bot comment whose `updated_at` predates `resetAt` is
 marked seen and skipped (tallied once as `preReset` in the poll summary), while
 a re-run that edits the comment past the epoch is a new revision and lands as
-normal. The scorer applies the same watermark to each score's `at`, when it
+normal. sync also skips a verdict whose `judgedAt` predates `resetAt`,
+whatever the comment's `updated_at` says: the workflow edits the comment
+without judging (the cooldown note), and that edit must not carry a
+pre-reset verdict past the epoch. The scorer applies the same watermark to each score's `at`, when it
 judges the score and again inside the solve write's own script, and the reset
 writes the epoch before it sweeps a solve, so a score judged before the reset
 and written after the sweep is refused rather than restored (#791). The

@@ -487,7 +487,9 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
         (reason: unknown) => ({ reason }),
       );
       let readsAtRefusal = -1;
-      let second: { value?: unknown; reason?: unknown };
+      let second: { value?: unknown; reason?: unknown } = {};
+      let firstResult: { value?: unknown; reason?: unknown } | undefined;
+      let overlapError: unknown;
       try {
         await watchdog(held, "first completion never reached its account-row read");
         second = await watchdog(
@@ -498,12 +500,21 @@ describe.skipIf(!liveConfigured)("better-auth over the Redis store against a liv
           "second completion was neither linked nor refused",
         );
         readsAtRefusal = reads;
+      } catch (err) {
+        overlapError = err;
       } finally {
+        // Drain the first completion and remove the hook on every path, so a
+        // failed overlap leaves no write in flight and no hook for later tests.
         releaseFirst();
+        try {
+          firstResult = await watchdog(first, "first completion never finished");
+        } catch (err) {
+          overlapError ??= err;
+        } finally {
+          relay.hook = null;
+        }
       }
-      const firstResult = await watchdog(first, "first completion never finished").finally(() => {
-        relay.hook = null;
-      });
+      if (overlapError !== undefined) throw overlapError;
 
       expect(readsAtRefusal).toBe(1);
       expect(second.value).toBeUndefined();

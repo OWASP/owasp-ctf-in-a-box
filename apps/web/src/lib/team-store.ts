@@ -189,11 +189,13 @@ async function generateUniqueJoinCode(): Promise<string> {
 // The script refuses if the setting changed since that read (an organizer
 // moved the close), then compares the deadline with Redis's own clock, so a
 // read that happened just before the close cannot let a team change land
-// after it. Prefixed to every script that changes a team.
+// after it. A caller whose own settings read failed passes '*' and '', which
+// skips both checks: the same fail-open direction as that read. Prefixed to
+// every script that changes a team.
 export const SCORING_DEADLINE_GUARD = `
 local deadline = ARGV[#ARGV]
 local readEnds = ARGV[#ARGV - 1]
-if (redis.call('HGET', 'ctf:admin:settings', 'scoringEndsAt') or '') ~= readEnds then return 'scoring-changed' end
+if readEnds ~= '*' and (redis.call('HGET', 'ctf:admin:settings', 'scoringEndsAt') or '') ~= readEnds then return 'scoring-changed' end
 if deadline ~= '' then
   local t = redis.call('TIME')
   if tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000) > tonumber(deadline) then return 'scoring-closed' end
@@ -318,7 +320,7 @@ async function readTeamWindows(): Promise<TeamWindows> {
       // Array.isArray decode below, which would otherwise treat it as
       // "every field absent" silently. Same fail-open verdict, but logged.
       console.error("team windows: settings read failed, failing open:", errorLabel(new Error(res.error)));
-      return { registrationClosed: false, scoringOver: false, guardArgs: ["", ""] };
+      return { registrationClosed: false, scoringOver: false, guardArgs: ["*", ""] };
     }
     const [open, startsAt, endsAt, scoringEndsAt] = Array.isArray(res.result) ? (res.result as (string | null)[]) : [];
     // Closed by the manual toggle OR by the scheduled registration window
@@ -329,7 +331,7 @@ async function readTeamWindows(): Promise<TeamWindows> {
     return { registrationClosed, scoringOver, guardArgs: [scoringEndsAt ?? "", Number.isFinite(endsMs) ? String(endsMs) : ""] };
   } catch (err) {
     console.error("team windows: settings read failed, failing open:", errorLabel(err));
-    return { registrationClosed: false, scoringOver: false, guardArgs: ["", ""] };
+    return { registrationClosed: false, scoringOver: false, guardArgs: ["*", ""] };
   }
 }
 

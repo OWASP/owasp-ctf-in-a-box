@@ -1519,6 +1519,8 @@ describe("team changes after scoring closes (#824)", () => {
     mocks.upstashPipeline.mockResolvedValueOnce([{ error: "WRONGTYPE" }]);
     mocks.upstashEval.mockResolvedValueOnce("ok");
     expect(await store.leaveTeam("octocat")).toEqual({ ok: true, team: null });
+    // The script is told the read failed, so it skips its own checks too.
+    expect(mocks.upstashEval.mock.calls[0][2].slice(-2)).toEqual(["*", ""]);
     err.mockRestore();
   });
 });

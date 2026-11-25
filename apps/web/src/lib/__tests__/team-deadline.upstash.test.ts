@@ -42,6 +42,10 @@ describe.skipIf(!liveConfigured)("SCORING_DEADLINE_GUARD against a live Redis", 
     expect(await run("")).toBe("wrote");
   });
 
+  it("skips both checks when the caller could not read the settings (fail open)", async () => {
+    expect(await run("", "*")).toBe("wrote");
+  });
+
   it("refuses when the close changed since the caller read it", async () => {
     expect(await run("", `${current}-moved`)).toBe("scoring-changed");
   });

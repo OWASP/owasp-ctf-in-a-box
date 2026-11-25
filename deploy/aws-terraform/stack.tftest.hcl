@@ -333,6 +333,16 @@ run "secure_development_event_runs_scorer_and_sync" {
     ])
     error_message = "sync container must receive GITHUB_ORG too — sync/src/config.js refuses to start without one."
   }
+
+  assert {
+    condition     = jsondecode(aws_ecs_task_definition.sync[0].container_definitions)[0].stopTimeout == 120
+    error_message = "sync needs a 120 s stopTimeout so its final cursor save is not killed at Fargate's 30 s default (docker-compose.yml's stop_grace_period)."
+  }
+
+  assert {
+    condition     = jsondecode(aws_ecs_task_definition.scorer[0].container_definitions)[0].stopTimeout == 40
+    error_message = "the scorer needs a 40 s stopTimeout, above its 35 s drain cap (createDrain in scorer/src/serve.js)."
+  }
 }
 
 // Final-review finding #3 (issue #386): the app must never receive a

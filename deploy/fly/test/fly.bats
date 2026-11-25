@@ -619,6 +619,32 @@ ENV
   [ -z "$(grep -E '^    restart:' "$RENDERED")" ]
 }
 
+@test "render: no stop_grace_period key survives (Fly's kill timeout governs)" {
+  need_docker
+  # Anti-vacuous: the source must still declare it, or this passes on nothing.
+  grep -qE '^    stop_grace_period: ' "$REPO/docker-compose.yml"
+  render
+  [ -z "$(grep -E '^    stop_grace_period:' "$RENDERED")" ]
+}
+
+@test "fly.toml: kill_timeout covers every compose stop_grace_period it replaces" {
+  kill=$(sed -n 's/^kill_timeout = \([0-9][0-9]*\)$/\1/p' "$REPO/deploy/fly/fly.toml")
+  [ -n "$kill" ]
+  # Every declaration is read, whatever its indent or trailing comment, and
+  # one this test cannot parse as whole seconds fails it rather than being
+  # skipped.
+  decls=$(grep -E '^[[:space:]]*stop_grace_period:' "$REPO/docker-compose.yml")
+  # Anti-vacuous: the compose file must still declare grace periods to compare.
+  [ -n "$decls" ]
+  while IFS= read -r line; do
+    g=$(printf '%s\n' "$line" | sed -n 's/^[[:space:]]*stop_grace_period:[[:space:]]*\([0-9][0-9]*\)s[[:space:]]*\(#.*\)\{0,1\}$/\1/p')
+    [ -n "$g" ] || { echo "cannot read a stop_grace_period in whole seconds: $line"; return 1; }
+    [ "$kill" -ge "$g" ] || { echo "kill_timeout $kill is below a stop_grace_period of ${g}s"; return 1; }
+  done <<EOF
+$decls
+EOF
+}
+
 @test "render: no service is left with an empty environment key" {
   need_docker
   render

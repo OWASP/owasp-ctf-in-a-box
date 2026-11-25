@@ -16,6 +16,8 @@ test("POSTs payload with bearer token, accepted on 202", async () => {
   assert.equal(seen.opts.method, "POST");
   assert.equal(seen.opts.headers.authorization, "Bearer s3cret");
   assert.deepEqual(JSON.parse(seen.opts.body), PAYLOAD);
+  // Bounded, so a stalled scorer cannot hold a tick or a shutdown drain.
+  assert.ok(seen.opts.signal instanceof AbortSignal);
 });
 
 test("rejected on 4xx (do not retry)", async () => {

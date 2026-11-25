@@ -942,3 +942,162 @@ test("a store error on the solve write answers 5xx, never 202 or 422", async (t)
   });
   assert.ok(res.status >= 500 && res.status < 600, `expected 5xx, got ${res.status}`);
 });
+
+// ── waiting for Redis, and stopping (#825) ───────────────────────────────────
+import { createDrain, waitForCompatibleRedis } from "../src/serve.js";
+import { IncompatibleRedisError } from "../src/store.js";
+
+test("waitForCompatibleRedis: waits out a Redis that is not answering yet, with its own log line", async () => {
+  let attempts = 0;
+  const logs = [];
+  const store = { ensureCompatible: async () => { if (++attempts < 3) throw new Error("fetch failed"); } };
+  await waitForCompatibleRedis(store, { log: (m) => logs.push(m), sleep: async () => {}, waitMs: 1 });
+  assert.equal(attempts, 3);
+  assert.deepEqual(logs, ["ctf-score-engine: waiting for Redis (fetch failed), retrying"]);
+});
+
+test("waitForCompatibleRedis: a refusal is rethrown at once, never waited on", async () => {
+  let attempts = 0;
+  const store = { ensureCompatible: async () => { attempts++; throw new IncompatibleRedisError("Incompatible Redis data detected (matching fingerprint: ctf:user:*)"); } };
+  await assert.rejects(
+    waitForCompatibleRedis(store, { log: () => {}, sleep: async () => {} }),
+    (err) =>
+      err instanceof IncompatibleRedisError &&
+      // The documented refusal line (docs/hosting.md), logged once by index.js.
+      err.message === "Redis compatibility check failed: Incompatible Redis data detected (matching fingerprint: ctf:user:*)",
+  );
+  assert.equal(attempts, 1);
+});
+
+test("waitForCompatibleRedis: gives up with a distinct message when Redis never answers", async () => {
+  const store = { ensureCompatible: async () => { throw new Error("fetch failed"); } };
+  await assert.rejects(
+    waitForCompatibleRedis(store, { log: () => {}, sleep: async () => {}, tries: 3 }),
+    /Redis did not answer after 3 tries: fetch failed/,
+  );
+});
+
+test("serve(): SIGTERM closes the server and exits 0", async () => {
+  let stop;
+  const exits = [];
+  const logs = [];
+  const server = await serve(
+    { SCORER_TOKEN: TOKEN, RUBRIC_DIR, PORT: "0" },
+    { log: (m) => logs.push(m), onStop: (fn) => { stop = fn; }, exit: (code) => exits.push(code) },
+  );
+  assert.equal(typeof stop, "function");
+  stop();
+  await new Promise((resolve) => server.on("close", resolve));
+  assert.deepEqual(exits.slice(0, 1), [0]);
+  assert.ok(logs.includes("ctf-score-engine: stopping"));
+});
+
+// createDrain with hand-run timers: [idle backstop, cap] in the order stop() sets them.
+function drainHarness() {
+  const exits = [];
+  const timers = [];
+  let closed;
+  const drain = createDrain({ exit: (c) => exits.push(c), log: () => {}, setTimer: (fn, ms) => timers.push({ fn, ms }) });
+  const server = { close: (cb) => { closed = cb; }, closeIdleConnections() {} };
+  return { drain, server, exits, timers, close: () => closed() };
+}
+
+test("createDrain: a score past its body read holds the exit past the idle backstop until it finishes", () => {
+  const h = drainHarness();
+  h.drain.work.enter();
+  h.drain.stop(h.server);
+  assert.deepEqual(h.timers.map((t) => t.ms), [11_000, 35_000]);
+  h.timers[0].fn(); // 11 s: a policy read and a write can still be running
+  assert.deepEqual(h.exits, [], "an in-flight score is not cut off at the idle backstop");
+  h.drain.work.leave();
+  assert.deepEqual(h.exits, [0]);
+  h.timers[1].fn();
+  assert.deepEqual(h.exits, [0], "exits once");
+});
+
+test("createDrain: with no score in progress, a held connection stops delaying the exit at the idle backstop", () => {
+  const h = drainHarness();
+  h.drain.stop(h.server);
+  assert.deepEqual(h.exits, []);
+  h.timers[0].fn();
+  assert.deepEqual(h.exits, [0]);
+});
+
+test("createDrain: a score that never finishes is bounded by the cap", () => {
+  const h = drainHarness();
+  h.drain.work.enter();
+  h.drain.stop(h.server);
+  h.timers[0].fn();
+  h.timers[1].fn();
+  assert.deepEqual(h.exits, [0]);
+});
+
+test("createDrain: a score whose client disconnected still finishes before the exit", () => {
+  const h = drainHarness();
+  h.drain.work.enter();
+  h.drain.stop(h.server);
+  h.close(); // the client went away mid-write, so the server has no connections left
+  assert.deepEqual(h.exits, [], "the write in progress is not cut off by the close");
+  h.drain.work.leave();
+  assert.deepEqual(h.exits, [0]);
+});
+
+test("createDrain: the server closing exits at once, and only once", () => {
+  const h = drainHarness();
+  h.drain.stop(h.server);
+  h.close();
+  h.timers[0].fn();
+  h.timers[1].fn();
+  assert.deepEqual(h.exits, [0]);
+});
+
+test("createDrain: no score is admitted once the stop has begun", () => {
+  const h = drainHarness();
+  assert.equal(h.drain.work.enter(), true, "admitted before the stop");
+  h.drain.stop(h.server);
+  assert.equal(h.drain.work.enter(), false, "refused after the stop");
+  h.drain.work.leave(); // only the admitted one leaves
+  h.close();
+  assert.deepEqual(h.exits, [0], "the refused request did not hold the exit");
+});
+
+test("score: a body that finishes arriving after the stop began answers 503, which sync retries", async () => {
+  const server = await startServer({ store: createMemoryStore(), token: TOKEN, port: 0, work: { enter: () => false, leave() {} } });
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/score`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ player: "11111111-1111-4111-8111-111111111111", target: "dvwa", solved: ["sqli-low"] }),
+    });
+    assert.equal(res.status, 503);
+    assert.deepEqual(await res.json(), { error: "the scorer is stopping" });
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test("waitForCompatibleRedis: a stop during the wait ends it without throwing", async () => {
+  let attempts = 0;
+  let stopped = false;
+  const store = { ensureCompatible: async () => { attempts++; stopped = true; throw new Error("fetch failed"); } };
+  const up = await waitForCompatibleRedis(store, { log: () => {}, sleep: async () => {}, shouldStop: () => stopped });
+  assert.equal(up, false);
+  assert.equal(attempts, 1, "no retry after the stop");
+});
+
+test("serve(): SIGTERM during the Redis wait exits 0 at once, without listening", async () => {
+  let stop;
+  const exits = [];
+  const logs = [];
+  const fetchImpl = async () => {
+    stop(); // the signal lands while srh is still starting
+    throw new Error("fetch failed");
+  };
+  const server = await serve(
+    { SCORER_TOKEN: TOKEN, RUBRIC_DIR, PORT: "0", UPSTASH_REDIS_REST_URL: "http://srh:80", UPSTASH_REDIS_REST_TOKEN: "t" },
+    { log: (m) => logs.push(m), fetchImpl, onStop: (fn) => { stop = fn; }, exit: (code) => exits.push(code) },
+  );
+  assert.equal(server, null, "the server never listened");
+  assert.deepEqual(exits, [0]);
+  assert.ok(logs.includes("ctf-score-engine: stopping"));
+});

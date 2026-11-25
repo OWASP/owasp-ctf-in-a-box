@@ -2,6 +2,10 @@
  * Poll one repo's issue comments (PR result comments are issue comments).
  * One request per repo per tick; `since` + ETag keep it far under GitHub's rate limits.
  */
+// One poll request. Bounded so a stalled GitHub cannot hold a tick, and so a
+// SIGTERM's drain (main() in sync/src/index.js) fits its stop grace period.
+export const GITHUB_TIMEOUT_MS = 15_000;
+
 export async function fetchNewScoreComments(cfg, repo, cursor, fetchImpl = fetch) {
   const url = new URL(`${cfg.apiUrl}/repos/${cfg.org}/${repo}/issues/comments`);
   url.searchParams.set("per_page", "100");
@@ -17,7 +21,7 @@ export async function fetchNewScoreComments(cfg, repo, cursor, fetchImpl = fetch
   };
   if (cursor.etag) headers["if-none-match"] = cursor.etag;
 
-  const res = await fetchImpl(url, { headers });
+  const res = await fetchImpl(url, { headers, signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS) });
   if (res.status === 304) return { comments: [], cursor };
   if (!res.ok) throw new Error(`GitHub ${res.status} polling ${repo}`);
 

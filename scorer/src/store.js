@@ -6,6 +6,16 @@ export const CURRENT_SCHEMA_VERSION = "2";
 // the scores arrive in, and a replay is a no-op. Reads are one HGETALL per known target. The memory
 // store mirrors the same contract for tests/dev.
 
+/** A refusal by the startup compatibility check: v1 data, or a schema version
+ *  this build does not know. Anything else ensureCompatible throws is Redis
+ *  not answering yet, which serve() waits out instead of exiting. */
+export class IncompatibleRedisError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "IncompatibleRedisError";
+  }
+}
+
 export const solvesKey = (target) => `ctf:solves:${target}`;
 const solveField = (player, id) => `${player}:${id}`;
 // Same key/field the app (admin-store.ts) writes and the sync poller
@@ -410,7 +420,7 @@ export function createRedisStore({
 
       if (version === CURRENT_SCHEMA_VERSION) return;
       if (version !== null) {
-        throw new Error(`unsupported Redis schema version: ${version}`);
+        throw new IncompatibleRedisError(`unsupported Redis schema version: ${version}`);
       }
 
       for (const pattern of V1_FINGERPRINT_PATTERNS) {
@@ -422,10 +432,10 @@ export function createRedisStore({
           const concurrentVersion = await readVersion();
           if (concurrentVersion === CURRENT_SCHEMA_VERSION) return;
           if (concurrentVersion !== null) {
-            throw new Error(`unsupported Redis schema version: ${concurrentVersion}`);
+            throw new IncompatibleRedisError(`unsupported Redis schema version: ${concurrentVersion}`);
           }
 
-          throw new Error(
+          throw new IncompatibleRedisError(
             `Incompatible Redis data detected (matching fingerprint: ${pattern}). Export required data, perform a master reset on v1, then deploy v2.`,
           );
         }
@@ -440,7 +450,7 @@ export function createRedisStore({
       const concurrentVersion = await readVersion();
       if (concurrentVersion === CURRENT_SCHEMA_VERSION) return;
 
-      throw new Error("Redis schema marker initialization failed; refusing to start");
+      throw new IncompatibleRedisError("Redis schema marker initialization failed; refusing to start");
     },
     async findKeysByPatterns(patterns) {
       const found = new Set();

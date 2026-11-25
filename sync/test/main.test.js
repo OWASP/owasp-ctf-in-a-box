@@ -13,6 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { main } from "../src/index.js";
+import { IncompatibleRedisError } from "../src/redis.js";
 
 const STOP = new Error("stop-the-poll-loop");
 
@@ -55,6 +56,7 @@ function spyDeps(overrides = {}) {
       calls.exit.push(code);
       throw STOP; // like sleep, unwinds main() without actually killing the test
     },
+    onStop: () => {},
     ...overrides,
   };
   return { deps, calls };
@@ -96,6 +98,7 @@ test("a valid config proceeds: state, redis, then the poll loop", async () => {
   assert.equal(calls.tick.length, 1);
   assert.equal(calls.tick[0].cfg, cfg);
   assert.equal(calls.tick[0].opts.redis.fake, "redis");
+  assert.equal(calls.tick[0].opts.shouldStop(), false, "the tick is told to stop only after a signal");
   // With Redis, the tick's state is persisted to Redis before sleeping (once
   // to establish the key, once after the tick) and the file is not written.
   assert.equal(calls.pollState.length, 2);
@@ -145,7 +148,7 @@ test("refuses startup when Redis compatibility validation fails, before loading 
     makeRedisImpl: () => ({
       ensureCompatible: async () => {
         calls.compatibility++;
-        throw new Error("incompatible Redis data detected");
+        throw new IncompatibleRedisError("incompatible Redis data detected");
       },
     }),
   });
@@ -160,4 +163,230 @@ test("refuses startup when Redis compatibility validation fails, before loading 
   assert.deepEqual(calls.logErr, [
     "ctf-sync: Redis compatibility check failed: incompatible Redis data detected",
   ]);
+});
+
+// ── waiting for Redis, and stopping (#825) ───────────────────────────────────
+
+test("waits for a Redis that is not answering yet with its own log line, then polls", async () => {
+  let attempts = 0;
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    redisWaitMs: 5,
+    makeRedisImpl: () => ({
+      ensureCompatible: async () => {
+        if (++attempts < 3) throw new Error("fetch failed");
+      },
+      readPollState: async () => null,
+      writePollState: async () => {},
+    }),
+    sleep: (ms) => {
+      calls.sleep.push(ms);
+      if (ms !== 5) throw STOP; // the poll loop's sleep ends the test
+    },
+  });
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+  assert.equal(attempts, 3);
+  assert.deepEqual(calls.exit, []);
+  assert.equal(calls.tick.length, 1, "it went on to poll");
+  assert.ok(calls.logErr.includes("ctf-sync: waiting for Redis (fetch failed), retrying"), JSON.stringify(calls.logErr));
+  assert.ok(!calls.logErr.some((l) => /compatibility check failed/.test(l)), "a slow start never reads like the refusal");
+});
+
+test("gives up with a distinct line when Redis never answers", async () => {
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    redisWaitMs: 5,
+    redisWaitTries: 3,
+    makeRedisImpl: () => ({
+      ensureCompatible: async () => {
+        throw new Error("fetch failed");
+      },
+    }),
+    sleep: (ms) => calls.sleep.push(ms),
+  });
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+  assert.deepEqual(calls.exit, [1]);
+  assert.equal(calls.logErr.at(-1), "ctf-sync: Redis did not answer after 3 tries: fetch failed");
+  assert.deepEqual(calls.tick, []);
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+test("SIGTERM during a tick lets it finish and saves its cursor before exiting 0", async () => {
+  let stop;
+  const tick = deferred();
+  const save = deferred();
+  const saved = [];
+  let writes = 0;
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    onStop: (fn) => {
+      stop = fn;
+    },
+    makeRedisImpl: () => ({
+      ensureCompatible: async () => {},
+      readPollState: async () => null,
+      writePollState: async (s) => {
+        if (++writes === 2) await save.promise; // the post-tick save, held open
+        saved.push(JSON.parse(JSON.stringify(s)));
+      },
+    }),
+    runTick: async (cfg, state, opts) => {
+      calls.tick.push(state);
+      stop(); // the signal lands mid-tick
+      assert.equal(opts.shouldStop(), true, "the tick is told to wrap up");
+      await tick.promise;
+      state.repos.vampi = { cursor: "advanced" }; // the tick's progress
+      return state;
+    },
+  });
+  const run = main(deps);
+  const settle = () => new Promise((r) => setImmediate(r));
+  await settle();
+  assert.deepEqual(calls.exit, [], "the tick in progress is not cut off");
+  tick.resolve();
+  await settle();
+  assert.equal(writes, 2, "the post-tick save started");
+  assert.deepEqual(calls.exit, [], "it does not exit before the save completes");
+  save.resolve();
+  await assert.rejects(run, (err) => err === STOP);
+  assert.deepEqual(saved.at(-1).repos.vampi, { cursor: "advanced" }, "the saved cursor carries the tick's progress");
+  assert.deepEqual(calls.exit, [0]);
+  assert.deepEqual(calls.sleep, [], "it never slept after the signal");
+});
+
+test("SIGTERM while sleeping between ticks exits 0 at once", async () => {
+  let stop;
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    onStop: (fn) => {
+      stop = fn;
+    },
+    sleep: (ms) => {
+      calls.sleep.push(ms);
+      stop(); // the signal lands while idle
+      throw STOP;
+    },
+  });
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+  assert.deepEqual(calls.exit, [0]);
+  assert.ok(calls.logErr.includes("ctf-sync: stopping"));
+});
+
+test("SIGTERM during a tick retries a failed final cursor save before exiting", async () => {
+  let stop;
+  let writes = 0;
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    onStop: (fn) => {
+      stop = fn;
+    },
+    makeRedisImpl: () => ({
+      ensureCompatible: async () => {},
+      readPollState: async () => null,
+      writePollState: async () => {
+        writes++;
+        if (writes === 2) throw new Error("NOAUTH"); // the post-tick save fails once
+      },
+    }),
+    runTick: async (cfg, state) => {
+      stop();
+      return state;
+    },
+    sleep: (ms) => calls.sleep.push(ms),
+  });
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+  assert.equal(writes, 3, "seed write, failed save, successful retry");
+  assert.deepEqual(calls.exit, [0]);
+  assert.ok(calls.logErr.includes("ctf-sync: stopping"));
+});
+
+test("SIGTERM between ticks after a failed cursor save retries the save before exiting", async () => {
+  let stop;
+  let writes = 0;
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 30000 }),
+    onStop: (fn) => {
+      stop = fn;
+    },
+    makeRedisImpl: () => ({
+      ensureCompatible: async () => {},
+      readPollState: async () => null,
+      writePollState: async () => {
+        writes++;
+        if (writes === 2) throw new Error("NOAUTH"); // the post-tick save fails
+      },
+    }),
+    sleep: async (ms) => {
+      calls.sleep.push(ms);
+      if (ms !== 1000) stop(); // the signal lands while idle, after the failed save
+    },
+  });
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+  assert.equal(writes, 3, "seed write, failed save, retried before exiting");
+  assert.equal(calls.tick.length, 1, "no second tick ran");
+  assert.deepEqual(calls.exit, [0]);
+  assert.ok(calls.logErr.includes("ctf-sync: stopping"), JSON.stringify(calls.logErr));
+});
+
+test("SIGTERM while waiting for Redis exits 0 at once, before any state load or tick", async () => {
+  let stop;
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    redisWaitMs: 5,
+    onStop: (fn) => {
+      stop = fn;
+    },
+    makeRedisImpl: () => ({
+      ensureCompatible: async () => {
+        throw new Error("fetch failed"); // srh still starting
+      },
+    }),
+    sleep: (ms) => {
+      calls.sleep.push(ms);
+      stop(); // the signal lands during the wait
+    },
+  });
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+  assert.equal(typeof stop, "function", "the handler exists before the Redis wait");
+  assert.deepEqual(calls.exit, [0]);
+  assert.equal(calls.readState, 0, "no state load");
+  assert.deepEqual(calls.tick, []);
+  assert.ok(calls.logErr.includes("ctf-sync: stopping"), JSON.stringify(calls.logErr));
+});
+
+test("SIGTERM with every cursor save failing retries twice, then exits 0 on the older cursor", async () => {
+  let stop;
+  let writes = 0;
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    onStop: (fn) => {
+      stop = fn;
+    },
+    makeRedisImpl: () => ({
+      ensureCompatible: async () => {},
+      readPollState: async () => null,
+      writePollState: async () => {
+        if (++writes > 1) throw new Error("NOAUTH"); // every save after the seed fails
+      },
+    }),
+    runTick: async (cfg, state) => {
+      stop();
+      return state;
+    },
+    sleep: (ms) => calls.sleep.push(ms),
+  });
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+  // The bound the stop grace period is sized for (docker-compose.yml): one
+  // save and two retries a second apart, no more.
+  assert.equal(writes, 4, "seed write, the post-tick save, two retries");
+  assert.deepEqual(calls.sleep, [1000, 1000]);
+  assert.deepEqual(calls.exit, [0]);
+  assert.ok(calls.logErr.includes("ctf-sync: stopping; the last poll cursor was not saved"));
 });

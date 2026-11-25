@@ -3,7 +3,7 @@ import { fetchNewScoreComments } from "./github.js";
 import { hasScoreMarker, parseScoreComment } from "./parse.js";
 import { submitScore } from "./submit.js";
 import { loadState, markSeen, parseState, repoState, retireStateFile, seenKey } from "./state.js";
-import { makeRedis, SYNC_STATE_KEY } from "./redis.js";
+import { IncompatibleRedisError, makeRedis, SYNC_STATE_KEY } from "./redis.js";
 
 // Fail-safe wrapper: a broken deps.redis (whatever its origin) must never
 // reject the tick — a heartbeat that could not be written must not stop the
@@ -72,6 +72,15 @@ const freshTally = () => ({ ingested: 0, duplicate: 0, noMarker: 0, invalid: 0, 
  *  is neither is NOT a watermark: skipping on a junk epoch would silently lose
  *  every score, so it is treated as "no reset", the same direction
  *  `getResetAt` takes on a read error. */
+/** The cursor for a batch that stopped at a comment still to be read (a
+ *  failed submit, a stop): one second before it, so the next poll reads it
+ *  even if GitHub's `since` excludes the boundary. What the overlap re-reads
+ *  is already marked seen. */
+function oneSecondBefore(iso) {
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? new Date(ms - 1000).toISOString() : iso;
+}
+
 function resetEpochMs(resetAt) {
   if (typeof resetAt !== "string" || resetAt === "") return null;
   const ms = /^\d+$/.test(resetAt) ? Number(resetAt) : Date.parse(resetAt);
@@ -128,7 +137,17 @@ const freshRelease = () => ({ released: 0, accepted: 0, refused: 0, rejected: 0,
  * index or the window cannot be read; the caller logs that and polls anyway.
  * Logs carry counts and reasons, never a login, player id or PR.
  */
-export async function releaseHeldScores({ cfg, redis, fetchImpl = fetch, log = console.error, readWindow = () => redis.readScoringWindow(), targets = null }) {
+export async function releaseHeldScores({
+  cfg,
+  redis,
+  fetchImpl = fetch,
+  log = console.error,
+  readWindow = () => redis.readScoringWindow(),
+  targets = null,
+  // A SIGTERM: stop before the next author or entry. An entry already
+  // submitted finishes its release first, and the rest stay held.
+  shouldStop = () => false,
+}) {
   const counts = freshRelease();
   const enabled = targets ? new Set(targets) : null;
   const authors = await redis.heldAuthors();
@@ -136,6 +155,7 @@ export async function releaseHeldScores({ cfg, redis, fetchImpl = fetch, log = c
   const { endsAt } = await readWindow();
 
   for (const login of authors) {
+    if (shouldStop()) break;
     let entries = null;
     try {
       entries = await redis.heldFor(login);
@@ -164,6 +184,10 @@ export async function releaseHeldScores({ cfg, redis, fetchImpl = fetch, log = c
       }
       ready.sort((a, b) => a.atMs - b.atMs || (a.field < b.field ? -1 : a.field > b.field ? 1 : 0));
       for (let i = 0; i < ready.length; i++) {
+        if (shouldStop()) {
+          counts.kept += ready.length - i;
+          break;
+        }
         const { field, entry } = ready[i];
         // Exactly the scorer's contract: `repo` is a display name for the
         // admin list and is not sent. `login` is the link just resolved: the
@@ -198,7 +222,11 @@ export async function releaseHeldScores({ cfg, redis, fetchImpl = fetch, log = c
 }
 
 export async function tick(cfg, state, deps = {}) {
-  const { fetchImpl = fetch, log = console.error, redis = null } = deps;
+  // `shouldStop` (a SIGTERM in main()) ends the tick at the next comment
+  // boundary: the comments handled so far are marked seen, and the cursor
+  // stops just before the first one not handled, as it does for a failed submit, so a
+  // stop neither drops a score nor re-reads one already handled.
+  const { fetchImpl = fetch, log = console.error, redis = null, shouldStop = () => false } = deps;
   // Every read below (freeze, targets, reset epoch, PR author links) is a
   // Redis read; main() refuses to start without a client, and a tick without
   // one must not guess.
@@ -277,7 +305,7 @@ export async function tick(cfg, state, deps = {}) {
   // the scorer first. A failure of the step itself leaves every held score in
   // place for the next tick and must not stop the poll.
   try {
-    const released = await releaseHeldScores({ cfg, redis, fetchImpl, log, readWindow, targets });
+    const released = await releaseHeldScores({ cfg, redis, fetchImpl, log, readWindow, targets, shouldStop });
     state.ingested += released.accepted;
     if (released.rejected > 0) {
       drop(`release: ${released.rejected} held score${released.rejected === 1 ? "" : "s"} rejected (4xx), dropped`, released.rejected);
@@ -289,6 +317,7 @@ export async function tick(cfg, state, deps = {}) {
   let reposPolled = 0;
   let lastError = null;
   for (const target of targets) {
+    if (shouldStop()) break;
     reposPolled++;
     const repo = REPO_NAMES[target];
     const rs = repoState(state, repo);
@@ -309,6 +338,10 @@ export async function tick(cfg, state, deps = {}) {
     // the first failure, so next tick reads them again in order.
     const failedAuthors = new Set();
     for (const c of result.comments) {
+      if (shouldStop()) {
+        stopAt ??= c.updated_at;
+        break;
+      }
       // Keyed on the comment REVISION, not its id — the workflow upserts one
       // comment per target, so the id alone made a re-scored PR unreachable.
       if (!markSeen(rs, c.id, c.updated_at)) {
@@ -422,10 +455,13 @@ export async function tick(cfg, state, deps = {}) {
     const summary = summarize(repo, tally);
     if (summary) log(summary);
     // advance cursor to first failure or to full batch, reset etag if any failure
-    rs.since = stopAt ?? result.cursor.since;
+    rs.since = stopAt ? oneSecondBefore(stopAt) : result.cursor.since;
     rs.etag = stopAt ? null : result.cursor.etag;
   }
 
+  // A stopped tick skips the heartbeat: the cursor save that follows is what
+  // the stop grace period is budgeted for, and a stale heartbeat is harmless.
+  if (shouldStop()) return state;
   await writeStatusSafely(redis, log, {
     lastPollAt: nowIso(),
     ingested: state.ingested,
@@ -460,6 +496,12 @@ export async function main(deps = {}) {
     runTick = tick,
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
     exit = process.exit,
+    onStop = (fn) => {
+      process.once("SIGTERM", fn);
+      process.once("SIGINT", fn);
+    },
+    redisWaitMs = 2000,
+    redisWaitTries = 30,
   } = deps;
 
   let cfg;
@@ -476,11 +518,54 @@ export async function main(deps = {}) {
     return exit(1);
   }
 
-  try {
-    await redis.ensureCompatible();
-  } catch (err) {
-    logErr(`ctf-sync: Redis compatibility check failed: ${err.message}`);
-    return exit(1);
+  // One stop handler for the whole run, registered before the Redis wait and
+  // the state load: until the first tick there is nothing to save, so a stop
+  // then exits at once. After that, a stop during a tick ends it at its next
+  // comment (tick's `shouldStop`) and the loop saves the cursor; one between
+  // ticks exits at once if the cursor is saved, or retries the save first.
+  let starting = true;
+  let stopping = false;
+  let idle = false;
+  let saved = true;
+  let finalSave = null;
+  let saveAndExit = null;
+  onStop(() => {
+    if (stopping) return;
+    stopping = true;
+    if (starting || (idle && saved)) {
+      logErr("ctf-sync: stopping");
+      exit(0);
+      return;
+    }
+    if (!idle) return;
+    finalSave = saveAndExit();
+    // Awaited by the loop once its sleep returns; this only keeps the
+    // rejection from reading as unhandled before then.
+    finalSave.catch(() => {});
+  });
+
+  // A refusal (v1 data, an unknown schema) is final. Anything else is Redis
+  // not answering yet, usually srh still starting next to this container: wait
+  // it out with its own log line, so a slow start never reads like the v1-data
+  // refusal, and give up only after redisWaitTries.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await redis.ensureCompatible();
+      break;
+    } catch (err) {
+      if (err instanceof IncompatibleRedisError) {
+        logErr(`ctf-sync: Redis compatibility check failed: ${err.message}`);
+        return exit(1);
+      }
+      if (attempt >= redisWaitTries) {
+        logErr(`ctf-sync: Redis did not answer after ${attempt} tries: ${err.message}`);
+        return exit(1);
+      }
+      if (stopping) return;
+      if (attempt === 1 || attempt % 10 === 0) logErr(`ctf-sync: waiting for Redis (${err.message}), retrying`);
+      await sleep(redisWaitMs);
+      if (stopping) return;
+    }
   }
 
   // No static repo count here any more: which of the six targets get polled
@@ -496,20 +581,42 @@ export async function main(deps = {}) {
   const persist = async () => {
     try {
       await redis.writePollState(state);
+      return true;
     } catch (err) {
       // Not fatal: the in-memory state stays authoritative for this process
       // and the next tick writes again. Only a restart before a write lands
-      // rewinds the cursor to the last one that did, and the re-read that
-      // causes is idempotent (the scorer's HSETNX).
+      // rewinds the cursor to the last one that did; the re-read that causes
+      // counts no point twice, but can bring back a solve a per-contestant
+      // reset removed since (see loadDurableState).
       logErr(`ctf-sync: could not save poll state to Redis (${SYNC_STATE_KEY}): ${err.message} — retrying next tick`);
+      return false;
     }
   };
 
+  // There is no next tick to retry a failed save: try a few more times, or
+  // the next start resumes from the older cursor and re-reads from there.
+  saveAndExit = async () => {
+    // Two retries keep the whole stop inside sync's 120 s grace period
+    // (docker-compose.yml).
+    for (let i = 0; !saved && i < 2; i++) {
+      await sleep(1000);
+      saved = await persist();
+    }
+    logErr(saved ? "ctf-sync: stopping" : "ctf-sync: stopping; the last poll cursor was not saved");
+    return exit(0);
+  };
+  starting = false;
+  if (stopping) return saveAndExit();
+
   for (;;) {
-    await runTick(cfg, state, { redis });
-    await persist();
+    idle = false;
+    await runTick(cfg, state, { redis, shouldStop: () => stopping });
+    saved = await persist();
+    if (stopping) return saveAndExit();
+    idle = true;
     const jitter = cfg.pollIntervalMs * 0.2 * (2 * Math.random() - 1);
     await sleep(cfg.pollIntervalMs + jitter);
+    if (finalSave) return finalSave;
   }
 }
 

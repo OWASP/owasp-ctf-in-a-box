@@ -2,6 +2,16 @@ import "server-only";
 
 import { assertPipelineOk, parseScanPage, upstashPipeline } from "@/lib/upstash";
 
+/** A refusal by the startup compatibility check: v1 data, or a schema marker
+ *  this build does not accept. Anything else checkRedisCompatibility throws is
+ *  Redis not answering yet, which startup waits out instead of exiting. */
+export class IncompatibleRedisError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IncompatibleRedisError";
+  }
+}
+
 export const SCHEMA_VERSION_KEY = "ctf:meta:schema-version";
 export const CURRENT_SCHEMA_VERSION = "2";
 
@@ -42,7 +52,7 @@ async function readSchemaVersion(): Promise<string | null> {
 
   if (reply.result === null) return null;
   if (typeof reply.result !== "string") {
-    throw new Error("Redis schema marker has an unexpected value; refusing startup.");
+    throw new IncompatibleRedisError("Redis schema marker has an unexpected value; refusing startup.");
   }
 
   return reply.result;
@@ -66,7 +76,7 @@ async function findLegacyFingerprintPattern(): Promise<string | null> {
 }
 
 function refuseLegacyData(pattern: string): never {
-  throw new Error(
+  throw new IncompatibleRedisError(
     `Incompatible Redis data detected (matching fingerprint: ${pattern}). Export required data, perform a master reset on v1, then deploy v2.`,
   );
 }
@@ -92,7 +102,7 @@ export async function checkRedisCompatibility(): Promise<void> {
 
   if (version === CURRENT_SCHEMA_VERSION) return;
   if (version !== null) {
-    throw new Error(
+    throw new IncompatibleRedisError(
       `[startup] Redis schema version ${version} is not supported; this application requires version ${CURRENT_SCHEMA_VERSION}.`,
     );
   }
@@ -111,7 +121,7 @@ export async function checkRedisCompatibility(): Promise<void> {
   const racedVersion = await readSchemaVersion();
   if (racedVersion === CURRENT_SCHEMA_VERSION) return;
 
-  throw new Error(
+  throw new IncompatibleRedisError(
     `[startup] Redis schema marker initialization raced with another process, but the resulting version is ${String(racedVersion)}; refusing startup.`,
   );
 }

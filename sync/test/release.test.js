@@ -416,3 +416,17 @@ test("release log lines carry counts and reasons only — no login, player id, P
     }
   }
 });
+
+test("a stop between held scores releases the one in hand and keeps the rest held", async () => {
+  const redis = fakeRedis({ links: { octocat: { player: PLAYER, linkedAt: T - MIN } }, held: twoHeld() });
+  let stop = false;
+  const { posts, fetchImpl } = scorer(() => {
+    stop = true; // SIGTERM lands while the first held score is submitted
+    return 202;
+  });
+  const r = await releaseHeldScores({ cfg: CFG, redis, fetchImpl, log: () => {}, shouldStop: () => stop });
+  assert.equal(posts.length, 1, "the next held score is not started");
+  assert.equal(r.released, 1, "the one in hand finished its release");
+  assert.equal(r.kept, 1);
+  assert.equal(Object.keys(redis.held.octocat).length, 1, "the rest stays held for the next process");
+});

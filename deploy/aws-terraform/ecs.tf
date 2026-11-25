@@ -490,6 +490,10 @@ resource "aws_ecs_task_definition" "scorer" {
 
     portMappings = [{ containerPort = 4000, protocol = "tcp" }]
 
+    // Above the scorer's 35 s drain cap (createDrain in scorer/src/serve.js),
+    // like its compose stop_grace_period; Fargate's default is 30 s.
+    stopTimeout = 40
+
     environment = [
       { name = "UPSTASH_REDIS_REST_URL", value = local.upstash_url },
     ]
@@ -565,6 +569,11 @@ resource "aws_ecs_task_definition" "sync" {
     name      = "sync"
     image     = var.sync_image
     essential = true
+
+    // Covers the item in hand and the final cursor save after SIGTERM, like
+    // the compose stop_grace_period (main() in sync/src/index.js). 120 is
+    // Fargate's maximum.
+    stopTimeout = 120
 
     environment = [
       { name = "UPSTASH_REDIS_REST_URL", value = local.upstash_url },

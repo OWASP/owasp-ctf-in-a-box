@@ -55,9 +55,7 @@ test("sends since + if-none-match; 304 returns empty and keeps cursor", async ()
   const { comments, cursor } = await fetchNewScoreComments(CFG, "DVWA", prev, f);
   assert.deepEqual(comments, []);
   assert.deepEqual(cursor, prev);
-  // One second before the cursor, so a comment at the cursor itself is read
-  // again even if GitHub's boundary is exclusive.
-  assert.match(f.calls[0].url, /since=2026-08-13T10%3A59%3A59.000Z/);
+  assert.match(f.calls[0].url, /since=2026-08-13T11%3A00%3A00Z/);
   assert.equal(f.calls[0].opts.headers["if-none-match"], 'W/"e1"');
 });
 

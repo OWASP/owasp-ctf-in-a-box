@@ -499,7 +499,8 @@ export async function waitForCompatibleRedis(
 
 /** SIGTERM handling for `score serve`: stop accepting connections and exit
  *  once the open ones end. A score already past its body read is waited for,
- *  up to `capMs`, which covers its policy read and its write at the store's
+ *  even when its client has disconnected and the server has closed, up to
+ *  `capMs`, which covers its policy read and its write at the store's
  *  10 s request timeout each, with margin; the container's stop grace period
  *  (docker-compose.yml) must stay above it. After `idleMs`, a connection with
  *  no score in progress (a stalled upload, a held keep-alive) no longer
@@ -513,7 +514,10 @@ export function createDrain({
 }) {
   let busy = 0;
   let stopping = false;
-  let patient = false;
+  // Either lets the last score in progress end the process: the server has
+  // closed (its callback follows connections, not handlers), or the idle
+  // backstop has passed.
+  let canEnd = false;
   let done = false;
   const finish = () => {
     if (done) return;
@@ -527,19 +531,20 @@ export function createDrain({
       },
       leave() {
         busy--;
-        if (patient && busy === 0) finish();
+        if (canEnd && busy === 0) finish();
       },
     },
     stop(server) {
       if (stopping) return;
       stopping = true;
       log("ctf-score-engine: stopping");
-      server.close(finish);
-      server.closeIdleConnections?.();
-      setTimer(() => {
+      const end = () => {
+        canEnd = true;
         if (busy === 0) finish();
-        else patient = true;
-      }, idleMs);
+      };
+      server.close(end);
+      server.closeIdleConnections?.();
+      setTimer(end, idleMs);
       setTimer(finish, capMs);
     },
   };

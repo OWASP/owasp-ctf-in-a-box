@@ -1032,6 +1032,16 @@ test("createDrain: a score that never finishes is bounded by the cap", () => {
   assert.deepEqual(h.exits, [0]);
 });
 
+test("createDrain: a score whose client disconnected still finishes before the exit", () => {
+  const h = drainHarness();
+  h.drain.work.enter();
+  h.drain.stop(h.server);
+  h.close(); // the client went away mid-write, so the server has no connections left
+  assert.deepEqual(h.exits, [], "the write in progress is not cut off by the close");
+  h.drain.work.leave();
+  assert.deepEqual(h.exits, [0]);
+});
+
 test("createDrain: the server closing exits at once, and only once", () => {
   const h = drainHarness();
   h.drain.stop(h.server);

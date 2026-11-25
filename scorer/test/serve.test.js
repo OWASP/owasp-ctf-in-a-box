@@ -1050,3 +1050,28 @@ test("createDrain: the server closing exits at once, and only once", () => {
   h.timers[1].fn();
   assert.deepEqual(h.exits, [0]);
 });
+
+test("createDrain: no score is admitted once the stop has begun", () => {
+  const h = drainHarness();
+  assert.equal(h.drain.work.enter(), true, "admitted before the stop");
+  h.drain.stop(h.server);
+  assert.equal(h.drain.work.enter(), false, "refused after the stop");
+  h.drain.work.leave(); // only the admitted one leaves
+  h.close();
+  assert.deepEqual(h.exits, [0], "the refused request did not hold the exit");
+});
+
+test("score: a body that finishes arriving after the stop began answers 503, which sync retries", async () => {
+  const server = await startServer({ store: createMemoryStore(), token: TOKEN, port: 0, work: { enter: () => false, leave() {} } });
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/score`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ player: "11111111-1111-4111-8111-111111111111", target: "dvwa", solved: ["sqli-low"] }),
+    });
+    assert.equal(res.status, 503);
+    assert.deepEqual(await res.json(), { error: "the scorer is stopping" });
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});

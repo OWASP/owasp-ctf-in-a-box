@@ -84,7 +84,7 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-export function createHandler({ rubric = null, store, token, now = () => new Date().toISOString(), work = { enter() {}, leave() {} } }) {
+export function createHandler({ rubric = null, store, token, now = () => new Date().toISOString(), work = { enter: () => true, leave() {} } }) {
   if (!token) throw new Error("refusing to start: set CTF_SCORE_BEARER_TOKEN or SCORER_TOKEN");
   // Without a rubric the board can only cover targets this process has seen
   // solves for — degenerate, but honest.
@@ -148,8 +148,10 @@ export function createHandler({ rubric = null, store, token, now = () => new Dat
       body += chunk;
     }
     // From here on the request does store work, which a shutdown waits for;
-    // a body still arriving is not (see createDrain).
-    work.enter();
+    // a body still arriving is not (see createDrain). One that finishes
+    // arriving after the shutdown began is refused with a 503, which sync
+    // retries, so admitted work always fits the drain cap.
+    if (!work.enter()) return json(res, 503, { error: "the scorer is stopping" });
     try {
       return await scoreBody(res, body);
     } finally {
@@ -500,11 +502,12 @@ export async function waitForCompatibleRedis(
 /** SIGTERM handling for `score serve`: stop accepting connections and exit
  *  once the open ones end. A score already past its body read is waited for,
  *  even when its client has disconnected and the server has closed, up to
- *  `capMs`, which covers its policy read and its write at the store's
- *  10 s request timeout each, with margin; the container's stop grace period
- *  (docker-compose.yml) must stay above it. After `idleMs`, a connection with
- *  no score in progress (a stalled upload, a held keep-alive) no longer
- *  delays the exit. */
+ *  `capMs`, which covers its policy read, the `isPaused()` fallback and its
+ *  write at the store's 10 s request timeout each, with margin; the
+ *  container's stop grace period (docker-compose.yml) must stay above it. No
+ *  new score is admitted once the stop begins (`enter()` answers false). After
+ *  `idleMs`, a connection with no score in progress (a stalled upload, a held
+ *  keep-alive) no longer delays the exit. */
 export function createDrain({
   exit,
   log,
@@ -527,7 +530,9 @@ export function createDrain({
   return {
     work: {
       enter() {
+        if (stopping) return false;
         busy++;
+        return true;
       },
       leave() {
         busy--;

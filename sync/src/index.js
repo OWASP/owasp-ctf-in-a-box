@@ -3,7 +3,7 @@ import { fetchNewScoreComments } from "./github.js";
 import { hasScoreMarker, parseScoreComment } from "./parse.js";
 import { submitScore } from "./submit.js";
 import { loadState, markSeen, parseState, repoState, retireStateFile, seenKey } from "./state.js";
-import { makeRedis, SYNC_STATE_KEY } from "./redis.js";
+import { IncompatibleRedisError, makeRedis, SYNC_STATE_KEY } from "./redis.js";
 
 // Fail-safe wrapper: a broken deps.redis (whatever its origin) must never
 // reject the tick — a heartbeat that could not be written must not stop the
@@ -460,6 +460,12 @@ export async function main(deps = {}) {
     runTick = tick,
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
     exit = process.exit,
+    onStop = (fn) => {
+      process.once("SIGTERM", fn);
+      process.once("SIGINT", fn);
+    },
+    redisWaitMs = 2000,
+    redisWaitTries = 30,
   } = deps;
 
   let cfg;
@@ -476,11 +482,26 @@ export async function main(deps = {}) {
     return exit(1);
   }
 
-  try {
-    await redis.ensureCompatible();
-  } catch (err) {
-    logErr(`ctf-sync: Redis compatibility check failed: ${err.message}`);
-    return exit(1);
+  // A refusal (v1 data, an unknown schema) is final. Anything else is Redis
+  // not answering yet, usually srh still starting next to this container: wait
+  // it out with its own log line, so a slow start never reads like the v1-data
+  // refusal, and give up only after redisWaitTries.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await redis.ensureCompatible();
+      break;
+    } catch (err) {
+      if (err instanceof IncompatibleRedisError) {
+        logErr(`ctf-sync: Redis compatibility check failed: ${err.message}`);
+        return exit(1);
+      }
+      if (attempt >= redisWaitTries) {
+        logErr(`ctf-sync: Redis did not answer after ${attempt} tries: ${err.message}`);
+        return exit(1);
+      }
+      if (attempt === 1 || attempt % 10 === 0) logErr(`ctf-sync: waiting for Redis (${err.message}), retrying`);
+      await sleep(redisWaitMs);
+    }
   }
 
   // No static repo count here any more: which of the six targets get polled
@@ -505,9 +526,27 @@ export async function main(deps = {}) {
     }
   };
 
+  // SIGTERM (docker stop, a redeploy) lets a tick that is running finish and
+  // persist its cursor, then exits; one that lands between ticks exits at once.
+  let stopping = false;
+  let idle = false;
+  onStop(() => {
+    stopping = true;
+    if (idle) {
+      logErr("ctf-sync: stopping");
+      exit(0);
+    }
+  });
+
   for (;;) {
+    idle = false;
     await runTick(cfg, state, { redis });
     await persist();
+    if (stopping) {
+      logErr("ctf-sync: stopping");
+      return exit(0);
+    }
+    idle = true;
     const jitter = cfg.pollIntervalMs * 0.2 * (2 * Math.random() - 1);
     await sleep(cfg.pollIntervalMs + jitter);
   }

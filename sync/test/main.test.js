@@ -13,6 +13,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { main } from "../src/index.js";
+import { IncompatibleRedisError } from "../src/redis.js";
 
 const STOP = new Error("stop-the-poll-loop");
 
@@ -55,6 +56,7 @@ function spyDeps(overrides = {}) {
       calls.exit.push(code);
       throw STOP; // like sleep, unwinds main() without actually killing the test
     },
+    onStop: () => {},
     ...overrides,
   };
   return { deps, calls };
@@ -145,7 +147,7 @@ test("refuses startup when Redis compatibility validation fails, before loading 
     makeRedisImpl: () => ({
       ensureCompatible: async () => {
         calls.compatibility++;
-        throw new Error("incompatible Redis data detected");
+        throw new IncompatibleRedisError("incompatible Redis data detected");
       },
     }),
   });
@@ -160,4 +162,87 @@ test("refuses startup when Redis compatibility validation fails, before loading 
   assert.deepEqual(calls.logErr, [
     "ctf-sync: Redis compatibility check failed: incompatible Redis data detected",
   ]);
+});
+
+// ── waiting for Redis, and stopping (#825) ───────────────────────────────────
+
+test("waits for a Redis that is not answering yet with its own log line, then polls", async () => {
+  let attempts = 0;
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    redisWaitMs: 5,
+    makeRedisImpl: () => ({
+      ensureCompatible: async () => {
+        if (++attempts < 3) throw new Error("fetch failed");
+      },
+      readPollState: async () => null,
+      writePollState: async () => {},
+    }),
+    sleep: (ms) => {
+      calls.sleep.push(ms);
+      if (ms !== 5) throw STOP; // the poll loop's sleep ends the test
+    },
+  });
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+  assert.equal(attempts, 3);
+  assert.deepEqual(calls.exit, []);
+  assert.equal(calls.tick.length, 1, "it went on to poll");
+  assert.ok(calls.logErr.includes("ctf-sync: waiting for Redis (fetch failed), retrying"), JSON.stringify(calls.logErr));
+  assert.ok(!calls.logErr.some((l) => /compatibility check failed/.test(l)), "a slow start never reads like the refusal");
+});
+
+test("gives up with a distinct line when Redis never answers", async () => {
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    redisWaitMs: 5,
+    redisWaitTries: 3,
+    makeRedisImpl: () => ({
+      ensureCompatible: async () => {
+        throw new Error("fetch failed");
+      },
+    }),
+    sleep: (ms) => calls.sleep.push(ms),
+  });
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+  assert.deepEqual(calls.exit, [1]);
+  assert.equal(calls.logErr.at(-1), "ctf-sync: Redis did not answer after 3 tries: fetch failed");
+  assert.deepEqual(calls.tick, []);
+});
+
+test("SIGTERM during a tick lets it finish and persist, then exits 0", async () => {
+  let stop;
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    onStop: (fn) => {
+      stop = fn;
+    },
+    runTick: async (cfg, state) => {
+      calls.tick.push(state);
+      stop(); // the signal lands mid-tick
+      return state;
+    },
+  });
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+  assert.equal(calls.tick.length, 1);
+  assert.ok(calls.pollState.length >= 2, "the tick's cursor was persisted before exiting");
+  assert.deepEqual(calls.exit, [0]);
+  assert.deepEqual(calls.sleep, [], "it never slept after the signal");
+});
+
+test("SIGTERM while sleeping between ticks exits 0 at once", async () => {
+  let stop;
+  const { deps, calls } = spyDeps({
+    load: () => ({ org: "o", statePath: "/s", pollIntervalMs: 1000 }),
+    onStop: (fn) => {
+      stop = fn;
+    },
+    sleep: (ms) => {
+      calls.sleep.push(ms);
+      stop(); // the signal lands while idle
+      throw STOP;
+    },
+  });
+  await assert.rejects(() => main(deps), (err) => err === STOP);
+  assert.deepEqual(calls.exit, [0]);
+  assert.ok(calls.logErr.includes("ctf-sync: stopping"));
 });

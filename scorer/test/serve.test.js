@@ -942,3 +942,46 @@ test("a store error on the solve write answers 5xx, never 202 or 422", async (t)
   });
   assert.ok(res.status >= 500 && res.status < 600, `expected 5xx, got ${res.status}`);
 });
+
+// ── waiting for Redis, and stopping (#825) ───────────────────────────────────
+import { waitForCompatibleRedis } from "../src/serve.js";
+import { IncompatibleRedisError } from "../src/store.js";
+
+test("waitForCompatibleRedis: waits out a Redis that is not answering yet, with its own log line", async () => {
+  let attempts = 0;
+  const logs = [];
+  const store = { ensureCompatible: async () => { if (++attempts < 3) throw new Error("fetch failed"); } };
+  await waitForCompatibleRedis(store, { log: (m) => logs.push(m), sleep: async () => {}, waitMs: 1 });
+  assert.equal(attempts, 3);
+  assert.deepEqual(logs, ["ctf-score-engine: waiting for Redis (fetch failed), retrying"]);
+});
+
+test("waitForCompatibleRedis: a refusal is rethrown at once, never waited on", async () => {
+  let attempts = 0;
+  const store = { ensureCompatible: async () => { attempts++; throw new IncompatibleRedisError("Incompatible Redis data detected (matching fingerprint: ctf:user:*)"); } };
+  await assert.rejects(waitForCompatibleRedis(store, { log: () => {}, sleep: async () => {} }), IncompatibleRedisError);
+  assert.equal(attempts, 1);
+});
+
+test("waitForCompatibleRedis: gives up with a distinct message when Redis never answers", async () => {
+  const store = { ensureCompatible: async () => { throw new Error("fetch failed"); } };
+  await assert.rejects(
+    waitForCompatibleRedis(store, { log: () => {}, sleep: async () => {}, tries: 3 }),
+    /Redis did not answer after 3 tries: fetch failed/,
+  );
+});
+
+test("serve(): SIGTERM closes the server and exits 0", async () => {
+  let stop;
+  const exits = [];
+  const logs = [];
+  const server = await serve(
+    { SCORER_TOKEN: TOKEN, RUBRIC_DIR, PORT: "0" },
+    { log: (m) => logs.push(m), onStop: (fn) => { stop = fn; }, exit: (code) => exits.push(code) },
+  );
+  assert.equal(typeof stop, "function");
+  stop();
+  await new Promise((resolve) => server.on("close", resolve));
+  assert.deepEqual(exits.slice(0, 1), [0]);
+  assert.ok(logs.includes("ctf-score-engine: stopping"));
+});

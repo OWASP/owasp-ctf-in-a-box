@@ -25,6 +25,7 @@ describe.skipIf(!liveConfigured)("SCORING_DEADLINE_GUARD against a live Redis", 
   beforeAll(async () => {
     const { upstashPipeline } = await import("@/lib/upstash");
     const [reply] = await upstashPipeline([["HGET", "ctf:admin:settings", "scoringEndsAt"]]);
+    if (reply.error) throw new Error(`settings read failed: ${reply.error}`);
     current = typeof reply.result === "string" ? reply.result : "";
   });
   const run = (deadline: string, readEnds = current) =>

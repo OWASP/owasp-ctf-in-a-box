@@ -78,8 +78,13 @@ const REGISTRATION_CLOSED_ERROR = "Team registration is closed";
  *  a captain removing someone or disbanding would move points off the
  *  results. An organizer can still move people from /admin → Support. */
 export const SCORING_CLOSED_TEAM_ERROR = "Scoring has closed: teams are final";
-/** What SCORING_DEADLINE_GUARD returns when the write ran after the close. */
-const SCORING_CLOSED_VERDICT = "scoring-closed";
+/** The refusal for SCORING_DEADLINE_GUARD's verdicts, or null for any other:
+ *  the write ran after the close, or the close moved since it was read. */
+function guardError(verdict: unknown): string | null {
+  if (verdict === "scoring-closed") return SCORING_CLOSED_TEAM_ERROR;
+  if (verdict === "scoring-changed") return "The scoring schedule just changed. Try again";
+  return null;
+}
 
 /** Leaving or being removed after registration closes is allowed, but it
  *  cannot be undone by the player: they can't join any team again, and the
@@ -179,12 +184,16 @@ async function generateUniqueJoinCode(): Promise<string> {
 // actions guard the caller INSIDE the script (HGET captain == caller) so the
 // check and the write happen in the same atomic step.
 // The scoring deadline, checked inside the same atomic step as the write it
-// guards: the caller passes scoringEndsAt in epoch ms as the LAST argument
-// ('' for none) and the script compares it with Redis's own clock, so a
-// settings read that happened just before the close cannot let a membership
-// change land after it. Prefixed to every script that changes membership.
+// guards. The caller passes, as the LAST two arguments, scoringEndsAt exactly
+// as it read it ('' for none) and the same instant in epoch ms ('' for none).
+// The script refuses if the setting changed since that read (an organizer
+// moved the close), then compares the deadline with Redis's own clock, so a
+// read that happened just before the close cannot let a team change land
+// after it. Prefixed to every script that changes a team.
 export const SCORING_DEADLINE_GUARD = `
 local deadline = ARGV[#ARGV]
+local readEnds = ARGV[#ARGV - 1]
+if (redis.call('HGET', 'ctf:admin:settings', 'scoringEndsAt') or '') ~= readEnds then return 'scoring-changed' end
 if deadline ~= '' then
   local t = redis.call('TIME')
   if tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000) > tonumber(deadline) then return 'scoring-closed' end
@@ -230,7 +239,7 @@ redis.call('SREM', KEYS[2], ARGV[2])
 redis.call('HDEL', KEYS[3], 'team', 'joinedAt')
 return 'ok'`;
 
-const RENAME_SCRIPT = `
+const RENAME_SCRIPT = SCORING_DEADLINE_GUARD + `
 if redis.call('HGET', KEYS[1], 'captain') ~= ARGV[1] then return 'not-captain' end
 if KEYS[2] ~= KEYS[1] and redis.call('EXISTS', KEYS[2]) == 1 then return 'name-taken' end
 redis.call('HSET', KEYS[1], 'name', ARGV[2])
@@ -257,7 +266,7 @@ redis.call('DEL', KEYS[1], KEYS[2])
 if code then redis.call('DEL', 'ctf:joincode:' .. code) end
 return 'ok'`;
 
-const REGENERATE_CODE_SCRIPT = `
+const REGENERATE_CODE_SCRIPT = SCORING_DEADLINE_GUARD + `
 if redis.call('HGET', KEYS[1], 'captain') ~= ARGV[1] then return 'not-captain' end
 local old = redis.call('HGET', KEYS[1], 'joinCode')
 if old then redis.call('DEL', 'ctf:joincode:' .. old) end
@@ -276,15 +285,15 @@ async function setMockTeam(slug: string): Promise<TeamActionResult> {
  *  Development solves into the final standings), then registration closed.
  *  Leaving, removing a member and disbanding are exits and skip the
  *  registration check (they confirm instead), but not the scoring one. */
-async function teamWindowError(): Promise<{ error: string | null; deadline: string }> {
+async function teamWindowError(): Promise<{ error: string | null; guardArgs: [string, string] }> {
   const w = await readTeamWindows();
-  if (w.scoringOver) return { error: SCORING_CLOSED_TEAM_ERROR, deadline: w.deadline };
-  return { error: w.registrationClosed ? REGISTRATION_CLOSED_ERROR : null, deadline: w.deadline };
+  if (w.scoringOver) return { error: SCORING_CLOSED_TEAM_ERROR, guardArgs: w.guardArgs };
+  return { error: w.registrationClosed ? REGISTRATION_CLOSED_ERROR : null, guardArgs: w.guardArgs };
 }
 
 /** The read's verdict plus the deadline the membership scripts re-check
  *  against Redis's clock ('' when there is none or the read failed). */
-type TeamWindows = { registrationClosed: boolean; scoringOver: boolean; deadline: string };
+type TeamWindows = { registrationClosed: boolean; scoringOver: boolean; guardArgs: [string, string] };
 
 /** The registration window and whether scoring has ended, in one HMGET.
  *  Registration is closed by the organizer's toggle ("0"; the field is absent,
@@ -309,7 +318,7 @@ async function readTeamWindows(): Promise<TeamWindows> {
       // Array.isArray decode below, which would otherwise treat it as
       // "every field absent" silently. Same fail-open verdict, but logged.
       console.error("team windows: settings read failed, failing open:", errorLabel(new Error(res.error)));
-      return { registrationClosed: false, scoringOver: false, deadline: "" };
+      return { registrationClosed: false, scoringOver: false, guardArgs: ["", ""] };
     }
     const [open, startsAt, endsAt, scoringEndsAt] = Array.isArray(res.result) ? (res.result as (string | null)[]) : [];
     // Closed by the manual toggle OR by the scheduled registration window
@@ -317,10 +326,10 @@ async function readTeamWindows(): Promise<TeamWindows> {
     const registrationClosed = open === "0" || outsideWindow(Date.now(), startsAt ?? null, endsAt ?? null);
     const scoringOver = outsideWindow(Date.now(), null, scoringEndsAt ?? null);
     const endsMs = scoringEndsAt ? Date.parse(scoringEndsAt) : NaN;
-    return { registrationClosed, scoringOver, deadline: Number.isFinite(endsMs) ? String(endsMs) : "" };
+    return { registrationClosed, scoringOver, guardArgs: [scoringEndsAt ?? "", Number.isFinite(endsMs) ? String(endsMs) : ""] };
   } catch (err) {
     console.error("team windows: settings read failed, failing open:", errorLabel(err));
-    return { registrationClosed: false, scoringOver: false, deadline: "" };
+    return { registrationClosed: false, scoringOver: false, guardArgs: ["", ""] };
   }
 }
 
@@ -398,13 +407,13 @@ const NAME_TAKEN = "name-taken";
  *  the caller's business, this is the write. Returns the script's raw verdict
  *  so `createSoloTeam` can tell a collision (retryable) from a refusal (not).
  */
-async function attemptCreate(playerId: string, name: string, slug: string, deadline: string): Promise<string> {
+async function attemptCreate(playerId: string, name: string, slug: string, guardArgs: [string, string]): Promise<string> {
   const createdAt = new Date().toISOString();
   const joinCode = await generateUniqueJoinCode();
   const verdict = await upstashEval(
     CREATE_SCRIPT,
     [userKey(playerId), teamKey(slug), membersKey(slug), joinCodeKey(joinCode)],
-    [playerId, name, slug, createdAt, joinCode, deadline],
+    [playerId, name, slug, createdAt, joinCode, ...guardArgs],
   );
   return typeof verdict === "string" ? verdict : "";
 }
@@ -418,11 +427,14 @@ export async function createTeam(playerId: string, name: string): Promise<TeamAc
   // with neither ("Команда", "赤") has no id; say so, not "required".
   if (!slug) return { ok: false, error: "A team name needs at least one letter a–z or digit 0–9" };
   if (!TEAM_WRITES_ENABLED) return setMockTeam(slug);
-  const { error: closed, deadline } = await teamWindowError();
+  const { error: closed, guardArgs } = await teamWindowError();
   if (closed) return { ok: false, error: closed };
 
-  const verdict = await attemptCreate(playerId, trimmed, slug, deadline);
-  if (verdict === SCORING_CLOSED_VERDICT) return { ok: false, error: SCORING_CLOSED_TEAM_ERROR };
+  const verdict = await attemptCreate(playerId, trimmed, slug, guardArgs);
+  {
+    const guarded = guardError(verdict);
+    if (guarded) return { ok: false, error: guarded };
+  }
   if (verdict === "already-on-team") return { ok: false, error: "Leave your current team before creating one" };
   if (verdict === NAME_TAKEN) return { ok: false, error: `Team "${slug}" already exists. Join it instead` };
   // Activity log, success paths only, real writes only (the mock
@@ -457,7 +469,7 @@ export async function createSoloTeam(playerId: string, name: string): Promise<Te
   // id-derived name keeps the one-click promise for those players too.
   const base = slugify(name) || `player-${playerId.slice(0, 8)}`;
   if (!TEAM_WRITES_ENABLED) return setMockTeam(base);
-  const { error: closed, deadline } = await teamWindowError();
+  const { error: closed, guardArgs } = await teamWindowError();
   if (closed) return { ok: false, error: closed };
 
   // A display name can outrun the 32-character team name, so it is NOT
@@ -472,8 +484,11 @@ export async function createSoloTeam(playerId: string, name: string): Promise<Te
     // team name a contestant may have to read aloud to a teammate later if
     // they stop playing solo.
     const slug = attempt === 0 ? clamped : `${clamped}-${generateJoinCodeCandidate().slice(0, 3)}`;
-    const verdict = await attemptCreate(playerId, slug, slug, deadline);
-    if (verdict === SCORING_CLOSED_VERDICT) return { ok: false, error: SCORING_CLOSED_TEAM_ERROR };
+    const verdict = await attemptCreate(playerId, slug, slug, guardArgs);
+    {
+      const guarded = guardError(verdict);
+      if (guarded) return { ok: false, error: guarded };
+    }
     if (verdict === NAME_TAKEN) continue;
     if (verdict === "already-on-team") {
       return { ok: false, error: "Leave your current team before creating one" };
@@ -492,7 +507,7 @@ export async function joinTeam(playerId: string, code: string): Promise<TeamActi
   const trimmedCode = code.trim();
   if (!trimmedCode) return { ok: false, error: "Join code is required" };
   if (!TEAM_WRITES_ENABLED) return setMockTeam(slugify(trimmedCode));
-  const { error: closed, deadline } = await teamWindowError();
+  const { error: closed, guardArgs } = await teamWindowError();
   if (closed) return { ok: false, error: closed };
 
   const normalizedCode = trimmedCode.toLowerCase();
@@ -511,9 +526,12 @@ export async function joinTeam(playerId: string, code: string): Promise<TeamActi
   const verdict = await upstashEval(
     JOIN_SCRIPT,
     [userKey(playerId), teamKey(slug), membersKey(slug)],
-    [playerId, maxMembers, slug, new Date().toISOString(), deadline],
+    [playerId, maxMembers, slug, new Date().toISOString(), ...guardArgs],
   );
-  if (verdict === SCORING_CLOSED_VERDICT) return { ok: false, error: SCORING_CLOSED_TEAM_ERROR };
+  {
+    const guarded = guardError(verdict);
+    if (guarded) return { ok: false, error: guarded };
+  }
   if (verdict === "already-on-team") return { ok: false, error: "Leave your current team before joining another" };
   if (verdict === "not-found") return { ok: false, error: "That team no longer exists" };
   if (verdict === "full") return { ok: false, error: `Team is full (${maxMembers} players max)` };
@@ -539,8 +557,11 @@ export async function leaveTeam(playerId: string, opts: { confirmClosed?: boolea
 
   // A 'stale' verdict means the membership changed between the read and the
   // script — leaving is idempotent, so treat it as already left.
-  const verdict = await upstashEval(LEAVE_SCRIPT, [userKey(playerId), teamKey(slug), membersKey(slug)], [playerId, slug, windows.deadline]);
-  if (verdict === SCORING_CLOSED_VERDICT) return { ok: false, error: SCORING_CLOSED_TEAM_ERROR };
+  const verdict = await upstashEval(LEAVE_SCRIPT, [userKey(playerId), teamKey(slug), membersKey(slug)], [playerId, slug, ...windows.guardArgs]);
+  {
+    const guarded = guardError(verdict);
+    if (guarded) return { ok: false, error: guarded };
+  }
   if (verdict === "captain-must-transfer") {
     return { ok: false, error: "Transfer or disband before leaving" };
   }
@@ -578,9 +599,12 @@ export async function removeMember(
   const verdict = await upstashEval(
     REMOVE_MEMBER_SCRIPT,
     [teamKey(slug), membersKey(slug), userKey(memberId)],
-    [captainId, memberId, windows.deadline],
+    [captainId, memberId, ...windows.guardArgs],
   );
-  if (verdict === SCORING_CLOSED_VERDICT) return { ok: false, error: SCORING_CLOSED_TEAM_ERROR };
+  {
+    const guarded = guardError(verdict);
+    if (guarded) return { ok: false, error: guarded };
+  }
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };
   if (verdict === "cannot-remove-captain") {
     return { ok: false, error: "The captain can't remove themselves — transfer captaincy or disband instead" };
@@ -599,10 +623,12 @@ export async function renameTeam(captainId: string, slug: string, newName: strin
   if (!checked.ok) return checked;
   const trimmed = checked.name;
   const newSlug = slugify(trimmed) || slug;
-  const { error: closed } = await teamWindowError();
+  const { error: closed, guardArgs } = await teamWindowError();
   if (closed) return { ok: false, error: closed };
 
-  const verdict = await upstashEval(RENAME_SCRIPT, [teamKey(slug), teamKey(newSlug)], [captainId, trimmed]);
+  const verdict = await upstashEval(RENAME_SCRIPT, [teamKey(slug), teamKey(newSlug)], [captainId, trimmed, ...guardArgs]);
+  const renameGuard = guardError(verdict);
+  if (renameGuard) return { ok: false, error: renameGuard };
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };
   if (verdict === "name-taken") return { ok: false, error: `Team "${newSlug}" already exists. Choose another name` };
   if (verdict !== "ok") return { ok: false, error: "Team update failed. Try again" };
@@ -641,8 +667,11 @@ export async function disbandTeam(captainId: string, slug: string): Promise<Team
   // It IS gated once scoring is over: disbanding then rewrites the results.
   const windows = await readTeamWindows();
   if (windows.scoringOver) return { ok: false, error: SCORING_CLOSED_TEAM_ERROR };
-  const verdict = await upstashEval(DISBAND_SCRIPT, [teamKey(slug), membersKey(slug)], [captainId, windows.deadline]);
-  if (verdict === SCORING_CLOSED_VERDICT) return { ok: false, error: SCORING_CLOSED_TEAM_ERROR };
+  const verdict = await upstashEval(DISBAND_SCRIPT, [teamKey(slug), membersKey(slug)], [captainId, ...windows.guardArgs]);
+  {
+    const guarded = guardError(verdict);
+    if (guarded) return { ok: false, error: guarded };
+  }
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };
   if (verdict !== "ok") return { ok: false, error: "Team update failed. Try again" };
   return { ok: true, team: null };
@@ -651,15 +680,17 @@ export async function disbandTeam(captainId: string, slug: string): Promise<Team
 /** Captain-only: invalidates the current join code and issues a new one. */
 export async function regenerateCode(captainId: string, slug: string): Promise<JoinCodeResult> {
   if (!TEAM_WRITES_ENABLED) return { ok: false, error: NOT_AVAILABLE_IN_DEMO_MODE };
-  const { error: closed } = await teamWindowError();
+  const { error: closed, guardArgs } = await teamWindowError();
   if (closed) return { ok: false, error: closed };
   const newCode = await generateUniqueJoinCode();
 
   const verdict = await upstashEval(
     REGENERATE_CODE_SCRIPT,
     [teamKey(slug), joinCodeKey(newCode)],
-    [captainId, newCode, slug],
+    [captainId, newCode, slug, ...guardArgs],
   );
+  const regenGuard = guardError(verdict);
+  if (regenGuard) return { ok: false, error: regenGuard };
   if (verdict === "not-captain") return { ok: false, error: "Only the team captain can do that" };
   if (verdict !== "ok") return { ok: false, error: "Team update failed. Try again" };
   return { ok: true, team: slug, code: newCode };

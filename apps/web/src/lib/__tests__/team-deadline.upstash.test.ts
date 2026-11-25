@@ -19,7 +19,16 @@ describe.skipIf(!liveConfigured)("SCORING_DEADLINE_GUARD against a live Redis", 
     ({ upstashEval: evalScript } = await import("@/lib/upstash"));
   });
 
-  const run = (deadline: string) => evalScript(guard + "\nreturn 'wrote'", [`ctf:test:${RUN}:deadline`], ["a", "b", deadline]);
+  // The settings key is the real, shared ctf:admin:settings, so these cases
+  // pass the scoringEndsAt it currently holds as "read".
+  let current = "";
+  beforeAll(async () => {
+    const { upstashPipeline } = await import("@/lib/upstash");
+    const [reply] = await upstashPipeline([["HGET", "ctf:admin:settings", "scoringEndsAt"]]);
+    current = typeof reply.result === "string" ? reply.result : "";
+  });
+  const run = (deadline: string, readEnds = current) =>
+    evalScript(guard + "\nreturn 'wrote'", [`ctf:test:${RUN}:deadline`], ["a", "b", readEnds, deadline]);
 
   it("refuses once Redis's clock is past the deadline", async () => {
     expect(await run(String(Date.now() - 60_000))).toBe("scoring-closed");
@@ -31,5 +40,9 @@ describe.skipIf(!liveConfigured)("SCORING_DEADLINE_GUARD against a live Redis", 
 
   it("lets the write through when there is no deadline", async () => {
     expect(await run("")).toBe("wrote");
+  });
+
+  it("refuses when the close changed since the caller read it", async () => {
+    expect(await run("", `${current}-moved`)).toBe("scoring-changed");
   });
 });

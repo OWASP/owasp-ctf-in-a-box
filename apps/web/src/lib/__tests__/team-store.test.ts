@@ -740,8 +740,9 @@ describe("captain roster actions", () => {
     expect(result).toEqual({ ok: true, team: "red-team" });
     const [script, keys, args] = mocks.upstashEval.mock.calls[0];
     expect(keys).toEqual(["ctf:team:red-team", "ctf:team:red-team:members", "ctf:user:member2"]);
-    // The last argument is the scoring deadline the script re-checks ('' = none).
-    expect(args).toEqual(["captain", "member2", ""]);
+    // The last two arguments are the scoring close as read and in ms ('' = none),
+    // which the script re-checks.
+    expect(args).toEqual(["captain", "member2", "", ""]);
     expect(script).toContain("SREM");
   });
 
@@ -772,7 +773,7 @@ describe("captain roster actions", () => {
     expect(result).toEqual({ ok: true, team: "red-team" });
     const [, keys, args] = mocks.upstashEval.mock.calls[0];
     expect(keys).toEqual(["ctf:team:red-team", "ctf:team:crimson-squad"]);
-    expect(args).toEqual(["captain", "Crimson Squad"]);
+    expect(args).toEqual(["captain", "Crimson Squad", "", ""]);
   });
 
   it("rejects a name collision with another team", async () => {
@@ -1496,13 +1497,19 @@ describe("team changes after scoring closes (#824)", () => {
     windows(FUTURE);
     mocks.upstashEval.mockResolvedValueOnce("scoring-closed");
     expect(await store.leaveTeam("octocat")).toEqual({ ok: false, error: store.SCORING_CLOSED_TEAM_ERROR });
-    expect(mocks.upstashEval.mock.calls[0][2].at(-1)).toBe(endsMs);
+    expect(mocks.upstashEval.mock.calls[0][2].slice(-2)).toEqual([FUTURE, endsMs]);
     expect(mocks.upstashEval.mock.calls[0][0]).toContain("redis.call('TIME')");
 
     windows(FUTURE);
     mocks.upstashEval.mockResolvedValueOnce("scoring-closed");
     expect(await store.disbandTeam("captain", "red-team")).toEqual({ ok: false, error: store.SCORING_CLOSED_TEAM_ERROR });
-    expect(mocks.upstashEval.mock.calls[1][2].at(-1)).toBe(endsMs);
+    expect(mocks.upstashEval.mock.calls[1][2].slice(-2)).toEqual([FUTURE, endsMs]);
+
+    // The close moved between the read and the script: refused, asked to retry.
+    mocks.upstashPipeline.mockResolvedValueOnce([{ result: "red-team" }]);
+    windows(FUTURE);
+    mocks.upstashEval.mockResolvedValueOnce("scoring-changed");
+    expect(await store.leaveTeam("octocat")).toEqual({ ok: false, error: "The scoring schedule just changed. Try again" });
   });
 
   it("fails open when the settings read errors, so a blip never traps a player", async () => {

@@ -263,10 +263,17 @@ export async function refuseSecondGithubLink(ctx: AuthCtx): Promise<void> {
 
 /** The player and GitHub account of a link callback's account write, or null
  *  for any other write. The player comes from the state the callback parsed,
- *  the one /link-social minted for that session. */
+ *  the one /link-social minted for that session. A state that cannot be read
+ *  refuses: reading it as "not a link" would skip the claim and the fence. */
 async function linkCallbackAccount(ctx: HookCtx, account: unknown): Promise<{ userId: string; accountId: unknown } | null> {
   if (ctx?.path !== "/callback/:id") return null;
-  const state = await getOAuthState().catch(() => null);
+  let state: Awaited<ReturnType<typeof getOAuthState>>;
+  try {
+    state = await getOAuthState();
+  } catch (err) {
+    console.error(`[auth] could not read the oauth state of a callback account write: ${errorLabel(err)}`);
+    throw githubLinkUnreadable();
+  }
   const userId = state?.link?.userId;
   if (typeof userId !== "string" || userId === "") return null;
   const accountId = typeof account === "object" && account !== null ? (account as Record<string, unknown>).accountId : undefined;

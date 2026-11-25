@@ -521,6 +521,7 @@ describe("refuseSecondGithubLinkOnCallback (account create on a link callback)",
   });
 
   it.each([
+    ["the oauth state", () => getOAuthState.mockRejectedValue(decoratedError()), false],
     ["the claim", () => claimGithubLink.mockRejectedValue(decoratedError()), false],
     ["the link", () => getGithubLink.mockRejectedValue(decoratedError()), true],
     ["the account list", () => findAccounts.mockRejectedValue(decoratedError()), true],

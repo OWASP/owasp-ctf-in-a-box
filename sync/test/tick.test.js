@@ -764,3 +764,19 @@ test("a hold writes an admin activity row with the login and the PR, and a log l
   assert.ok(logs.includes("hold: dvwa, 2 challenges (waiting for the author to link GitHub)"), JSON.stringify(logs));
   assert.equal(logs.some((l) => /stranger|#9|4242/i.test(l)), false);
 });
+
+test("a score held because the author linked only after the close says so, not that they must link", async () => {
+  const rows = [];
+  const c = closeCase(Date.parse(CLOSE) + 5 * 60_000, CLOSE);
+  const redis = {
+    ...redisStub,
+    resolveGithubLink: async () => ({ player: LINKS.octocat, linkedAt: Date.parse(CLOSE) + 5 * 60_000 }),
+    readScoringWindow: async () => ({ startsAt: "", endsAt: CLOSE }),
+    holdScore: async () => {},
+    logActivity: async (r) => rows.push(r),
+  };
+  const f = routes(() => new Response(JSON.stringify([ghComment(1)]), { status: 200, headers: {} }), 202, c.posts);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].detail, "dvwa PR #7, 1 challenge: the author linked GitHub after scoring closed");
+});

@@ -432,7 +432,11 @@ export async function tick(cfg, state, deps = {}) {
             target: payload.target, solved: payload.solved, pr: payload.pr, sha: payload.sha, at, repo,
           });
           tally.held++;
-          await recordHeldEvent(redis, log, "held", { ...payload, login: authorKey, why: "waiting for the author to link GitHub" });
+          // A late link is a link, just one that cannot release the score:
+          // the admin row says which, so Support does not ask a linked
+          // player to link again.
+          const why = link ? "the author linked GitHub after scoring closed" : "waiting for the author to link GitHub";
+          await recordHeldEvent(redis, log, "held", { ...payload, login: authorKey, why });
           continue;
         }
         // An older score for the same author and target still held (its

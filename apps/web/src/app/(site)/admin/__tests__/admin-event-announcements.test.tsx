@@ -293,6 +293,11 @@ describe("failureNotice", () => {
     expect(notice).not.toContain("pending");
   });
 
+  it("says the count is unavailable rather than reading a failed outbox read as zero", () => {
+    const notice = failureNotice(status({ lastErrorAt: "2026-11-24T20:55:00Z", lastError: "x", pending: null }), TZ);
+    expect(notice).toContain("pending count unavailable");
+  });
+
   it("is rendered as an alert above the status line", () => {
     const code = source();
     expect(code).toMatch(/role="alert"[^>]*data-testid="ann-failing"/);

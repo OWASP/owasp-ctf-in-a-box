@@ -51,7 +51,8 @@ export function failureNotice(status: AnnounceStatus, timeZone: string): string 
   const failedMs = Date.parse(status.lastErrorAt);
   if (!Number.isFinite(failedMs)) return null;
   if (status.lastPostedAt && Date.parse(status.lastPostedAt) >= failedMs) return null;
-  const waiting = status.pending > 0 ? ` — ${status.pending} pending` : "";
+  const waiting =
+    status.pending === null ? " — pending count unavailable" : status.pending > 0 ? ` — ${status.pending} pending` : "";
   return `Last post failed at ${adminTime(status.lastErrorAt, timeZone)}${waiting}: ${status.lastError ?? "Discord did not accept it"}`;
 }
 

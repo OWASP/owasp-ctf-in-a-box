@@ -293,6 +293,7 @@ describe("githubLoginOf (held scores next to a Support search, #827)", () => {
 
 it("Support shows the searched login's held scores, one fresh view per login", () => {
   const code = readFileSync(fileURLToPath(new URL("../admin-support-tab.tsx", import.meta.url)), "utf8");
-  expect(code).toContain("<AdminHeldScores key={heldLogin} login={heldLogin} />");
+  expect(code).toContain("<AdminHeldScores key={`${heldLogin}:${searchGen}`} login={heldLogin} />");
+  expect(code).toContain("setSearchGen((n) => n + 1)");
   expect(code).toContain("setHeldLogin(githubLoginOf(query))");
 });

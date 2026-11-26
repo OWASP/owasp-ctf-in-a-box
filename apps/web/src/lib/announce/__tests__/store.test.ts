@@ -827,4 +827,16 @@ describe("status", () => {
     );
     expect((await readStatus()).pending).toBe(2);
   });
+
+  it("reports the pending count as unavailable, not zero, when the outbox cannot be read", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.upstashPipeline.mockImplementation(async (cmds: unknown[][]) =>
+      cmds[0][1] === "ctf:announce:outbox"
+        ? [{ error: "NOAUTH" }]
+        : [{ result: ["lastError", "x", "lastErrorAt", "2026-01-01T00:00:00Z"] }],
+    );
+    const s = await readStatus();
+    expect(s.pending).toBeNull();
+    expect(s.lastError).toBe("x");
+  });
 });

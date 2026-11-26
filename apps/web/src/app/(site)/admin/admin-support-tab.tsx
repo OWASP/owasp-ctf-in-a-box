@@ -345,6 +345,9 @@ export default function AdminSupportTab({
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PlayerRow[] | null>(null);
   const [heldLogin, setHeldLogin] = useState<string | undefined>(undefined);
+  /** Bumped by every search, so searching the same login again re-reads its
+   *  held scores (after a failed read, say) instead of keeping the old view. */
+  const [searchGen, setSearchGen] = useState(0);
   const [detail, setDetail] = useState<UserDetail | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -394,6 +397,7 @@ export default function AdminSupportTab({
     setError(null);
     setNotice(null);
     setHeldLogin(githubLoginOf(query));
+    setSearchGen((n) => n + 1);
     try {
       const res = await fetch(playerSearchUrl(query));
       const data = (await res.json().catch(() => ({}))) as { players?: PlayerRow[]; error?: string };
@@ -489,7 +493,7 @@ export default function AdminSupportTab({
             ))}
           </ul>
         )}
-        {heldLogin && <AdminHeldScores key={heldLogin} login={heldLogin} />}
+        {heldLogin && <AdminHeldScores key={`${heldLogin}:${searchGen}`} login={heldLogin} />}
       </section>
 
       {detail && (

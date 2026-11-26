@@ -1,0 +1,2 @@
+- **Fixed: Support actions report beside their own button, and score adjustments show on Activity (#826).**
+  Each Support action's result appears next to that button and clears when the organizer picks another player or runs another action. Unlink GitHub stays disabled, with the reason beside it, when the player has no username or password to sign in with. Adding or removing a score adjustment is written to the activity log and can be filtered with the score-adjustment chip.

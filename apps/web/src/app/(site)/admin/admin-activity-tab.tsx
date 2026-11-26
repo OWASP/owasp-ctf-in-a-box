@@ -76,6 +76,7 @@ export const TYPE_LABELS: Record<string, string> = {
   // row's detail; the label stays true for both.
   "sd-held": "score held",
   "sd-released": "held score released",
+  adjustment: "score adjustment",
 };
 
 /** Compact row timestamp on the event's clock, "08-24 15:03:27 GMT-3" — see
@@ -134,7 +135,7 @@ function matchesTerm(e: ActivityEntry, field: Field, needle: string, zone: strin
     case "detail":
       return has(e.detail);
     case "team":
-      return e.type.startsWith("team-") && has(e.detail);
+      return (e.type.startsWith("team-") || e.type === "adjustment") && has(e.detail);
     default:
       return has(e.name) || has(typeText) || has(e.detail) || has(formatWhen(e.at, zone));
   }
@@ -368,8 +369,8 @@ export default function AdminActivityTab({
 
       {!entries && !error && (
         <p className="text-sm text-muted">
-          Sign-ins, solves, and team changes, newest first. Entries name the challenge or team
-          involved — never a flag or an answer.
+          Sign-ins, solves, team changes, and score adjustments, newest first. Entries name the
+          challenge, question, or team involved — never a flag or an answer.
         </p>
       )}
 

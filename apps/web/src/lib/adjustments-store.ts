@@ -18,11 +18,20 @@ import { ADMIN_AUDIT_KEY, AUDIT_CAP } from "@/lib/admin-store";
 import type { AuditActor } from "@/lib/admin-audit-keys";
 import { upstashEval, upstashPipeline } from "@/lib/upstash";
 import { ADJUSTMENT_MAX, ADJUSTMENTS_KEY, isTeamSlug } from "@/lib/adjustment-keys";
+import { logActivity } from "@/lib/activity-log";
 
 export { ADJUSTMENT_MAX, ADJUSTMENTS_KEY };
 export const ADJUSTMENT_REASON_MAX = 200;
 
 export type Adjustment = { id: string; slug: string; points: number; reason: string; by: string; at: string };
+
+/** The activity-log detail for one adjustment change. The reason is the
+ *  organizer's own text, already shown on Support; it is not a contestant
+ *  answer. Add and remove share the `adjustment` type so one chip shows both. */
+export function adjustmentActivityDetail(verb: "added" | "removed", row: Pick<Adjustment, "slug" | "points" | "reason">): string {
+  const points = `${row.points > 0 ? "+" : "−"}${Math.abs(row.points)}`;
+  return `${verb} ${points} ${row.slug} · ${row.reason}`;
+}
 
 export class AdjustmentValidationError extends Error {
   constructor(
@@ -90,6 +99,10 @@ export async function addAdjustment(rawSlug: string, points: number, rawReason: 
   if (verdict === "no-team") throw new AdjustmentValidationError("slug", `No team "${slug}"`);
   if (verdict === "audit-unwritable") throw new Error("the admin audit log is not writable; nothing was changed");
   if (verdict !== "ok") throw new Error(`unexpected verdict from the adjustment script: ${String(verdict)}`);
+  // Outside the script on purpose: the audit line is fail-closed with the
+  // ledger, and this write fails open, so a lost timeline line cannot roll
+  // the adjustment back.
+  await logActivity("adjustment", { id: actor.id, name: actor.name }, adjustmentActivityDetail("added", adj));
   return adj;
 }
 
@@ -103,7 +116,15 @@ export async function removeAdjustment(id: string, actor: AuditActor): Promise<{
   );
   if (removed === "audit-unwritable") throw new Error("the admin audit log is not writable; nothing was changed");
   if (typeof removed !== "string") throw new AdjustmentValidationError("id", `No adjustment "${id}"`);
-  return { id, row: parseRow(removed) };
+  const row = parseRow(removed);
+  // Same split as add: the script already audited the removal. The timeline
+  // line is fail-open and must not be able to undo it.
+  await logActivity(
+    "adjustment",
+    { id: actor.id, name: actor.name },
+    row ? adjustmentActivityDetail("removed", row) : `removed ${id}`,
+  );
+  return { id, row };
 }
 
 function parseRow(raw: unknown): Adjustment | null {

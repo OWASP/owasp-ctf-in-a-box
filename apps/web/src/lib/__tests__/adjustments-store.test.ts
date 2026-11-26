@@ -4,10 +4,11 @@
 // atomic script.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const m = vi.hoisted(() => ({ upstashEval: vi.fn(), upstashPipeline: vi.fn() }));
+const m = vi.hoisted(() => ({ upstashEval: vi.fn(), upstashPipeline: vi.fn(), logActivity: vi.fn(async () => {}) }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => ({ upstashEval: m.upstashEval, upstashPipeline: m.upstashPipeline }));
 vi.mock("@/lib/admin-store", () => ({ ADMIN_AUDIT_KEY: "ctf:admin:audit", AUDIT_CAP: 500 }));
+vi.mock("@/lib/activity-log", () => ({ logActivity: m.logActivity }));
 
 import {
   ADJUSTMENTS_KEY,
@@ -38,6 +39,11 @@ describe("addAdjustment", () => {
     expect(keys).toEqual([ADJUSTMENTS_KEY, "ctf:team:red-team", "ctf:admin:audit"]);
     expect(JSON.parse(String(args[1]))).toMatchObject({ id: adj.id, points: -10 });
     expect(JSON.parse(String(args[2]))).toMatchObject({ action: "adjustment:add", by: ADMIN.id, name: "admin", slug: "red-team", points: -10 });
+    expect(m.logActivity).toHaveBeenCalledExactlyOnceWith(
+      "adjustment",
+      { id: ADMIN.id, name: "admin" },
+      "added −10 red-team · late flag sharing",
+    );
   });
 
   it.each([
@@ -49,11 +55,13 @@ describe("addAdjustment", () => {
   ])("refuses %s without writing", async (_what, points, reason) => {
     await expect(addAdjustment("red-team", points, reason, ADMIN)).rejects.toBeInstanceOf(AdjustmentValidationError);
     expect(m.upstashEval).not.toHaveBeenCalled();
+    expect(m.logActivity).not.toHaveBeenCalled();
   });
 
   it("refuses a team that does not exist", async () => {
     m.upstashEval.mockResolvedValueOnce("no-team");
     await expect(addAdjustment("ghost", 5, "bonus", ADMIN)).rejects.toThrow(/No team "ghost"/);
+    expect(m.logActivity).not.toHaveBeenCalled();
   });
 });
 
@@ -68,6 +76,11 @@ describe("removeAdjustment", () => {
     // The script builds the audit line from the actor's id and name.
     expect(args[1]).toBe(ADMIN.id);
     expect(args[4]).toBe("admin");
+    expect(m.logActivity).toHaveBeenCalledExactlyOnceWith(
+      "adjustment",
+      { id: ADMIN.id, name: "admin" },
+      "removed −10 red · r",
+    );
   });
 
   it("answers the removed row", async () => {
@@ -80,11 +93,13 @@ describe("removeAdjustment", () => {
   it("reports a malformed row's removal as done, with no row", async () => {
     m.upstashEval.mockResolvedValueOnce("{not json");
     expect(await removeAdjustment("a1", ADMIN)).toEqual({ id: "a1", row: null });
+    expect(m.logActivity).toHaveBeenCalledExactlyOnceWith("adjustment", { id: ADMIN.id, name: "admin" }, "removed a1");
   });
 
   it("refuses with nothing changed when the audit log cannot take the line", async () => {
     m.upstashEval.mockResolvedValueOnce("audit-unwritable");
     await expect(removeAdjustment("a1", ADMIN)).rejects.toThrow(/nothing was changed/);
+    expect(m.logActivity).not.toHaveBeenCalled();
   });
 
   it("says so when the id is not there", async () => {

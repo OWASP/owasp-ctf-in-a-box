@@ -31,6 +31,7 @@ export const ACTIVITY_TYPES = [
   // and its release once they link. Those rows name the GitHub login.
   "sd-held",
   "sd-released",
+  "adjustment",
 ] as const;
 
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];

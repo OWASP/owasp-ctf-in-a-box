@@ -19,8 +19,9 @@
 
 import { useRef, useState } from "react";
 import type { ConfirmState } from "./types";
-import AdminAdjustments from "./admin-adjustments";
+import AdminAdjustments, { SupportResultLine, type SupportResult } from "./admin-adjustments";
 import AdminHeldScores from "./admin-held-scores";
+import { unlinkGithubBlockReason } from "@/lib/unlink-github";
 import { USERNAME_MAX } from "@/lib/username-rules";
 import { adminTime } from "@/lib/event-time";
 
@@ -40,6 +41,9 @@ export type UserDetail = {
   /** Null when the player has no link, and when Secure Development is off. */
   github: { login: string; linkedAt: number | null } | null;
   known: boolean;
+  /** Mirrors the store's flags so Unlink GitHub can be disabled before confirm. */
+  hasUsername: boolean;
+  hasPassword: boolean;
 };
 
 /** One search result: what `GET /api/admin/players` answers per player. */
@@ -359,8 +363,9 @@ export default function AdminSupportTab({
   const [searchGen, setSearchGen] = useState(0);
   const [detail, setDetail] = useState<UserDetail | null>(null);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  /** The latest action's outcome. Starting another action, or picking a
+   *  different player, replaces it. A refresh of the same player does not. */
+  const [result, setResult] = useState<SupportResult | null>(null);
   const [lookupSeq] = useState(requestSequence);
 
   const [teamSlug, setTeamSlug] = useState("");
@@ -370,31 +375,30 @@ export default function AdminSupportTab({
   const [addSlug, setAddSlug] = useState("");
   const [addOverride, setAddOverride] = useState(false);
   const [renameTo, setRenameTo] = useState("");
-  const [renameStatus, setRenameStatus] = useState<string | null>(null);
   const [resetCode, setResetCode] = useState<{ code: string; expiresAt: string } | null>(null);
 
-  /** Runs a request and folds the outcome into the shared notice/error state.
+  /** Runs a request and records the outcome against `id`, beside that control.
    *  `after` re-reads the contestant when one is on screen, so the panel never
    *  shows a score that an action on this very tab just deleted. */
   async function run(
+    id: string,
     fn: () => Promise<Response>,
     describe: (data: Record<string, unknown>) => string,
     after?: () => Promise<void>,
   ) {
     setPending(true);
-    setError(null);
-    setNotice(null);
+    setResult(null);
     try {
       const res = await fn();
       const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
-        setError(typeof data.error === "string" ? data.error : "Request failed");
+        setResult({ id, tone: "err", text: typeof data.error === "string" ? data.error : "Request failed" });
         return;
       }
-      setNotice(describe(data));
+      setResult({ id, tone: "ok", text: describe(data) });
       if (after) await after();
     } catch {
-      setError("Request failed");
+      setResult({ id, tone: "err", text: "Request failed" });
     } finally {
       setPending(false);
     }
@@ -403,8 +407,7 @@ export default function AdminSupportTab({
   async function search() {
     if (!canSearch(query, pending)) return;
     setPending(true);
-    setError(null);
-    setNotice(null);
+    setResult(null);
     // The previous answer goes with the previous query: a stale empty result
     // would otherwise say the new login matches no account before it is read.
     setResults(null);
@@ -414,13 +417,13 @@ export default function AdminSupportTab({
       const res = await fetch(playerSearchUrl(query));
       const data = (await res.json().catch(() => ({}))) as { players?: PlayerRow[]; error?: string };
       if (!res.ok || !Array.isArray(data.players)) {
-        setError(data.error ?? "Search failed");
+        setResult({ id: "search", tone: "err", text: data.error ?? "Search failed" });
         setResults(null);
         return;
       }
       setResults(data.players);
     } catch {
-      setError("Search failed");
+      setResult({ id: "search", tone: "err", text: "Search failed" });
       setResults(null);
     } finally {
       setPending(false);
@@ -428,11 +431,11 @@ export default function AdminSupportTab({
   }
 
   async function lookup(id: string) {
-    setResetCode(null);
-    setRenameStatus(null);
+    if (id !== detail?.id) {
+      setResetCode(null);
+      setResult(null);
+    }
     setPending(true);
-    setError(null);
-    setNotice(null);
     const out = await latestOnly(lookupSeq, async () => {
       const res = await fetch(lookupUrl(id));
       const data = (await res.json().catch(() => ({}))) as UserDetail & { error?: string };
@@ -441,7 +444,7 @@ export default function AdminSupportTab({
     // A newer lookup owns the card, the error line and the pending flag.
     if (!out.current) return;
     if (!out.ok || !out.value.ok) {
-      setError((out.ok && out.value.data.error) || "Lookup failed");
+      setResult({ id: "lookup", tone: "err", text: (out.ok && out.value.data.error) || "Lookup failed" });
       setDetail(null);
     } else {
       setDetail(out.value.data);
@@ -461,6 +464,8 @@ export default function AdminSupportTab({
     const warnings = Array.isArray(data.warnings) ? (data.warnings as string[]) : [];
     return warnings.length ? `${base} — ${warnings.join(" ")}` : base;
   };
+
+  const unlinkBlock = detail?.github ? unlinkGithubBlockReason(detail.hasUsername, detail.hasPassword) : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -486,6 +491,9 @@ export default function AdminSupportTab({
           <button type="button" disabled={!canSearch(query, pending)} onClick={() => void search()} className={BTN}>
             Search
           </button>
+          <SupportResultLine result={result} id="search" />
+          <SupportResultLine result={result} id="lookup" />
+          <SupportResultLine result={result} id="delete" />
         </div>
         {results && results.length === 0 && <p className="text-sm text-muted">{noMatchText(heldLogin)}</p>}
         {results && results.length > 0 && (
@@ -596,7 +604,7 @@ export default function AdminSupportTab({
               onClick={() => {
                 void (async () => {
                   setPending(true);
-                  setRenameStatus(null);
+                  setResult(null);
                   try {
                     const res = await fetch("/api/admin/ops/user", {
                       method: "POST",
@@ -605,13 +613,13 @@ export default function AdminSupportTab({
                     });
                     const data = (await res.json().catch(() => ({}))) as { error?: string; to?: string };
                     if (!res.ok) {
-                      setRenameStatus(data.error ?? "Rename failed");
+                      setResult({ id: "rename", tone: "err", text: data.error ?? "Rename failed" });
                       return;
                     }
-                    setRenameStatus(`Renamed to ${data.to ?? renameTo.trim()}.`);
+                    setResult({ id: "rename", tone: "ok", text: `Renamed to ${data.to ?? renameTo.trim()}.` });
                     await refresh();
                   } catch {
-                    setRenameStatus("Rename failed");
+                    setResult({ id: "rename", tone: "err", text: "Rename failed" });
                   } finally {
                     setPending(false);
                   }
@@ -620,11 +628,7 @@ export default function AdminSupportTab({
             >
               Save
             </button>
-            {renameStatus && (
-              <span role="status" className="text-sm text-zinc-300">
-                {renameStatus}
-              </span>
-            )}
+            <SupportResultLine result={result} id="rename" />
           </div>
 
           {resetCode && (
@@ -648,6 +652,7 @@ export default function AdminSupportTab({
                     // answer arrives, so the old one is never left to hand over.
                     setResetCode(null);
                     return run(
+                      "reset-code",
                       () =>
                         fetch("/api/admin/ops/user", {
                           method: "POST",
@@ -667,13 +672,15 @@ export default function AdminSupportTab({
             >
               Reset password
             </button>
+            <SupportResultLine result={result} id="reset-code" />
 
             {detail.github && (
               <button
                 type="button"
-                disabled={pending}
+                disabled={pending || unlinkBlock !== null}
                 className={DANGER}
                 onClick={() => {
+                  if (unlinkBlock) return;
                   const c = unlinkGithubConfirm(detail);
                   setConfirm({
                     title: c.title,
@@ -682,6 +689,7 @@ export default function AdminSupportTab({
                     body: c.body,
                     onConfirm: () =>
                       run(
+                        "unlink",
                         () =>
                           fetch("/api/admin/ops/user", {
                             method: "POST",
@@ -697,6 +705,8 @@ export default function AdminSupportTab({
                 Unlink GitHub
               </button>
             )}
+            {unlinkBlock && <p className="text-sm text-muted">{unlinkBlock}</p>}
+            <SupportResultLine result={result} id="unlink" />
           </div>
 
           <div className="flex flex-wrap gap-2 border-t border-white/[0.06] pt-3">
@@ -724,6 +734,7 @@ export default function AdminSupportTab({
                   ),
                   onConfirm: () =>
                     run(
+                      "reset",
                       () =>
                         fetch("/api/admin/ops/user", {
                           method: "POST",
@@ -738,6 +749,7 @@ export default function AdminSupportTab({
             >
               Reset progress
             </button>
+            <SupportResultLine result={result} id="reset" />
 
             <button
               type="button"
@@ -765,6 +777,7 @@ export default function AdminSupportTab({
                   ),
                   onConfirm: () =>
                     run(
+                      "delete",
                       () =>
                         fetch("/api/admin/ops/user", {
                           method: "DELETE",
@@ -797,6 +810,7 @@ export default function AdminSupportTab({
                     body: <>{c.idLine} Their progress is kept — only the membership goes.</>,
                     onConfirm: () =>
                       run(
+                        "remove-member",
                         () =>
                           fetch("/api/admin/ops/team", {
                             method: "POST",
@@ -812,6 +826,7 @@ export default function AdminSupportTab({
                 Remove from team
               </button>
             )}
+            <SupportResultLine result={result} id="remove-member" />
           </div>
 
           {/* The way back for a player who left after registration
@@ -840,6 +855,7 @@ export default function AdminSupportTab({
               onClick={() => {
                 const slug = addSlug.trim();
                 void run(
+                  "add-member",
                   () =>
                     fetch("/api/admin/ops/team", {
                       method: "POST",
@@ -861,6 +877,7 @@ export default function AdminSupportTab({
             >
               {addToTeamLabel(detail.team)}
             </button>
+            <SupportResultLine result={result} id="add-member" />
           </div>
         </section>
       )}
@@ -900,6 +917,7 @@ export default function AdminSupportTab({
                 body: <>{playerIdLine(detail.id)} They must already be a member of that team.</>,
                 onConfirm: () =>
                   run(
+                    "transfer",
                     () =>
                       fetch("/api/admin/ops/team", {
                         method: "POST",
@@ -914,6 +932,7 @@ export default function AdminSupportTab({
           >
             {detail ? `Make ${detail.name} captain` : "Transfer captaincy"}
           </button>
+          <SupportResultLine result={result} id="transfer" />
 
           <button
             type="button"
@@ -934,6 +953,7 @@ export default function AdminSupportTab({
                 ),
                 onConfirm: () =>
                   run(
+                    "disband",
                     () =>
                       fetch("/api/admin/ops/team", {
                         method: "DELETE",
@@ -948,13 +968,11 @@ export default function AdminSupportTab({
           >
             Disband team
           </button>
+          <SupportResultLine result={result} id="disband" />
         </div>
       </section>
 
-      <AdminAdjustments />
-
-      {error && <p className="text-sm text-[#e53e3e]">{error}</p>}
-      {notice && <p className="text-sm text-[#22c55e]">{notice}</p>}
+      <AdminAdjustments result={result} report={setResult} />
     </div>
   );
 }

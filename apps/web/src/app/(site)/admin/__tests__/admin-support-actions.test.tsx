@@ -22,6 +22,8 @@ const detail: UserDetail = {
   hints: { bought: 0, spent: 0 },
   known: true,
   github: { login: "octocat", linkedAt: 1 },
+  hasUsername: true,
+  hasPassword: true,
 };
 
 const json = (body: unknown, ok = true) => ({ ok, json: async () => body }) as Response;
@@ -111,6 +113,70 @@ describe("Unlink GitHub", () => {
     });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(posts).toEqual([{ id: OCTO, action: "unlink-github" }]);
+  });
+
+  it("stays disabled, with the reason beside it, when the player has no password", async () => {
+    const blocked = { ...detail, hasPassword: false };
+    const posts = stubFetch(async () => json({}));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          posts.push(JSON.parse(String(init.body)) as Post);
+          return json({});
+        }
+        if (url.startsWith("/api/admin/players")) return json({ players: [{ id: OCTO, name: "octocat", image: null }] });
+        return json(blocked);
+      }),
+    );
+    render(<WithConfirm />);
+    fireEvent.change(screen.getByLabelText("Name or GitHub login"), { target: { value: "octo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(await screen.findByRole("button", { name: /octocat/ }));
+    const control = await screen.findByRole("button", { name: "Unlink GitHub" });
+    expect((control as HTMLButtonElement).disabled).toBe(true);
+    expect(document.body.textContent).toContain("give them a reset code so they can set a password");
+    fireEvent.click(control);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(posts).toEqual([]);
+  });
+
+  it("shows a refusal beside Unlink and clears it when an adjustment is sent", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST" && String(url).includes("/api/admin/ops/user")) {
+          return json({ error: "This player cannot sign in without GitHub. First give them a reset code so they can set a password." }, false);
+        }
+        if (init?.method === "POST" && String(url).includes("/api/admin/adjustments")) {
+          return json({ error: "No team \"red-team\"" }, false);
+        }
+        if (String(url).startsWith("/api/admin/players")) return json({ players: [{ id: OCTO, name: "octocat", image: null }] });
+        if (String(url).startsWith("/api/admin/adjustments")) return json({ adjustments: [] });
+        return json(detail);
+      }),
+    );
+    render(<WithConfirm />);
+    fireEvent.change(screen.getByLabelText("Name or GitHub login"), { target: { value: "octo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(await screen.findByRole("button", { name: /octocat/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Unlink GitHub" }));
+    const dialog = await screen.findByRole("dialog");
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Unlink GitHub" }));
+    });
+    await screen.findByText(/cannot sign in without GitHub/);
+
+    const slug = screen.getAllByLabelText("Team slug").find((el) => el.getAttribute("placeholder") === "team slug");
+    if (!slug) throw new Error("adjustment slug field missing");
+    fireEvent.change(slug, { target: { value: "red-team" } });
+    fireEvent.change(screen.getByLabelText("Points (negative for a penalty)"), { target: { value: "-10" } });
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "late flag" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add adjustment" }));
+    });
+    await waitFor(() => expect(document.body.textContent).not.toContain("cannot sign in without GitHub"));
+    expect(document.body.textContent).toContain("No team");
   });
 });
 

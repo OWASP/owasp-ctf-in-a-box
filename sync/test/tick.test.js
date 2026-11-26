@@ -747,3 +747,54 @@ test("a stopped tick skips the heartbeat, so the cursor save follows at once", a
   await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis: { ...redisStub, writeStatus: async () => { status++; } } });
   assert.equal(status, 1, "an ordinary tick still writes it");
 });
+
+test("a hold writes an admin activity row with the login and the PR, and a log line with neither", async () => {
+  const rows = [];
+  const logs = [];
+  const redis = { ...redisStub, holdScore: async () => {}, logActivity: async (r) => rows.push(r) };
+  const body = `<!-- ctf-score: {"author":"Stranger","target":"dvwa","solved":["sqli-low","xss"],"pr":9,"sha":"abc"} -->`;
+  const f = routes(() => new Response(JSON.stringify([ghComment(4242, body)]), { status: 200, headers: {} }), 202, []);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: (m) => logs.push(m), redis });
+  assert.equal(rows.length, 1);
+  const { type, userId, login, name, detail } = rows[0];
+  assert.deepEqual(
+    { type, userId, login, name, detail },
+    { type: "sd-held", userId: null, login: "stranger", name: "@stranger", detail: "dvwa PR #9, 2 challenges: waiting for the author to link GitHub" },
+  );
+  assert.ok(logs.includes("hold: dvwa, 2 challenges (waiting for the author to link GitHub)"), JSON.stringify(logs));
+  assert.equal(logs.some((l) => /stranger|#9|4242/i.test(l)), false);
+});
+
+test("a score held because the author linked only after the close says so, not that they must link", async () => {
+  const rows = [];
+  const c = closeCase(Date.parse(CLOSE) + 5 * 60_000, CLOSE);
+  const redis = {
+    ...redisStub,
+    resolveGithubLink: async () => ({ player: LINKS.octocat, linkedAt: Date.parse(CLOSE) + 5 * 60_000 }),
+    readScoringWindow: async () => ({ startsAt: "", endsAt: CLOSE }),
+    holdScore: async () => {},
+    logActivity: async (r) => rows.push(r),
+  };
+  const f = routes(() => new Response(JSON.stringify([ghComment(1)]), { status: 200, headers: {} }), 202, c.posts);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].detail, "dvwa PR #7, 1 challenge: the author linked GitHub at or after scoring closed");
+});
+
+test("a score held for a link with no recorded time says so, rather than claiming when it was made", async () => {
+  const rows = [];
+  const redis = {
+    ...redisStub,
+    resolveGithubLink: async () => ({ player: LINKS.octocat, linkedAt: null }),
+    readScoringWindow: async () => ({ startsAt: "", endsAt: CLOSE }),
+    holdScore: async () => {},
+    logActivity: async (r) => rows.push(r),
+  };
+  const f = routes(() => new Response(JSON.stringify([ghComment(1)]), { status: 200, headers: {} }), 202, []);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(rows.length, 1);
+  assert.equal(
+    rows[0].detail,
+    "dvwa PR #7, 1 challenge: the author's GitHub link has no recorded time, so it counts as made after scoring closed",
+  );
+});

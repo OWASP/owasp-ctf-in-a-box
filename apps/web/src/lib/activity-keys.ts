@@ -26,6 +26,11 @@ export const ACTIVITY_TYPES = [
   "team-join",
   "team-leave",
   "team-rename",
+  // Written by sync, not the app (sync/src/index.js recordHeldEvent): a
+  // Secure Development score held for a PR author with no linked account,
+  // and its release once they link. Those rows name the GitHub login.
+  "sd-held",
+  "sd-released",
 ] as const;
 
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];

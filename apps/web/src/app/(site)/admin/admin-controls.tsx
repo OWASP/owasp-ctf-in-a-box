@@ -277,6 +277,7 @@ export default function AdminControls({
                 />
               ) : tab.id === EVENT_TAB ? (
                 <AdminEventTab
+                  visible={active === EVENT_TAB}
                   settings={settings}
                   pending={pending}
                   resetInfo={resetInfo}

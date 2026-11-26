@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { HeldScoresList } from "@/app/(site)/admin/admin-held-scores";
+import { HeldScoresList, heldScoresUrl } from "@/app/(site)/admin/admin-held-scores";
 import AdminSecureDevTab from "@/app/(site)/admin/admin-secure-dev-tab";
 import type { AdminSettings } from "@/lib/admin-store";
 
@@ -42,5 +42,12 @@ describe("AdminSecureDevTab", () => {
       />,
     );
     expect(html).toContain("Held and unclaimed scores");
+  });
+});
+
+describe("heldScoresUrl", () => {
+  it("reads every held score, or one GitHub login's", () => {
+    expect(heldScoresUrl()).toBe("/api/admin/sd/held");
+    expect(heldScoresUrl("octo-cat")).toBe("/api/admin/sd/held?login=octo-cat");
   });
 });

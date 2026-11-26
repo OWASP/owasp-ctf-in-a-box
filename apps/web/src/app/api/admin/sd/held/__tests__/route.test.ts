@@ -42,6 +42,20 @@ describe("GET /api/admin/sd/held", () => {
     expect(await res.json()).toEqual({ entries });
   });
 
+  it("narrows to one GitHub login, case-insensitively and with an optional @", async () => {
+    const row = (login: string) => ({ login, target: "dvwa", solved: ["a"], pr: 1, at: "2026-11-19T10:00:00.000Z", status: "held" });
+    h.listHeldScores.mockResolvedValue([row("octo"), row("mona")]);
+    const res = await route.GET(new Request("http://box.test/api/admin/sd/held?login=%40Octo"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ entries: [row("octo")] });
+  });
+
+  it("refuses a login GitHub could not have, without reading", async () => {
+    const res = await route.GET(new Request("http://box.test/api/admin/sd/held?login=not%20a%20login"));
+    expect(res.status).toBe(400);
+    expect(h.listHeldScores).not.toHaveBeenCalled();
+  });
+
   it("exports only GET and is force-dynamic", () => {
     expect(route.dynamic).toBe("force-dynamic");
     expect(Object.keys(route).sort()).toEqual(["GET", "dynamic"]);

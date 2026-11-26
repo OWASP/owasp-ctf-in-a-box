@@ -356,7 +356,7 @@ test("a newer score for a target with an older one still held is held behind it,
   await tick(CFG, { repos: {} }, { redis, fetchImpl, log: (m) => logs.push(m) });
   assert.deepEqual(posts, [], "posting it would replace the older comment's solve time");
   assert.deepEqual(holds, [["octocat", "50@2026-11-13T12:00:00Z", { target: "dvwa", solved: ["xss-low"], pr: 12, sha: "ccc333", at: "2026-11-13T12:00:00Z", repo: "DVWA" }]]);
-  assert.ok(logs.some((l) => /held \(an older held score for this target goes first\)/.test(l)), JSON.stringify(logs));
+  assert.ok(logs.some((l) => /^hold: dvwa, 1 challenge \(an older held score for this target goes first\)$/.test(l)), JSON.stringify(logs));
 });
 
 test("the same gate applies when the scorer fails the older release this tick", async () => {
@@ -429,4 +429,34 @@ test("a stop between held scores releases the one in hand and keeps the rest hel
   assert.equal(r.released, 1, "the one in hand finished its release");
   assert.equal(r.kept, 1);
   assert.equal(Object.keys(redis.held.octocat).length, 1, "the rest stays held for the next process");
+});
+
+test("a release writes an admin activity row naming the login, the player and the PR", async () => {
+  const rows = [];
+  const redis = { ...fakeRedis({ links: { octocat: { player: PLAYER, linkedAt: T - MIN } }, held: twoHeld() }), logActivity: async (r) => rows.push(r) };
+  const { fetchImpl } = scorer();
+  await releaseHeldScores({ cfg: CFG, redis, fetchImpl, log: () => {} });
+  assert.equal(rows.length, 2);
+  assert.deepEqual(
+    rows.map(({ type, userId, login, name, detail }) => ({ type, userId, login, name, detail })),
+    [
+      { type: "sd-released", userId: PLAYER, login: "octocat", name: "@octocat", detail: "dvwa PR #7, 1 challenge: scored" },
+      { type: "sd-released", userId: PLAYER, login: "octocat", name: "@octocat", detail: "vampi PR #9, 1 challenge: scored" },
+    ],
+  );
+  assert.ok(rows.every((r) => Number.isFinite(Date.parse(r.at))));
+});
+
+test("a throwing activity write never turns a finished release into a retry", async () => {
+  const redis = {
+    ...fakeRedis({ links: { octocat: { player: PLAYER, linkedAt: T - MIN } }, held: twoHeld() }),
+    logActivity: async () => {
+      throw new Error("NOAUTH");
+    },
+  };
+  const { posts, fetchImpl } = scorer();
+  const r = await releaseHeldScores({ cfg: CFG, redis, fetchImpl, log: () => {} });
+  assert.equal(posts.length, 2, "the second held score is still released");
+  assert.equal(r.released, 2);
+  assert.equal(r.retried, 0);
 });

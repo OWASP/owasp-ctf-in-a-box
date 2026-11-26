@@ -22,6 +22,7 @@ import type { AnnouncementKind, DiscordPublicConfig } from "@/lib/discord-config
 import type { AnnounceStatus } from "@/lib/announce/store";
 import type { DiscordMessage } from "@/lib/announce/messages";
 import type { ConfirmState } from "./types";
+import { SLOW_POLL_MS } from "./use-live-poll";
 
 export type Load = { state: "loading" } | { state: "ready"; config: DiscordPublicConfig; status: AnnounceStatus } | { state: "failed"; message: string };
 
@@ -39,6 +40,21 @@ const SWITCHES: { key: keyof DiscordPublicConfig; id: string; label: string; hel
 async function errorOf(res: Response): Promise<string> {
   const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
   return typeof body?.error === "string" ? body.error : `Request failed (${res.status}).`;
+}
+
+/** The card's warning while deliveries are failing: the last failure is newer
+ *  than the last post, so the webhook is not working NOW (one that failed and
+ *  then posted again is fine). Names when, how many announcements wait behind
+ *  it, and what Discord answered; never the URL. Exported so the suite can pin
+ *  it — there is no DOM in this repo's tests. */
+export function failureNotice(status: AnnounceStatus, timeZone: string): string | null {
+  if (!status.lastErrorAt) return null;
+  const failedMs = Date.parse(status.lastErrorAt);
+  if (!Number.isFinite(failedMs)) return null;
+  if (status.lastPostedAt && Date.parse(status.lastPostedAt) >= failedMs) return null;
+  const waiting =
+    status.pending === null ? " — pending count unavailable" : status.pending > 0 ? ` — ${status.pending} pending` : "";
+  return `Last post failed at ${adminTime(status.lastErrorAt, timeZone)}${waiting}: ${status.lastError ?? "Discord did not accept it"}`;
 }
 
 /** Whether a blur-save should POST at all: only when the trimmed input
@@ -63,6 +79,37 @@ export function mergePatched(config: DiscordPublicConfig, keysWritten: readonly 
     if (key in source) next[key] = source[key];
   }
   return next as DiscordPublicConfig;
+}
+
+/** Orders the card's reads of the announcement settings: the first load, the
+ *  status poll and the reload after Send test. `begin()` starts a read;
+ *  `current()` says whether it is still the newest one started, so an answer
+ *  that arrives after a later read's is dropped instead of putting back an
+ *  older status, and `finish()` marks it answered. `busy()` is true while the
+ *  NEWEST read is unanswered: the background poll skips its turn then, so
+ *  reads slower than the poll interval cannot keep superseding each other and
+ *  leave the card on "Loading…", while a superseded read still in flight
+ *  does not hold the poll back once a newer one has answered. Exported so
+ *  the suite can pin it without a DOM. */
+export function createReadSequence(): {
+  begin: () => { current: () => boolean; finish: () => void };
+  busy: () => boolean;
+} {
+  let latest = 0;
+  let latestOpen = false;
+  return {
+    begin() {
+      const mine = ++latest;
+      latestOpen = true;
+      return {
+        current: () => mine === latest,
+        finish: () => {
+          if (mine === latest) latestOpen = false;
+        },
+      };
+    },
+    busy: () => latestOpen,
+  };
 }
 
 /** Folds a fresh GET into the load state for `reload`. Send test refreshes
@@ -106,10 +153,14 @@ export default function AdminEventAnnouncements({
   setConfirm,
   timeZone,
   initial,
+  visible = false,
 }: {
   setConfirm: (c: ConfirmState) => void;
   timeZone: string;
   initial?: { config: DiscordPublicConfig; status: AnnounceStatus };
+  /** The Event tab is the active destination: the delivery status is
+   *  re-read only while the organizer is looking at it. */
+  visible?: boolean;
 }) {
   const [load, setLoad] = useState<Load>(
     initial ? { state: "ready", config: initial.config, status: initial.status } : { state: "loading" },
@@ -138,27 +189,58 @@ export default function AdminEventAnnouncements({
    *  fresh config (Send test): only the delivery status is refreshed — the
    *  config already on screen is the newer truth (see `foldReloaded`). If
    *  the refresh fails, the loaded config and controls are preserved. */
-  const reload = useCallback(async () => {
-    try {
-      const body = await readConfig();
-      setLoad((prev) => foldReloaded(prev, body));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not read the announcement settings.";
-      setLoad((prev) => foldReloadFailure(prev, message));
-    }
-  }, [readConfig]);
+  const reads = useRef(createReadSequence());
+  const reload = useCallback(
+    async (alive: () => boolean = () => true) => {
+      const read = reads.current.begin();
+      const apply = () => read.current() && alive();
+      try {
+        const body = await readConfig();
+        if (apply()) setLoad((prev) => foldReloaded(prev, body));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Could not read the announcement settings.";
+        if (apply()) setLoad((prev) => foldReloadFailure(prev, message));
+      } finally {
+        read.finish();
+      }
+    },
+    [readConfig],
+  );
 
+  // Delivery health changes while the card is open (a webhook deleted
+  // mid-event, or Discord recovering): re-read the status on the admin's slow
+  // poll while the Event tab is shown and the browser tab is visible.
+  // `reload` keeps the config on screen; a response after unmount is dropped.
+  useEffect(() => {
+    if (!visible) return;
+    let alive = true;
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible" && !reads.current.busy()) void reload(() => alive);
+    }, SLOW_POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [visible, reload]);
+
+  // The first load goes through the same sequence and folds: if the card is
+  // already ready when it answers (a poll got there first, then a setting
+  // was saved), only its status is taken, never its older config.
   useEffect(() => {
     if (initial) return;
     let cancelled = false;
-    readConfig().then(
-      (body) => {
-        if (!cancelled) setLoad({ state: "ready", config: body.config, status: body.status });
-      },
-      (err: unknown) => {
-        if (!cancelled) setLoad({ state: "failed", message: err instanceof Error ? err.message : "Could not read the announcement settings." });
-      },
-    );
+    const read = reads.current.begin();
+    readConfig()
+      .then(
+        (body) => {
+          if (!cancelled && read.current()) setLoad((prev) => foldReloaded(prev, body));
+        },
+        (err: unknown) => {
+          const message = err instanceof Error ? err.message : "Could not read the announcement settings.";
+          if (!cancelled && read.current()) setLoad((prev) => foldReloadFailure(prev, message));
+        },
+      )
+      .finally(read.finish);
     return () => {
       cancelled = true;
     };
@@ -472,6 +554,11 @@ export default function AdminEventAnnouncements({
       )}
       <FieldStatusLine id="ann-preview-status" status={fieldStatus.preview ?? { state: "idle" }} />
 
+      {status && failureNotice(status, timeZone) && (
+        <p role="alert" className="text-xs text-[#e53e3e]" data-testid="ann-failing">
+          {failureNotice(status, timeZone)}
+        </p>
+      )}
       {status && (
         <p className="text-xs text-muted" data-testid="ann-status">
           {status.lastPostedAt ? `Last post: ${adminTime(status.lastPostedAt, timeZone)}` : "Nothing posted yet."}

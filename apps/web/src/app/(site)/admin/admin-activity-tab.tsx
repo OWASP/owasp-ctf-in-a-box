@@ -72,6 +72,10 @@ export const TYPE_LABELS: Record<string, string> = {
   "team-join": "joined team",
   "team-leave": "left team",
   "team-rename": "renamed team",
+  // The reason (author not linked, or behind an older held score) is in the
+  // row's detail; the label stays true for both.
+  "sd-held": "score held",
+  "sd-released": "held score released",
 };
 
 /** Compact row timestamp on the event's clock, "08-24 15:03:27 GMT-3" — see

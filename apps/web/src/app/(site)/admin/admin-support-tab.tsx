@@ -20,6 +20,7 @@
 import { useRef, useState } from "react";
 import type { ConfirmState } from "./types";
 import AdminAdjustments from "./admin-adjustments";
+import AdminHeldScores from "./admin-held-scores";
 import { USERNAME_MAX } from "@/lib/username-rules";
 import { adminTime } from "@/lib/event-time";
 
@@ -47,6 +48,14 @@ export type PlayerRow = { id: string; name: string; image: string | null };
 /** The search request for what the organizer typed. */
 export function playerSearchUrl(query: string): string {
   return `/api/admin/players?q=${encodeURIComponent(query.trim())}`;
+}
+
+/** The GitHub login a search could name (an optional leading @), whose held
+ *  Secure Development scores Support shows next to the matching players; a
+ *  query that cannot be a login names none. */
+export function githubLoginOf(query: string): string | undefined {
+  const login = query.trim().replace(/^@/, "").toLowerCase();
+  return /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/.test(login) ? login : undefined;
 }
 
 /** Numbers requests so only the newest one's answer is applied. */
@@ -335,6 +344,10 @@ export default function AdminSupportTab({
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PlayerRow[] | null>(null);
+  const [heldLogin, setHeldLogin] = useState<string | undefined>(undefined);
+  /** Bumped by every search, so searching the same login again re-reads its
+   *  held scores (after a failed read, say) instead of keeping the old view. */
+  const [searchGen, setSearchGen] = useState(0);
   const [detail, setDetail] = useState<UserDetail | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -383,6 +396,8 @@ export default function AdminSupportTab({
     setPending(true);
     setError(null);
     setNotice(null);
+    setHeldLogin(githubLoginOf(query));
+    setSearchGen((n) => n + 1);
     try {
       const res = await fetch(playerSearchUrl(query));
       const data = (await res.json().catch(() => ({}))) as { players?: PlayerRow[]; error?: string };
@@ -478,6 +493,7 @@ export default function AdminSupportTab({
             ))}
           </ul>
         )}
+        {heldLogin && <AdminHeldScores key={`${heldLogin}:${searchGen}`} login={heldLogin} />}
       </section>
 
       {detail && (

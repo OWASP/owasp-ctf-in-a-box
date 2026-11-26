@@ -137,6 +137,32 @@ const freshRelease = () => ({ released: 0, accepted: 0, refused: 0, rejected: 0,
  * index or the window cannot be read; the caller logs that and polls anyway.
  * Logs carry counts and reasons, never a login, player id or PR.
  */
+/** A score held for an unlinked PR author, or released once they link: what
+ *  an organizer reads when a player says "my PR scored but I have 0 points".
+ *  The container log line names only the target and the challenge count,
+ *  never the login, the PR or the comment, like every sync log line; the
+ *  login and the PR go to the admin-only activity log row, which /admin
+ *  shows next to Support's held scores. */
+async function recordHeldEvent(redis, log, kind, { login, player = null, target, pr, solved, why }) {
+  // Fail-open as a whole: the hold or release it describes has already
+  // happened, and a throw here would make the caller retry it.
+  try {
+    const n = Array.isArray(solved) ? solved.length : 0;
+    const count = `${n} challenge${n === 1 ? "" : "s"}`;
+    log(`${kind === "held" ? "hold" : "release"}: ${target}, ${count} (${why})`);
+    await redis.logActivity?.({
+      at: new Date().toISOString(),
+      type: kind === "held" ? "sd-held" : "sd-released",
+      userId: player,
+      login,
+      name: `@${login}`,
+      detail: `${target} PR #${pr}, ${count}: ${why}`,
+    });
+  } catch {
+    // Nothing to report through: the log itself may be what failed.
+  }
+}
+
 export async function releaseHeldScores({
   cfg,
   redis,
@@ -198,6 +224,8 @@ export async function releaseHeldScores({
           await redis.releaseHeld(login, field);
           counts.released++;
           counts[verdict.outcome]++;
+          const why = verdict.outcome === "accepted" ? "scored" : verdict.reason ? `${verdict.outcome}: ${verdict.reason}` : verdict.outcome;
+          await recordHeldEvent(redis, log, "released", { login, player: link.player, target, pr, solved, why });
         } catch (err) {
           counts.retried++;
           counts.kept += ready.length - i;
@@ -404,7 +432,16 @@ export async function tick(cfg, state, deps = {}) {
             target: payload.target, solved: payload.solved, pr: payload.pr, sha: payload.sha, at, repo,
           });
           tally.held++;
-          log(`submit ${repo}#${payload.pr}: held (PR author not linked yet)`);
+          // A late link is a link, just one that cannot release the score, and
+          // a link with no recorded time counts as late (linkAfterClose): the
+          // admin row says which, so Support does not ask a linked player to
+          // link again, nor state a time nobody recorded.
+          const why = !link
+            ? "waiting for the author to link GitHub"
+            : link.linkedAt == null
+              ? "the author's GitHub link has no recorded time, so it counts as made after scoring closed"
+              : "the author linked GitHub at or after scoring closed";
+          await recordHeldEvent(redis, log, "held", { ...payload, login: authorKey, why });
           continue;
         }
         // An older score for the same author and target still held (its
@@ -422,7 +459,7 @@ export async function tick(cfg, state, deps = {}) {
             target: payload.target, solved: payload.solved, pr: payload.pr, sha: payload.sha, at, repo,
           });
           tally.held++;
-          log(`submit ${repo}#${payload.pr}: held (an older held score for this target goes first)`);
+          await recordHeldEvent(redis, log, "held", { ...payload, login: authorKey, why: "an older held score for this target goes first" });
           continue;
         }
         const player = link.player;

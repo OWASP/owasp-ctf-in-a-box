@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
-import AdminEventAnnouncements, { blurNeedsSave, clearWebhookConfirm, foldReloaded, foldReloadFailure, mergePatched, type Load } from "../admin-event-announcements";
+import AdminEventAnnouncements, { blurNeedsSave, clearWebhookConfirm, createReadSequence, failureNotice, foldReloaded, foldReloadFailure, mergePatched, type Load } from "../admin-event-announcements";
 import type { DiscordPublicConfig } from "@/lib/discord-config";
 import type { AnnounceStatus } from "@/lib/announce/store";
 
@@ -38,6 +38,7 @@ const status = (over: Partial<AnnounceStatus> = {}): AnnounceStatus => ({
   lastPostedAt: null,
   lastError: null,
   lastErrorAt: null,
+  pending: 0,
   ...over,
 });
 
@@ -258,5 +259,129 @@ describe("Clear asks first", () => {
     // declaration plus the single onConfirm call, nothing else.
     expect(code.match(/webhookUrl: null/g)).toHaveLength(1);
     expect(code.match(/clearWebhook\(\)/g)).toHaveLength(2);
+  });
+});
+
+describe("failureNotice", () => {
+  const TZ = "UTC";
+  it("names a failing webhook: when, how many wait behind it, and what Discord answered", () => {
+    const notice = failureNotice(
+      status({
+        lastPostedAt: "2026-11-24T20:00:00Z",
+        lastErrorAt: "2026-11-24T20:55:00Z",
+        lastError: "Discord rejected the webhook (404): the URL is wrong or the webhook was deleted",
+        pending: 4,
+      }),
+      TZ,
+    );
+    expect(notice).toContain("Last post failed at");
+    expect(notice).toContain("4 pending");
+    expect(notice).toContain("the URL is wrong or the webhook was deleted");
+  });
+
+  it("says nothing once a post has succeeded after the failure", () => {
+    expect(failureNotice(status({ lastErrorAt: "2026-11-24T20:55:00Z", lastPostedAt: "2026-11-24T21:00:00Z", lastError: "x" }), TZ)).toBeNull();
+  });
+
+  it("says nothing when nothing has failed", () => {
+    expect(failureNotice(status({ lastPostedAt: "2026-11-24T21:00:00Z" }), TZ)).toBeNull();
+  });
+
+  it("warns when it has never posted at all, and leaves out a zero count", () => {
+    const notice = failureNotice(status({ lastErrorAt: "2026-11-24T20:55:00Z", lastError: "Could not reach Discord (network error or timeout)" }), TZ);
+    expect(notice).toContain("Could not reach Discord");
+    expect(notice).not.toContain("pending");
+  });
+
+  it("says the count is unavailable rather than reading a failed outbox read as zero", () => {
+    const notice = failureNotice(status({ lastErrorAt: "2026-11-24T20:55:00Z", lastError: "x", pending: null }), TZ);
+    expect(notice).toContain("pending count unavailable");
+  });
+
+  it("is rendered as an alert above the status line", () => {
+    const code = source();
+    expect(code).toMatch(/role="alert"[^>]*data-testid="ann-failing"/);
+  });
+});
+
+describe("delivery status refresh", () => {
+  it("re-reads the status on the slow poll only while the Event tab is shown, dropping late answers", () => {
+    const code = source();
+    expect(code).toContain("if (!visible) return;");
+    expect(code).toContain("SLOW_POLL_MS");
+    expect(code).toContain('document.visibilityState === "visible" && !reads.current.busy()');
+    expect(code).toContain("void reload(() => alive)");
+    expect(code).toContain("clearInterval(id)");
+  });
+
+  it("is wired to the Event tab's visibility", () => {
+    const controls = readFileSync(fileURLToPath(new URL("../admin-controls.tsx", import.meta.url)), "utf8");
+    const tab = readFileSync(fileURLToPath(new URL("../admin-event-tab.tsx", import.meta.url)), "utf8");
+    expect(controls).toMatch(/<AdminEventTab\s+visible=\{active === EVENT_TAB\}/);
+    expect(tab).toContain("visible={visible}");
+  });
+});
+
+describe("createReadSequence and the folds: reads answering out of order", () => {
+  const failing = status({ lastErrorAt: "2026-11-24T20:55:00Z", lastError: "Discord rejected the webhook (404): the URL is wrong or the webhook was deleted" });
+  const healthy = status({ lastPostedAt: "2026-11-24T21:00:00Z" });
+
+  it("drops a poll that answers after the Send test reload it started before", () => {
+    const seq = createReadSequence();
+    const poll = seq.begin(); // the poll starts, Discord still failing
+    const afterTest = seq.begin(); // Send test succeeds and reloads
+    let load: Load = { state: "ready", config: config(), status: failing };
+    if (afterTest.current()) load = foldReloaded(load, { config: config(), status: healthy });
+    if (poll.current()) load = foldReloaded(load, { config: config(), status: failing });
+    expect(load.state === "ready" && load.status).toEqual(healthy);
+  });
+
+  it("applies a newer read that answers after an older one", () => {
+    const seq = createReadSequence();
+    const older = seq.begin();
+    const newer = seq.begin();
+    expect(older.current()).toBe(false);
+    expect(newer.current()).toBe(true);
+  });
+
+  it("a read slower than the poll interval is not superseded by the poll: the poll skips while it is open", () => {
+    const seq = createReadSequence();
+    const firstLoad = seq.begin(); // a slow first load
+    // Each poll tick checks busy() before starting a read, as the card does.
+    const ticks = [0, 1, 2].map(() => (seq.busy() ? null : seq.begin()));
+    expect(ticks).toEqual([null, null, null]);
+    expect(firstLoad.current()).toBe(true); // its answer is still applied
+    firstLoad.finish();
+    expect(seq.busy()).toBe(false);
+    expect(seq.begin().current()).toBe(true); // the next tick reads again
+  });
+
+  it("a superseded read still in flight does not hold the poll back once the newer read answered", () => {
+    const seq = createReadSequence();
+    const stalePoll = seq.begin(); // a slow poll, still pending
+    const afterTest = seq.begin(); // Send test's reload
+    afterTest.finish(); // ...answers first
+    expect(seq.busy()).toBe(false); // polling resumes
+    stalePoll.finish(); // the stale one settles later
+    expect(seq.busy()).toBe(false);
+  });
+
+  it("an older read finishing never clears a newer read that is still open", () => {
+    const seq = createReadSequence();
+    const older = seq.begin();
+    const newer = seq.begin();
+    older.finish();
+    expect(seq.busy()).toBe(true);
+    newer.finish();
+    expect(seq.busy()).toBe(false);
+  });
+
+  it("a first load answering after the card is ready takes only its status, never its older config", () => {
+    const saved = config({ firstBlood: true });
+    const ready: Load = { state: "ready", config: saved, status: failing };
+    const lateFirstLoad = { config: config({ firstBlood: false }), status: healthy };
+    const next = foldReloaded(ready, lateFirstLoad);
+    expect(next.state === "ready" && next.config).toEqual(saved);
+    expect(next.state === "ready" && next.status).toEqual(healthy);
   });
 });

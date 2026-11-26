@@ -30,6 +30,10 @@ export const SYNC_STATE_KEY = "ctf:sync:state";
 const LINK_GITHUB_PREFIX = "ctf:link:github:";
 const HELD_BY_PREFIX = "ctf:sd:held:by:";
 const HELD_AUTHORS_KEY = "ctf:sd:held:authors";
+// The admin's activity log, shared with the app: ACTIVITY_LOG_KEY and
+// ACTIVITY_LOG_MAX in apps/web/src/lib/activity-keys.ts, which sync must match.
+const ACTIVITY_LOG_KEY = "ctf:activity:log";
+const ACTIVITY_LOG_MAX = 5000;
 const ADMIN_SETTINGS_KEY = "ctf:admin:settings";
 // player id -> epoch ms the GitHub link was made (apps/web github-link.ts).
 const LINK_AT_KEY = "ctf:link:at";
@@ -398,6 +402,19 @@ export function makeRedis(env = process.env, fetchImpl = fetch, log = console.er
     // the index once nothing of theirs is left. One script so the hash and the
     // index never disagree: an author indexed with no hash would be re-read
     // every tick, one with a hash and no index would never be released.
+    // One row in the admin's activity log, in the shape the app's reader
+    // (listActivity) renders. Fail-open like the app's writer: a lost line
+    // must never stop a hold or a release.
+    async logActivity(row) {
+      try {
+        await pipeline([
+          ["LPUSH", ACTIVITY_LOG_KEY, JSON.stringify(row)],
+          ["LTRIM", ACTIVITY_LOG_KEY, 0, ACTIVITY_LOG_MAX - 1],
+        ]);
+      } catch (err) {
+        log(`ctf-sync: activity log write failed: ${err.message}`);
+      }
+    },
     async releaseHeld(login, field) {
       const l = String(login).toLowerCase();
       await evalScript(RELEASE_HELD_SCRIPT, [`${HELD_BY_PREFIX}${l}`, HELD_AUTHORS_KEY], [field, l]);

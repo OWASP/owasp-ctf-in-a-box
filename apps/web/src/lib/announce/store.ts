@@ -1250,6 +1250,11 @@ export type AnnounceStatus = {
   lastPostedAt: string | null;
   lastError: string | null;
   lastErrorAt: string | null;
+  /** Announcements still to be delivered: pending, or failed with attempts
+   *  left. With a failure newer than the last post, the card reads it as
+   *  "N pending" behind a failing webhook. Null when the outbox could not be
+   *  read, which is not the same as nothing waiting. */
+  pending: number | null;
 };
 
 /** Records one delivery outcome: a successful post bumps that kind's `sent`
@@ -1297,14 +1302,23 @@ export async function readStatus(): Promise<AnnounceStatus> {
       const n = Number(raw[`${kind}:sent`]);
       if (Number.isFinite(n) && n > 0) posted[kind] = n;
     }
+    let pending: number | null = null;
+    try {
+      pending = (
+        await parseOutboxEntries((e) => e.status === "pending" || (e.status === "failed" && e.n < ANNOUNCE_MAX_ATTEMPTS))
+      ).length;
+    } catch (err) {
+      console.error("[announce] outbox read failed:", adminErrorLabel(err));
+    }
     return {
       posted,
       lastPostedAt: raw.lastPostedAt ?? null,
       lastError: raw.lastError ?? null,
       lastErrorAt: raw.lastErrorAt ?? null,
+      pending,
     };
   } catch (err) {
     console.error("[announce] status read failed:", adminErrorLabel(err));
-    return { posted: {}, lastPostedAt: null, lastError: null, lastErrorAt: null };
+    return { posted: {}, lastPostedAt: null, lastError: null, lastErrorAt: null, pending: null };
   }
 }

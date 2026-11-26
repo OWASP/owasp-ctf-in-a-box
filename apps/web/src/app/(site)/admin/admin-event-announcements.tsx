@@ -82,17 +82,35 @@ export function mergePatched(config: DiscordPublicConfig, keysWritten: readonly 
 }
 
 /** Orders the card's reads of the announcement settings: the first load, the
- *  status poll and the reload after Send test. `begin()` starts a read and
- *  returns whether it is still the newest one started, so an answer that
- *  arrives after a later read's is dropped instead of putting back an older
- *  status. Exported so the suite can pin it without a DOM. */
-export function createReadSequence(): { begin: () => () => boolean } {
+ *  status poll and the reload after Send test. `begin()` starts a read;
+ *  `current()` says whether it is still the newest one started, so an answer
+ *  that arrives after a later read's is dropped instead of putting back an
+ *  older status, and `finish()` marks it answered. `busy()` is true while any
+ *  read is unanswered: the background poll skips its turn then, so reads
+ *  slower than the poll interval cannot keep superseding each other and
+ *  leave the card on "Loading…". Exported so the suite can pin it without a
+ *  DOM. */
+export function createReadSequence(): {
+  begin: () => { current: () => boolean; finish: () => void };
+  busy: () => boolean;
+} {
   let latest = 0;
+  let open = 0;
   return {
     begin() {
       const mine = ++latest;
-      return () => mine === latest;
+      open++;
+      let done = false;
+      return {
+        current: () => mine === latest,
+        finish: () => {
+          if (done) return;
+          done = true;
+          open--;
+        },
+      };
     },
+    busy: () => open > 0,
   };
 }
 
@@ -176,14 +194,16 @@ export default function AdminEventAnnouncements({
   const reads = useRef(createReadSequence());
   const reload = useCallback(
     async (alive: () => boolean = () => true) => {
-      const newest = reads.current.begin();
-      const apply = () => newest() && alive();
+      const read = reads.current.begin();
+      const apply = () => read.current() && alive();
       try {
         const body = await readConfig();
         if (apply()) setLoad((prev) => foldReloaded(prev, body));
       } catch (err) {
         const message = err instanceof Error ? err.message : "Could not read the announcement settings.";
         if (apply()) setLoad((prev) => foldReloadFailure(prev, message));
+      } finally {
+        read.finish();
       }
     },
     [readConfig],
@@ -197,7 +217,7 @@ export default function AdminEventAnnouncements({
     if (!visible) return;
     let alive = true;
     const id = setInterval(() => {
-      if (document.visibilityState === "visible") void reload(() => alive);
+      if (document.visibilityState === "visible" && !reads.current.busy()) void reload(() => alive);
     }, SLOW_POLL_MS);
     return () => {
       alive = false;
@@ -211,16 +231,18 @@ export default function AdminEventAnnouncements({
   useEffect(() => {
     if (initial) return;
     let cancelled = false;
-    const newest = reads.current.begin();
-    readConfig().then(
-      (body) => {
-        if (!cancelled && newest()) setLoad((prev) => foldReloaded(prev, body));
-      },
-      (err: unknown) => {
-        const message = err instanceof Error ? err.message : "Could not read the announcement settings.";
-        if (!cancelled && newest()) setLoad((prev) => foldReloadFailure(prev, message));
-      },
-    );
+    const read = reads.current.begin();
+    readConfig()
+      .then(
+        (body) => {
+          if (!cancelled && read.current()) setLoad((prev) => foldReloaded(prev, body));
+        },
+        (err: unknown) => {
+          const message = err instanceof Error ? err.message : "Could not read the announcement settings.";
+          if (!cancelled && read.current()) setLoad((prev) => foldReloadFailure(prev, message));
+        },
+      )
+      .finally(read.finish);
     return () => {
       cancelled = true;
     };

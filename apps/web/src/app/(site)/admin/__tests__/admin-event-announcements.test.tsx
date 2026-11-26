@@ -309,7 +309,7 @@ describe("delivery status refresh", () => {
     const code = source();
     expect(code).toContain("if (!visible) return;");
     expect(code).toContain("SLOW_POLL_MS");
-    expect(code).toContain('document.visibilityState === "visible"');
+    expect(code).toContain('document.visibilityState === "visible" && !reads.current.busy()');
     expect(code).toContain("void reload(() => alive)");
     expect(code).toContain("clearInterval(id)");
   });
@@ -331,8 +331,8 @@ describe("createReadSequence and the folds: reads answering out of order", () =>
     const poll = seq.begin(); // the poll starts, Discord still failing
     const afterTest = seq.begin(); // Send test succeeds and reloads
     let load: Load = { state: "ready", config: config(), status: failing };
-    if (afterTest()) load = foldReloaded(load, { config: config(), status: healthy });
-    if (poll()) load = foldReloaded(load, { config: config(), status: failing });
+    if (afterTest.current()) load = foldReloaded(load, { config: config(), status: healthy });
+    if (poll.current()) load = foldReloaded(load, { config: config(), status: failing });
     expect(load.state === "ready" && load.status).toEqual(healthy);
   });
 
@@ -340,8 +340,31 @@ describe("createReadSequence and the folds: reads answering out of order", () =>
     const seq = createReadSequence();
     const older = seq.begin();
     const newer = seq.begin();
-    expect(older()).toBe(false);
-    expect(newer()).toBe(true);
+    expect(older.current()).toBe(false);
+    expect(newer.current()).toBe(true);
+  });
+
+  it("a read slower than the poll interval is not superseded by the poll: the poll skips while it is open", () => {
+    const seq = createReadSequence();
+    const firstLoad = seq.begin(); // a slow first load
+    // Each poll tick checks busy() before starting a read, as the card does.
+    const ticks = [0, 1, 2].map(() => (seq.busy() ? null : seq.begin()));
+    expect(ticks).toEqual([null, null, null]);
+    expect(firstLoad.current()).toBe(true); // its answer is still applied
+    firstLoad.finish();
+    expect(seq.busy()).toBe(false);
+    expect(seq.begin().current()).toBe(true); // the next tick reads again
+  });
+
+  it("finish is idempotent, so a read cannot be closed twice", () => {
+    const seq = createReadSequence();
+    const a = seq.begin();
+    const b = seq.begin();
+    a.finish();
+    a.finish();
+    expect(seq.busy()).toBe(true);
+    b.finish();
+    expect(seq.busy()).toBe(false);
   });
 
   it("a first load answering after the card is ready takes only its status, never its older config", () => {

@@ -564,6 +564,11 @@ Then:
 terraform destroy
 ```
 
+Taking the final snapshot needs `elasticache:CreateSnapshot` as well as the
+delete permissions. If the identity running `terraform destroy` lacks it, AWS
+rejects the cache's deletion after other resources may already be gone; grant
+it and run `terraform destroy` again.
+
 The final snapshot holds the whole event store, including flags, logins and
 sessions. It has no expiry, `cache_snapshot_retention_days` does not apply to
 it, and it is billed until you delete it. Once you are sure you will not

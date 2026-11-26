@@ -502,6 +502,52 @@ than waiting out its timeout.
 A change to `github_org` or any other variable rolls back
 the same way: set the old value and `terraform apply`.
 
+### A plan removes a security group from the cache
+
+The module puts the cache in one security group, `<name>-cache`, whose only
+ingress is TCP 6379 from srh's group (`cache_from_srh`, ADR 41). If someone
+attached another group to the replication group by hand, for example while
+working around the first-deploy failure in #530, every `terraform plan` shows
+an in-place update of `aws_elasticache_replication_group.main` that removes it
+from `security_group_ids`. Applying that is right, but check first that the
+module's group already carries srh's rule, or srh loses Redis.
+
+1. List the groups on the cache and the rules of each:
+
+   ```sh
+   aws elasticache describe-replication-groups --region <region> \
+     --replication-group-id <name>-redis \
+     --query 'ReplicationGroups[0].MemberClusters[0]' --output text
+   aws elasticache describe-cache-clusters --region <region> \
+     --cache-cluster-id <member-cluster-id> \
+     --query 'CacheClusters[0].SecurityGroups'
+   aws ec2 describe-security-group-rules --region <region> \
+     --filters Name=group-id,Values=<sg-id> \
+     --query 'SecurityGroupRules[?!IsEgress].[FromPort,ToPort,ReferencedGroupInfo.GroupId,CidrIpv4]' \
+     --output table
+   ```
+
+2. The `<name>-cache` group must have an ingress rule on 6379 from the
+   `<name>-srh` group. If it doesn't, run `terraform apply` first without
+   touching the cache, so `cache_from_srh` is created:
+
+   ```sh
+   terraform apply -target=aws_vpc_security_group_ingress_rule.cache_from_srh
+   ```
+
+3. Look at what the extra group allows. Anything other than srh reaching 6379,
+   such as the app's group or a CIDR, is a path to Redis that ADR 41 rules out,
+   and removing it is the fix.
+4. Run `terraform plan` again. The only change to the cache should be the
+   extra group leaving `security_group_ids`. Apply it outside the event
+   window, then confirm srh is healthy:
+   `curl -fsS https://<domain>/health/deep` returns `"status":"ok"`.
+5. Delete the extra group if nothing else uses it:
+   `aws ec2 delete-security-group --region <region> --group-id <sg-id>`.
+
+Do not add the extra group to the module to make the plan quiet: the cache
+belongs in its own group only, and `stack.tftest.hcl` checks that.
+
 ### Load testing on AWS
 
 `scripts/load-test.sh`, described in

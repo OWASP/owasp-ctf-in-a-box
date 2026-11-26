@@ -505,6 +505,23 @@ run "only_srh_may_reach_elasticache" {
   }
 }
 
+// `apply`, not `plan`: the cache group's ID is computed, and a plan cannot
+// tell whether the set holds it. Nothing is created — the providers are mocked.
+run "the_cache_sits_only_in_its_own_security_group" {
+  command = apply
+
+  // Any other group on the cache could admit something besides srh, and a
+  // group attached by hand shows up as drift that a plan removes (docs/aws.md,
+  // "A plan removes a security group from the cache").
+  assert {
+    condition = (
+      length(aws_elasticache_replication_group.main.security_group_ids) == 1
+      && contains(aws_elasticache_replication_group.main.security_group_ids, aws_security_group.cache.id)
+    )
+    error_message = "The cache must be in the module's cache security group and no other: that group's only ingress is from srh (ADR 41)."
+  }
+}
+
 // --- secrets are references, never values ---------------------------------
 
 run "no_secret_is_baked_into_a_task_definition" {

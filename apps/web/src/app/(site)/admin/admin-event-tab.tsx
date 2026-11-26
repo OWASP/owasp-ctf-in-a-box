@@ -197,6 +197,8 @@ function eventTimeLabel(iso: string, zone: string): string {
 }
 
 export type AdminEventTabProps = {
+  /** This tab is the active destination; its Discord card polls only then. */
+  visible?: boolean;
   settings: AdminSettings;
   pending: boolean;
   resetInfo: string | null;
@@ -237,6 +239,7 @@ export type AdminEventTabProps = {
 type ModuleChoice = ModuleToggleChoice;
 
 export default function AdminEventTab({
+  visible = false,
   settings,
   pending,
   resetInfo,
@@ -391,7 +394,7 @@ export default function AdminEventTab({
           hash (its own keys, its own endpoints), so it self-contains like
           the images section above. */}
       <section className="flex flex-col gap-3 border-b border-white/[0.06] pb-4">
-        <AdminEventAnnouncements setConfirm={setConfirm} timeZone={zone} />
+        <AdminEventAnnouncements setConfirm={setConfirm} timeZone={zone} visible={visible} />
       </section>
 
       <section className="flex flex-col gap-2 border-b border-white/[0.06] pb-4">

@@ -22,6 +22,7 @@ import type { AnnouncementKind, DiscordPublicConfig } from "@/lib/discord-config
 import type { AnnounceStatus } from "@/lib/announce/store";
 import type { DiscordMessage } from "@/lib/announce/messages";
 import type { ConfirmState } from "./types";
+import { SLOW_POLL_MS } from "./use-live-poll";
 
 export type Load = { state: "loading" } | { state: "ready"; config: DiscordPublicConfig; status: AnnounceStatus } | { state: "failed"; message: string };
 
@@ -121,10 +122,14 @@ export default function AdminEventAnnouncements({
   setConfirm,
   timeZone,
   initial,
+  visible = false,
 }: {
   setConfirm: (c: ConfirmState) => void;
   timeZone: string;
   initial?: { config: DiscordPublicConfig; status: AnnounceStatus };
+  /** The Event tab is the active destination: the delivery status is
+   *  re-read only while the organizer is looking at it. */
+  visible?: boolean;
 }) {
   const [load, setLoad] = useState<Load>(
     initial ? { state: "ready", config: initial.config, status: initial.status } : { state: "loading" },
@@ -153,15 +158,34 @@ export default function AdminEventAnnouncements({
    *  fresh config (Send test): only the delivery status is refreshed — the
    *  config already on screen is the newer truth (see `foldReloaded`). If
    *  the refresh fails, the loaded config and controls are preserved. */
-  const reload = useCallback(async () => {
-    try {
-      const body = await readConfig();
-      setLoad((prev) => foldReloaded(prev, body));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not read the announcement settings.";
-      setLoad((prev) => foldReloadFailure(prev, message));
-    }
-  }, [readConfig]);
+  const reload = useCallback(
+    async (isCurrent: () => boolean = () => true) => {
+      try {
+        const body = await readConfig();
+        if (isCurrent()) setLoad((prev) => foldReloaded(prev, body));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Could not read the announcement settings.";
+        if (isCurrent()) setLoad((prev) => foldReloadFailure(prev, message));
+      }
+    },
+    [readConfig],
+  );
+
+  // Delivery health changes while the card is open (a webhook deleted
+  // mid-event, or Discord recovering): re-read the status on the admin's slow
+  // poll while the Event tab is shown and the browser tab is visible.
+  // `reload` keeps the config on screen; a response after unmount is dropped.
+  useEffect(() => {
+    if (!visible) return;
+    let alive = true;
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") void reload(() => alive);
+    }, SLOW_POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [visible, reload]);
 
   useEffect(() => {
     if (initial) return;

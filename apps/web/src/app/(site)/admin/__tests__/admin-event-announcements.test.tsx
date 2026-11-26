@@ -303,3 +303,21 @@ describe("failureNotice", () => {
     expect(code).toMatch(/role="alert"[^>]*data-testid="ann-failing"/);
   });
 });
+
+describe("delivery status refresh", () => {
+  it("re-reads the status on the slow poll only while the Event tab is shown, dropping late answers", () => {
+    const code = source();
+    expect(code).toContain("if (!visible) return;");
+    expect(code).toContain("SLOW_POLL_MS");
+    expect(code).toContain('document.visibilityState === "visible"');
+    expect(code).toContain("void reload(() => alive)");
+    expect(code).toContain("clearInterval(id)");
+  });
+
+  it("is wired to the Event tab's visibility", () => {
+    const controls = readFileSync(fileURLToPath(new URL("../admin-controls.tsx", import.meta.url)), "utf8");
+    const tab = readFileSync(fileURLToPath(new URL("../admin-event-tab.tsx", import.meta.url)), "utf8");
+    expect(controls).toMatch(/<AdminEventTab\s+visible=\{active === EVENT_TAB\}/);
+    expect(tab).toContain("visible={visible}");
+  });
+});

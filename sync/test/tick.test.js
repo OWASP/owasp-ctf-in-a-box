@@ -778,5 +778,23 @@ test("a score held because the author linked only after the close says so, not t
   const f = routes(() => new Response(JSON.stringify([ghComment(1)]), { status: 200, headers: {} }), 202, c.posts);
   await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis });
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].detail, "dvwa PR #7, 1 challenge: the author linked GitHub after scoring closed");
+  assert.equal(rows[0].detail, "dvwa PR #7, 1 challenge: the author linked GitHub at or after scoring closed");
+});
+
+test("a score held for a link with no recorded time says so, rather than claiming when it was made", async () => {
+  const rows = [];
+  const redis = {
+    ...redisStub,
+    resolveGithubLink: async () => ({ player: LINKS.octocat, linkedAt: null }),
+    readScoringWindow: async () => ({ startsAt: "", endsAt: CLOSE }),
+    holdScore: async () => {},
+    logActivity: async (r) => rows.push(r),
+  };
+  const f = routes(() => new Response(JSON.stringify([ghComment(1)]), { status: 200, headers: {} }), 202, []);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis });
+  assert.equal(rows.length, 1);
+  assert.equal(
+    rows[0].detail,
+    "dvwa PR #7, 1 challenge: the author's GitHub link has no recorded time, so it counts as made after scoring closed",
+  );
 });

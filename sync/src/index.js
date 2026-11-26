@@ -432,10 +432,15 @@ export async function tick(cfg, state, deps = {}) {
             target: payload.target, solved: payload.solved, pr: payload.pr, sha: payload.sha, at, repo,
           });
           tally.held++;
-          // A late link is a link, just one that cannot release the score:
-          // the admin row says which, so Support does not ask a linked
-          // player to link again.
-          const why = link ? "the author linked GitHub after scoring closed" : "waiting for the author to link GitHub";
+          // A late link is a link, just one that cannot release the score, and
+          // a link with no recorded time counts as late (linkAfterClose): the
+          // admin row says which, so Support does not ask a linked player to
+          // link again, nor state a time nobody recorded.
+          const why = !link
+            ? "waiting for the author to link GitHub"
+            : link.linkedAt == null
+              ? "the author's GitHub link has no recorded time, so it counts as made after scoring closed"
+              : "the author linked GitHub at or after scoring closed";
           await recordHeldEvent(redis, log, "held", { ...payload, login: authorKey, why });
           continue;
         }

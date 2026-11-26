@@ -356,14 +356,23 @@ describe("createReadSequence and the folds: reads answering out of order", () =>
     expect(seq.begin().current()).toBe(true); // the next tick reads again
   });
 
-  it("finish is idempotent, so a read cannot be closed twice", () => {
+  it("a superseded read still in flight does not hold the poll back once the newer read answered", () => {
     const seq = createReadSequence();
-    const a = seq.begin();
-    const b = seq.begin();
-    a.finish();
-    a.finish();
+    const stalePoll = seq.begin(); // a slow poll, still pending
+    const afterTest = seq.begin(); // Send test's reload
+    afterTest.finish(); // ...answers first
+    expect(seq.busy()).toBe(false); // polling resumes
+    stalePoll.finish(); // the stale one settles later
+    expect(seq.busy()).toBe(false);
+  });
+
+  it("an older read finishing never clears a newer read that is still open", () => {
+    const seq = createReadSequence();
+    const older = seq.begin();
+    const newer = seq.begin();
+    older.finish();
     expect(seq.busy()).toBe(true);
-    b.finish();
+    newer.finish();
     expect(seq.busy()).toBe(false);
   });
 

@@ -85,32 +85,30 @@ export function mergePatched(config: DiscordPublicConfig, keysWritten: readonly 
  *  status poll and the reload after Send test. `begin()` starts a read;
  *  `current()` says whether it is still the newest one started, so an answer
  *  that arrives after a later read's is dropped instead of putting back an
- *  older status, and `finish()` marks it answered. `busy()` is true while any
- *  read is unanswered: the background poll skips its turn then, so reads
- *  slower than the poll interval cannot keep superseding each other and
- *  leave the card on "Loading…". Exported so the suite can pin it without a
- *  DOM. */
+ *  older status, and `finish()` marks it answered. `busy()` is true while the
+ *  NEWEST read is unanswered: the background poll skips its turn then, so
+ *  reads slower than the poll interval cannot keep superseding each other and
+ *  leave the card on "Loading…", while a superseded read still in flight
+ *  does not hold the poll back once a newer one has answered. Exported so
+ *  the suite can pin it without a DOM. */
 export function createReadSequence(): {
   begin: () => { current: () => boolean; finish: () => void };
   busy: () => boolean;
 } {
   let latest = 0;
-  let open = 0;
+  let latestOpen = false;
   return {
     begin() {
       const mine = ++latest;
-      open++;
-      let done = false;
+      latestOpen = true;
       return {
         current: () => mine === latest,
         finish: () => {
-          if (done) return;
-          done = true;
-          open--;
+          if (mine === latest) latestOpen = false;
         },
       };
     },
-    busy: () => open > 0,
+    busy: () => latestOpen,
   };
 }
 

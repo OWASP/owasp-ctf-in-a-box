@@ -435,7 +435,8 @@ The panel offers:
   held (the author has not linked GitHub, linked at or after the close, has a
   link with no recorded time, which counts as after it, or an older held score
   for the same target goes first). Sync's own log notes
-  each one by target and challenge count only, never the login or the PR.
+  each one by target, challenge count and that reason, never the login or the
+  PR.
 
   **Read Ingested and Dropped together.** Ingested is points that reached the
   leaderboard; Dropped is points that reached a contestant's PR and stopped

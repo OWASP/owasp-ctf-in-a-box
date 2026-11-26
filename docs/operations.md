@@ -431,9 +431,10 @@ The panel offers:
   points", search **Support** for their GitHub login: the score held for that
   login shows under the results, with its target, challenges, PR and whether
   a link can still release it. The Activity tab records each hold and release
-  ("score held (GitHub not linked)", "held score released") with the login
-  and PR, and sync's own log notes each one by target and challenge count
-  only, never the login or the PR.
+  ("score held", "held score released") with the login, the PR and why it was
+  held (the author has not linked GitHub, or an older held score for the same
+  target goes first). Sync's own log notes each one by target and challenge
+  count only, never the login or the PR.
 
   **Read Ingested and Dropped together.** Ingested is points that reached the
   leaderboard; Dropped is points that reached a contestant's PR and stopped

@@ -72,7 +72,9 @@ export const TYPE_LABELS: Record<string, string> = {
   "team-join": "joined team",
   "team-leave": "left team",
   "team-rename": "renamed team",
-  "sd-held": "score held (GitHub not linked)",
+  // The reason (author not linked, or behind an older held score) is in the
+  // row's detail; the label stays true for both.
+  "sd-held": "score held",
   "sd-released": "held score released",
 };
 

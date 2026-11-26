@@ -427,6 +427,14 @@ The panel offers:
   with no recorded time counts as made after it, and only a sign-in by that
   player before the close stamps a time that releases.
 
+  **Finding a held score.** When a player says "my PR scored but I have 0
+  points", search **Support** for their GitHub login: the score held for that
+  login shows under the results, with its target, challenges, PR and whether
+  a link can still release it. The Activity tab records each hold and release
+  ("score held (GitHub not linked)", "held score released") with the login
+  and PR, and sync's own log notes each one by target and challenge count
+  only, never the login or the PR.
+
   **Read Ingested and Dropped together.** Ingested is points that reached the
   leaderboard; Dropped is points that reached a contestant's PR and stopped
   there — the scorer rejected the submission, or the comment carried a
@@ -1098,13 +1106,19 @@ with sample data without reading the webhook or sending anything.
 **Send test** posts a test message straight to the configured webhook and
 reports the outcome beside the button: "Saved" on success, or the reason the
 server refused it (no webhook configured, the announcement store being
-unavailable, or Discord rejecting the message — the server log carries the
-status). It has no separate per-test timer: it obeys the same shared Discord
+unavailable, or what Discord answered: a `401`, `403` or `404` reads
+"Discord rejected the webhook (404): the URL is wrong or the webhook was
+deleted", a `5xx` is a problem on Discord's side, and no answer at all is
+"Could not reach Discord"). The webhook URL is never shown. It has no separate
+per-test timer: it obeys the same shared Discord
 rate-limit cooldown as the scheduled deliveries. If Discord has already
 returned a 429, Send test refuses with the retry time instead of hitting the
 limit again, and a test that itself draws a 429 parks the scheduled
 deliveries too, until the retry instant. The line under the card shows the
-last successful post and the last delivery failure.
+last successful post and the last delivery failure. While the last failure is
+newer than the last post (the webhook is failing now), a red line above it
+says so: "Last post failed at HH:MM — N pending: …", with how many
+announcements are waiting to be delivered and what Discord answered.
 
 ![A Discord channel message from the kit: a red "First blood" embed reading that bhushan4work solved Discord Announcement Demo first, with a Points field showing 10](assets/discord-announcement.jpg)
 

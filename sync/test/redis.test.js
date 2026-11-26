@@ -129,6 +129,36 @@ test("writeStatus: a per-command error reply is logged instead of vanishing", as
   assert.match(logs[0], /writeStatus.*WRONGTYPE/);
 });
 
+test("logActivity: pushes the row onto the app's activity log and trims it to the app's cap", async () => {
+  let sent;
+  const fetchImpl = async (_url, init) => {
+    sent = JSON.parse(init.body);
+    return new Response(JSON.stringify([{ result: 1 }, { result: "OK" }]), { status: 200 });
+  };
+  const redis = makeRedis(env, fetchImpl, () => {});
+  const row = { at: PAST, type: "sd-held", userId: null, login: "octocat", name: "@octocat", detail: "dvwa PR #7, 1 challenge" };
+  await redis.logActivity(row);
+  assert.deepEqual(sent, [
+    ["LPUSH", "ctf:activity:log", JSON.stringify(row)],
+    ["LTRIM", "ctf:activity:log", 0, 4999],
+  ]);
+});
+
+test("logActivity's key and cap match the app's activity log (apps/web/src/lib/activity-keys.ts)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const app = readFileSync(new URL("../../apps/web/src/lib/activity-keys.ts", import.meta.url), "utf8");
+  assert.match(app, /export const ACTIVITY_LOG_KEY = "ctf:activity:log";/);
+  assert.match(app, /export const ACTIVITY_LOG_MAX = 5000;/);
+});
+
+test("logActivity: a failed write is logged and never thrown (fail-open)", async () => {
+  const logs = [];
+  const redis = makeRedis(env, errorReplyFetch("NOAUTH Authentication required"), (m) => logs.push(m));
+  await redis.logActivity({ at: PAST, type: "sd-held", login: "x", name: "@x" });
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /activity log write failed/);
+});
+
 // A backend that accepts the connection and never answers must not stall the
 // tick forever — `restart: on-failure` cannot help a process that never exits.
 /** A fake fetch that settles only when its signal aborts. The ref'd timer does

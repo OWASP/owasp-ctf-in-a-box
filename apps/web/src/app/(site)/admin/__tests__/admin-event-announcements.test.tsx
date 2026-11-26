@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
-import AdminEventAnnouncements, { blurNeedsSave, clearWebhookConfirm, foldReloaded, foldReloadFailure, mergePatched, type Load } from "../admin-event-announcements";
+import AdminEventAnnouncements, { blurNeedsSave, clearWebhookConfirm, failureNotice, foldReloaded, foldReloadFailure, mergePatched, type Load } from "../admin-event-announcements";
 import type { DiscordPublicConfig } from "@/lib/discord-config";
 import type { AnnounceStatus } from "@/lib/announce/store";
 
@@ -38,6 +38,7 @@ const status = (over: Partial<AnnounceStatus> = {}): AnnounceStatus => ({
   lastPostedAt: null,
   lastError: null,
   lastErrorAt: null,
+  pending: 0,
   ...over,
 });
 
@@ -258,5 +259,42 @@ describe("Clear asks first", () => {
     // declaration plus the single onConfirm call, nothing else.
     expect(code.match(/webhookUrl: null/g)).toHaveLength(1);
     expect(code.match(/clearWebhook\(\)/g)).toHaveLength(2);
+  });
+});
+
+describe("failureNotice", () => {
+  const TZ = "UTC";
+  it("names a failing webhook: when, how many wait behind it, and what Discord answered", () => {
+    const notice = failureNotice(
+      status({
+        lastPostedAt: "2026-11-24T20:00:00Z",
+        lastErrorAt: "2026-11-24T20:55:00Z",
+        lastError: "Discord rejected the webhook (404): the URL is wrong or the webhook was deleted",
+        pending: 4,
+      }),
+      TZ,
+    );
+    expect(notice).toContain("Last post failed at");
+    expect(notice).toContain("4 pending");
+    expect(notice).toContain("the URL is wrong or the webhook was deleted");
+  });
+
+  it("says nothing once a post has succeeded after the failure", () => {
+    expect(failureNotice(status({ lastErrorAt: "2026-11-24T20:55:00Z", lastPostedAt: "2026-11-24T21:00:00Z", lastError: "x" }), TZ)).toBeNull();
+  });
+
+  it("says nothing when nothing has failed", () => {
+    expect(failureNotice(status({ lastPostedAt: "2026-11-24T21:00:00Z" }), TZ)).toBeNull();
+  });
+
+  it("warns when it has never posted at all, and leaves out a zero count", () => {
+    const notice = failureNotice(status({ lastErrorAt: "2026-11-24T20:55:00Z", lastError: "Could not reach Discord (network error or timeout)" }), TZ);
+    expect(notice).toContain("Could not reach Discord");
+    expect(notice).not.toContain("pending");
+  });
+
+  it("is rendered as an alert above the status line", () => {
+    const code = source();
+    expect(code).toMatch(/role="alert"[^>]*data-testid="ann-failing"/);
   });
 });

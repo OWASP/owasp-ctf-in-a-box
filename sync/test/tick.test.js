@@ -747,3 +747,20 @@ test("a stopped tick skips the heartbeat, so the cursor save follows at once", a
   await tick(CFG, { repos: {} }, { fetchImpl: f, log: () => {}, redis: { ...redisStub, writeStatus: async () => { status++; } } });
   assert.equal(status, 1, "an ordinary tick still writes it");
 });
+
+test("a hold writes an admin activity row with the login and the PR, and a log line with neither", async () => {
+  const rows = [];
+  const logs = [];
+  const redis = { ...redisStub, holdScore: async () => {}, logActivity: async (r) => rows.push(r) };
+  const body = `<!-- ctf-score: {"author":"Stranger","target":"dvwa","solved":["sqli-low","xss"],"pr":9,"sha":"abc"} -->`;
+  const f = routes(() => new Response(JSON.stringify([ghComment(4242, body)]), { status: 200, headers: {} }), 202, []);
+  await tick(CFG, { repos: {} }, { fetchImpl: f, log: (m) => logs.push(m), redis });
+  assert.equal(rows.length, 1);
+  const { type, userId, login, name, detail } = rows[0];
+  assert.deepEqual(
+    { type, userId, login, name, detail },
+    { type: "sd-held", userId: null, login: "stranger", name: "@stranger", detail: "dvwa PR #9, 2 challenges: waiting for the author to link GitHub" },
+  );
+  assert.ok(logs.includes("hold: dvwa, 2 challenges (waiting for the author to link GitHub)"), JSON.stringify(logs));
+  assert.equal(logs.some((l) => /stranger|#9|4242/i.test(l)), false);
+});

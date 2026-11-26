@@ -228,7 +228,12 @@ describe("flush", () => {
     fetchMock.mockResolvedValue({ ok: false, status: 404 });
     await flush();
     expect(mocks.outboxComplete).toHaveBeenCalledWith("1", "failed", "lease-token");
-    expect(mocks.bumpStatus).toHaveBeenCalledWith("first-blood", "failed", expect.any(String));
+    // The card shows what Discord answered, not a fixed label.
+    expect(mocks.bumpStatus).toHaveBeenCalledWith(
+      "first-blood",
+      "failed",
+      "Discord rejected the webhook (404): the URL is wrong or the webhook was deleted",
+    );
   });
 
   it("does nothing at all without a webhook", async () => {

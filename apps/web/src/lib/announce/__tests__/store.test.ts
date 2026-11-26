@@ -817,4 +817,14 @@ describe("status", () => {
     mocks.upstashPipeline.mockRejectedValue(new Error("down"));
     expect((await readStatus()).posted).toEqual({});
   });
+
+  it("counts the announcements still waiting: pending, or failed with attempts left", async () => {
+    const entry = (status: string, n: number) => JSON.stringify({ kind: "first-blood", payload: {}, at: "2026-01-01T00:00:00Z", n, status });
+    mocks.upstashPipeline.mockImplementation(async (cmds: unknown[][]) =>
+      cmds[0][1] === "ctf:announce:outbox"
+        ? [{ result: ["a", entry("pending", 0), "b", entry("failed", 1), "c", entry("failed", 3), "d", entry("sent", 1), "e", entry("skipped", 0)] }]
+        : [{ result: ["lastError", "x", "lastErrorAt", "2026-01-01T00:00:00Z"] }],
+    );
+    expect((await readStatus()).pending).toBe(2);
+  });
 });

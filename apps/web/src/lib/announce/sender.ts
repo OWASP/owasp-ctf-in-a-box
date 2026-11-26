@@ -24,6 +24,7 @@
 // the URL or the payload is absolute — errors go through errorLabel only.
 
 import "server-only";
+import { describeDiscordFailure } from "@/lib/announce/discord-failure";
 import { errorLabel } from "@/lib/error-label";
 import type { AnnouncementKind } from "@/lib/discord-config";
 import type { DiscordMessage } from "./messages";
@@ -199,7 +200,7 @@ export async function flush(): Promise<void> {
       const ok = result.ok;
       for (const { item, token } of batch) {
         await outboxComplete(item.id, ok ? "sent" : "failed", token);
-        await bumpStatus(item.entry.kind, ok ? "sent" : "failed", ok ? undefined : "discord post failed");
+        await bumpStatus(item.entry.kind, ok ? "sent" : "failed", ok ? undefined : describeDiscordFailure(result));
       }
     }
     await outboxPrune();
@@ -278,7 +279,7 @@ export async function flushRetries(): Promise<void> {
       const ok = result.ok;
       for (const { item, token } of batch) {
         await outboxComplete(item.id, ok ? "sent" : "failed", token);
-        await bumpStatus(item.entry.kind, ok ? "sent" : "failed", ok ? undefined : "discord post failed (retry)");
+        await bumpStatus(item.entry.kind, ok ? "sent" : "failed", ok ? undefined : describeDiscordFailure(result));
       }
     }
   } catch (err) {
@@ -295,7 +296,9 @@ export async function flushRetries(): Promise<void> {
  *  response alone, so a redirect-following fetch that lands on an error
  *  page cannot mark a post sent (nor one that lands elsewhere can fail a
  *  post Discord accepted). */
-export type DiscordPostResult = { ok: boolean; retryAfterMs?: number };
+/** `httpStatus` is what Discord answered on a refusal; absent when the
+ *  request got no answer at all (see describeDiscordFailure). */
+export type DiscordPostResult = { ok: boolean; retryAfterMs?: number; httpStatus?: number };
 
 export async function postToDiscord(url: string, body: unknown): Promise<DiscordPostResult> {
   try {
@@ -333,7 +336,7 @@ export async function postToDiscord(url: string, body: unknown): Promise<Discord
         return { ok: false, retryAfterMs };
       }
       console.error(`[announce] discord post failed: HTTP ${res.status}`);
-      return { ok: false };
+      return { ok: false, httpStatus: res.status };
     }
     return { ok: true };
   } catch (err) {

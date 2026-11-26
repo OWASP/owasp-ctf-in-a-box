@@ -137,6 +137,26 @@ const freshRelease = () => ({ released: 0, accepted: 0, refused: 0, rejected: 0,
  * index or the window cannot be read; the caller logs that and polls anyway.
  * Logs carry counts and reasons, never a login, player id or PR.
  */
+/** A score held for an unlinked PR author, or released once they link: what
+ *  an organizer reads when a player says "my PR scored but I have 0 points".
+ *  The container log line names only the target and the challenge count,
+ *  never the login, the PR or the comment, like every sync log line; the
+ *  login and the PR go to the admin-only activity log row, which /admin
+ *  shows next to Support's held scores. */
+async function recordHeldEvent(redis, log, kind, { login, player = null, target, pr, solved, why }) {
+  const n = Array.isArray(solved) ? solved.length : 0;
+  const count = `${n} challenge${n === 1 ? "" : "s"}`;
+  log(`${kind === "held" ? "hold" : "release"}: ${target}, ${count} (${why})`);
+  await redis.logActivity?.({
+    at: new Date().toISOString(),
+    type: kind === "held" ? "sd-held" : "sd-released",
+    userId: player,
+    login,
+    name: `@${login}`,
+    detail: `${target} PR #${pr}, ${count}: ${why}`,
+  });
+}
+
 export async function releaseHeldScores({
   cfg,
   redis,
@@ -198,6 +218,8 @@ export async function releaseHeldScores({
           await redis.releaseHeld(login, field);
           counts.released++;
           counts[verdict.outcome]++;
+          const why = verdict.outcome === "accepted" ? "scored" : verdict.reason ? `${verdict.outcome}: ${verdict.reason}` : verdict.outcome;
+          await recordHeldEvent(redis, log, "released", { login, player: link.player, target, pr, solved, why });
         } catch (err) {
           counts.retried++;
           counts.kept += ready.length - i;
@@ -404,7 +426,7 @@ export async function tick(cfg, state, deps = {}) {
             target: payload.target, solved: payload.solved, pr: payload.pr, sha: payload.sha, at, repo,
           });
           tally.held++;
-          log(`submit ${repo}#${payload.pr}: held (PR author not linked yet)`);
+          await recordHeldEvent(redis, log, "held", { ...payload, login: authorKey, why: "waiting for the author to link GitHub" });
           continue;
         }
         // An older score for the same author and target still held (its
@@ -422,7 +444,7 @@ export async function tick(cfg, state, deps = {}) {
             target: payload.target, solved: payload.solved, pr: payload.pr, sha: payload.sha, at, repo,
           });
           tally.held++;
-          log(`submit ${repo}#${payload.pr}: held (an older held score for this target goes first)`);
+          await recordHeldEvent(redis, log, "held", { ...payload, login: authorKey, why: "an older held score for this target goes first" });
           continue;
         }
         const player = link.player;

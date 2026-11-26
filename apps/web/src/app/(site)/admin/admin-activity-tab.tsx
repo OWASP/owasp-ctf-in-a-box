@@ -72,6 +72,8 @@ export const TYPE_LABELS: Record<string, string> = {
   "team-join": "joined team",
   "team-leave": "left team",
   "team-rename": "renamed team",
+  "sd-held": "score held (GitHub not linked)",
+  "sd-released": "held score released",
 };
 
 /** Compact row timestamp on the event's clock, "08-24 15:03:27 GMT-3" — see

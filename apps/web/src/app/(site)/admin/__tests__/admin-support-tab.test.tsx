@@ -7,8 +7,11 @@
 // mirroring how `questionDeleteConfirm`/`challengeDeleteConfirm` are proven
 // on the module panels.
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
 import AdminSupportTab, {
+  githubLoginOf,
   addToTeamLabel,
   addToTeamNotice,
   canSearch,
@@ -272,4 +275,24 @@ describe("unlink GitHub", () => {
     expect(githubLoginLine(detail)).toBeNull();
     expect(githubLoginLine({ ...detail, github: { login: "octo", linkedAt: 1 } })).toBe("GitHub login octo");
   });
+});
+
+describe("githubLoginOf (held scores next to a Support search, #827)", () => {
+  it("reads a GitHub login, with or without @, lowercased", () => {
+    expect(githubLoginOf("@Octo-Cat")).toBe("octo-cat");
+    expect(githubLoginOf(" mona ")).toBe("mona");
+  });
+
+  it("names none for a query that cannot be a login", () => {
+    expect(githubLoginOf("Ada Lovelace")).toBeUndefined();
+    expect(githubLoginOf("-bad")).toBeUndefined();
+    expect(githubLoginOf("a--b")).toBeUndefined();
+    expect(githubLoginOf("x".repeat(40))).toBeUndefined();
+  });
+});
+
+it("Support shows the searched login's held scores, one fresh view per login", () => {
+  const code = readFileSync(fileURLToPath(new URL("../admin-support-tab.tsx", import.meta.url)), "utf8");
+  expect(code).toContain("<AdminHeldScores key={heldLogin} login={heldLogin} />");
+  expect(code).toContain("setHeldLogin(githubLoginOf(query))");
 });

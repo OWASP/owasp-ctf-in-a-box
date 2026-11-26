@@ -41,7 +41,17 @@ export function HeldScoresList({ entries }: { entries: HeldScore[] }) {
   );
 }
 
-export default function AdminHeldScores() {
+/** The read for every held score, or for one GitHub login's (Support's
+ *  search). Exported so the suite can pin it — there is no DOM in this repo's
+ *  tests. */
+export function heldScoresUrl(login?: string): string {
+  return login ? `/api/admin/sd/held?login=${encodeURIComponent(login)}` : "/api/admin/sd/held";
+}
+
+/** Every held score (the Secure Development tab), or, with `login`, that one
+ *  author's (Support: "my PR scored but I have 0 points"). A caller that
+ *  changes `login` keys the component by it, so each login starts empty. */
+export default function AdminHeldScores({ login }: { login?: string } = {}) {
   const [entries, setEntries] = useState<HeldScore[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,7 +59,7 @@ export default function AdminHeldScores() {
     const ctl = new AbortController();
     (async () => {
       try {
-        const res = await fetch("/api/admin/sd/held", { signal: ctl.signal });
+        const res = await fetch(heldScoresUrl(login), { signal: ctl.signal });
         const data = (await res.json().catch(() => ({}))) as { entries?: HeldScore[] };
         if (ctl.signal.aborted) return;
         if (!res.ok || !Array.isArray(data.entries)) setError("Could not load held scores");
@@ -59,12 +69,13 @@ export default function AdminHeldScores() {
       }
     })();
     return () => ctl.abort();
-  }, []);
+  }, [login]);
 
+  if (login && entries && entries.length === 0) return null;
   return (
     <section className="flex flex-col gap-2" aria-labelledby="held-scores-heading">
       <h3 id="held-scores-heading" className="text-sm font-semibold text-white">
-        Held and unclaimed scores
+        {login ? `Held Secure Development scores for @${login}` : "Held and unclaimed scores"}
       </h3>
       <p className="text-xs text-zinc-400">
         Held scores are released when their author links a GitHub account before scoring closes. Unclaimed scores can

@@ -6,13 +6,15 @@ import { DEFAULT_EVENT_IDENTITY } from "@/lib/event-identity";
 import { buildTestMessage } from "@/lib/announce/messages";
 import { announceCooldownMs, getWebhookUrl, setAnnounceCooldown } from "@/lib/announce/store";
 import { postToDiscord } from "@/lib/announce/sender";
+import { describeDiscordFailure } from "@/lib/announce/discord-failure";
 
 /**
  * Send ONE test message to the configured webhook, right now (#590).
  * Deliberately direct (not via the outbox): a test is synchronous feedback
  * for the organizer, and its result — ok or failure — is the point. The
- * response carries only the outcome, never the URL; a failure logs a status
- * line or a label, never the endpoint.
+ * response carries only the outcome and what Discord answered (for a dead
+ * webhook, that the URL is wrong or the webhook was deleted), never the URL;
+ * a failure logs a status line or a label, never the endpoint.
  */
 
 /** 429 shaped like Discord's own: a Retry-After the admin UI (and any
@@ -57,7 +59,7 @@ export async function POST(request: Request) {
     }
     return result.ok
       ? NextResponse.json({ ok: true })
-      : NextResponse.json({ ok: false, error: "Discord rejected the test message (see the server log for the status)" }, { status: 502 });
+      : NextResponse.json({ ok: false, error: describeDiscordFailure(result) }, { status: 502 });
   } catch (err) {
     console.error("[admin/announcements] test send failed:", adminErrorLabel(err));
     return NextResponse.json({ error: "announcements store unavailable" }, { status: 503 });

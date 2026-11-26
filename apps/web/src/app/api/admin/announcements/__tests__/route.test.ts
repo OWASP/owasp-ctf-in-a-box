@@ -71,7 +71,7 @@ beforeEach(() => {
     delete rest.webhookUrl;
     return rest;
   });
-  mocks.readStatus.mockResolvedValue({ posted: {}, lastPostedAt: null, lastError: null, lastErrorAt: null });
+  mocks.readStatus.mockResolvedValue({ posted: {}, lastPostedAt: null, lastError: null, lastErrorAt: null, pending: 0 });
   mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, firstBlood: true });
   mocks.setAnnounceWebhook.mockResolvedValue({ webhookConfigured: true });
   mocks.getWebhookUrl.mockResolvedValue(URL);
@@ -238,6 +238,15 @@ describe("test POST", () => {
     const res = await TEST(req("POST", undefined, "/api/admin/announcements/test"));
     expect(res.status).toBe(502);
     expect(JSON.stringify(await res.json())).not.toContain(URL);
+  });
+
+  it("a dead webhook says what Discord answered and what it means, not just the status", async () => {
+    mocks.postToDiscord.mockResolvedValue({ ok: false, httpStatus: 404 });
+    const res = await TEST(req("POST", undefined, "/api/admin/announcements/test"));
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.error).toBe("Discord rejected the webhook (404): the URL is wrong or the webhook was deleted");
+    expect(JSON.stringify(body)).not.toContain(URL);
   });
 
   it("no webhook configured is a 400", async () => {

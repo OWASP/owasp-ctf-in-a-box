@@ -81,6 +81,21 @@ export function mergePatched(config: DiscordPublicConfig, keysWritten: readonly 
   return next as DiscordPublicConfig;
 }
 
+/** Orders the card's reads of the announcement settings: the first load, the
+ *  status poll and the reload after Send test. `begin()` starts a read and
+ *  returns whether it is still the newest one started, so an answer that
+ *  arrives after a later read's is dropped instead of putting back an older
+ *  status. Exported so the suite can pin it without a DOM. */
+export function createReadSequence(): { begin: () => () => boolean } {
+  let latest = 0;
+  return {
+    begin() {
+      const mine = ++latest;
+      return () => mine === latest;
+    },
+  };
+}
+
 /** Folds a fresh GET into the load state for `reload`. Send test refreshes
  *  only the delivery status, so when a ready config exists the response's
  *  copy of it is NOT taken: that GET may have been served before a config
@@ -158,14 +173,17 @@ export default function AdminEventAnnouncements({
    *  fresh config (Send test): only the delivery status is refreshed — the
    *  config already on screen is the newer truth (see `foldReloaded`). If
    *  the refresh fails, the loaded config and controls are preserved. */
+  const reads = useRef(createReadSequence());
   const reload = useCallback(
-    async (isCurrent: () => boolean = () => true) => {
+    async (alive: () => boolean = () => true) => {
+      const newest = reads.current.begin();
+      const apply = () => newest() && alive();
       try {
         const body = await readConfig();
-        if (isCurrent()) setLoad((prev) => foldReloaded(prev, body));
+        if (apply()) setLoad((prev) => foldReloaded(prev, body));
       } catch (err) {
         const message = err instanceof Error ? err.message : "Could not read the announcement settings.";
-        if (isCurrent()) setLoad((prev) => foldReloadFailure(prev, message));
+        if (apply()) setLoad((prev) => foldReloadFailure(prev, message));
       }
     },
     [readConfig],
@@ -187,15 +205,20 @@ export default function AdminEventAnnouncements({
     };
   }, [visible, reload]);
 
+  // The first load goes through the same sequence and folds: if the card is
+  // already ready when it answers (a poll got there first, then a setting
+  // was saved), only its status is taken, never its older config.
   useEffect(() => {
     if (initial) return;
     let cancelled = false;
+    const newest = reads.current.begin();
     readConfig().then(
       (body) => {
-        if (!cancelled) setLoad({ state: "ready", config: body.config, status: body.status });
+        if (!cancelled && newest()) setLoad((prev) => foldReloaded(prev, body));
       },
       (err: unknown) => {
-        if (!cancelled) setLoad({ state: "failed", message: err instanceof Error ? err.message : "Could not read the announcement settings." });
+        const message = err instanceof Error ? err.message : "Could not read the announcement settings.";
+        if (!cancelled && newest()) setLoad((prev) => foldReloadFailure(prev, message));
       },
     );
     return () => {

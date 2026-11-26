@@ -144,17 +144,23 @@ const freshRelease = () => ({ released: 0, accepted: 0, refused: 0, rejected: 0,
  *  login and the PR go to the admin-only activity log row, which /admin
  *  shows next to Support's held scores. */
 async function recordHeldEvent(redis, log, kind, { login, player = null, target, pr, solved, why }) {
-  const n = Array.isArray(solved) ? solved.length : 0;
-  const count = `${n} challenge${n === 1 ? "" : "s"}`;
-  log(`${kind === "held" ? "hold" : "release"}: ${target}, ${count} (${why})`);
-  await redis.logActivity?.({
-    at: new Date().toISOString(),
-    type: kind === "held" ? "sd-held" : "sd-released",
-    userId: player,
-    login,
-    name: `@${login}`,
-    detail: `${target} PR #${pr}, ${count}: ${why}`,
-  });
+  // Fail-open as a whole: the hold or release it describes has already
+  // happened, and a throw here would make the caller retry it.
+  try {
+    const n = Array.isArray(solved) ? solved.length : 0;
+    const count = `${n} challenge${n === 1 ? "" : "s"}`;
+    log(`${kind === "held" ? "hold" : "release"}: ${target}, ${count} (${why})`);
+    await redis.logActivity?.({
+      at: new Date().toISOString(),
+      type: kind === "held" ? "sd-held" : "sd-released",
+      userId: player,
+      login,
+      name: `@${login}`,
+      detail: `${target} PR #${pr}, ${count}: ${why}`,
+    });
+  } catch {
+    // Nothing to report through: the log itself may be what failed.
+  }
 }
 
 export async function releaseHeldScores({

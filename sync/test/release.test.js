@@ -446,3 +446,17 @@ test("a release writes an admin activity row naming the login, the player and th
   );
   assert.ok(rows.every((r) => Number.isFinite(Date.parse(r.at))));
 });
+
+test("a throwing activity write never turns a finished release into a retry", async () => {
+  const redis = {
+    ...fakeRedis({ links: { octocat: { player: PLAYER, linkedAt: T - MIN } }, held: twoHeld() }),
+    logActivity: async () => {
+      throw new Error("NOAUTH");
+    },
+  };
+  const { posts, fetchImpl } = scorer();
+  const r = await releaseHeldScores({ cfg: CFG, redis, fetchImpl, log: () => {} });
+  assert.equal(posts.length, 2, "the second held score is still released");
+  assert.equal(r.released, 2);
+  assert.equal(r.retried, 0);
+});

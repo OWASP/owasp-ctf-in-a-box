@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
-import AdminEventAnnouncements, { blurNeedsSave, clearWebhookConfirm, failureNotice, foldReloaded, foldReloadFailure, mergePatched, type Load } from "../admin-event-announcements";
+import AdminEventAnnouncements, { blurNeedsSave, clearWebhookConfirm, createReadSequence, failureNotice, foldReloaded, foldReloadFailure, mergePatched, type Load } from "../admin-event-announcements";
 import type { DiscordPublicConfig } from "@/lib/discord-config";
 import type { AnnounceStatus } from "@/lib/announce/store";
 
@@ -319,5 +319,37 @@ describe("delivery status refresh", () => {
     const tab = readFileSync(fileURLToPath(new URL("../admin-event-tab.tsx", import.meta.url)), "utf8");
     expect(controls).toMatch(/<AdminEventTab\s+visible=\{active === EVENT_TAB\}/);
     expect(tab).toContain("visible={visible}");
+  });
+});
+
+describe("createReadSequence and the folds: reads answering out of order", () => {
+  const failing = status({ lastErrorAt: "2026-11-24T20:55:00Z", lastError: "Discord rejected the webhook (404): the URL is wrong or the webhook was deleted" });
+  const healthy = status({ lastPostedAt: "2026-11-24T21:00:00Z" });
+
+  it("drops a poll that answers after the Send test reload it started before", () => {
+    const seq = createReadSequence();
+    const poll = seq.begin(); // the poll starts, Discord still failing
+    const afterTest = seq.begin(); // Send test succeeds and reloads
+    let load: Load = { state: "ready", config: config(), status: failing };
+    if (afterTest()) load = foldReloaded(load, { config: config(), status: healthy });
+    if (poll()) load = foldReloaded(load, { config: config(), status: failing });
+    expect(load.state === "ready" && load.status).toEqual(healthy);
+  });
+
+  it("applies a newer read that answers after an older one", () => {
+    const seq = createReadSequence();
+    const older = seq.begin();
+    const newer = seq.begin();
+    expect(older()).toBe(false);
+    expect(newer()).toBe(true);
+  });
+
+  it("a first load answering after the card is ready takes only its status, never its older config", () => {
+    const saved = config({ firstBlood: true });
+    const ready: Load = { state: "ready", config: saved, status: failing };
+    const lateFirstLoad = { config: config({ firstBlood: false }), status: healthy };
+    const next = foldReloaded(ready, lateFirstLoad);
+    expect(next.state === "ready" && next.config).toEqual(saved);
+    expect(next.state === "ready" && next.status).toEqual(healthy);
   });
 });

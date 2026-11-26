@@ -543,9 +543,10 @@ Container Insights. Until that exists, run the same pass by hand:
 
 ## Tear down
 
-`terraform destroy` deletes the cache and its automatic snapshots with it.
-The module takes no final snapshot, so export everything you want to keep
-**first**:
+`terraform destroy` deletes the cache and its automatic snapshots with it,
+and takes one final snapshot first, named `<name>-redis-final`. That snapshot
+is a backstop, not a replacement for the export, so still export everything
+you want to keep **first**:
 
 1. `/admin` → **Event** → **Event archive** → **Export**. It carries the
    authored content and settings, not contestant progress (see
@@ -555,11 +556,37 @@ The module takes no final snapshot, so export everything you want to keep
    shell in the app container: `wget -qO- "$LEADERBOARD_API_URL/leaderboard"`.
 3. Run `./setup/ctf-setup.sh teardown` for the org, as on any other box.
 
+Then, on a stack first applied before the module took a final snapshot, apply
+once and check the setting is in the state. `terraform destroy` works from the
+applied state, so without this step it deletes the cache with no snapshot:
+
+```sh
+terraform apply   # review: an in-place update of aws_elasticache_replication_group.main
+terraform state show aws_elasticache_replication_group.main | grep final_snapshot_identifier
+```
+
 Then:
 
 ```sh
 terraform destroy
 ```
+
+Taking the final snapshot needs `elasticache:CreateSnapshot` as well as the
+delete permissions. If the identity running `terraform destroy` lacks it, AWS
+rejects the cache's deletion after other resources may already be gone; grant
+it and run `terraform destroy` again.
+
+The final snapshot holds the whole event store, including flags, logins and
+sessions. It has no expiry, `cache_snapshot_retention_days` does not apply to
+it, and it is billed until you delete it. Once you are sure you will not
+restore from it, delete it in the stack's region:
+
+```sh
+aws elasticache delete-snapshot --region <region> --snapshot-name <name>-redis-final
+```
+
+A later `terraform destroy` of a stack with the same `name` fails while this
+snapshot still exists, because the next final snapshot would take its name.
 
 Afterwards, check for leftovers:
 

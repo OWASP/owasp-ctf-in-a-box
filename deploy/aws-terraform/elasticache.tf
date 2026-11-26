@@ -130,6 +130,13 @@ resource "aws_elasticache_replication_group" "main" {
   snapshot_window          = "03:00-04:00"
   maintenance_window       = "sun:04:30-sun:05:30"
 
+  // `terraform destroy` deletes the automatic snapshots with the cache, so this
+  // one is the only copy of contestant progress that outlives the stack. It
+  // holds flags, logins and sessions, has no expiry and is billed until an
+  // organizer deletes it by hand: docs/aws.md says how. A later destroy under
+  // the same `name` fails while it exists.
+  final_snapshot_identifier = "${var.name}-redis-final"
+
   apply_immediately = true
 
   // Rotating the token is a deliberate act with a blast radius — every service

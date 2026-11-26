@@ -444,6 +444,17 @@ run "snapshots_cannot_be_turned_off" {
   expect_failures = [var.cache_snapshot_retention_days]
 }
 
+run "destroy_leaves_a_final_snapshot_of_the_cache" {
+  command = plan
+
+  // Automatic snapshots go with the cache on destroy, so without this the
+  // event's progress is gone the moment the stack is.
+  assert {
+    condition     = aws_elasticache_replication_group.main.final_snapshot_identifier == "owasp-ctf-redis-final"
+    error_message = "The cache must take a final snapshot named <name>-redis-final on destroy: its automatic snapshots are deleted with it."
+  }
+}
+
 // --- the srh <-> ElastiCache wiring ---------------------------------------
 
 // `apply`, not `plan`: the connection string embeds the ElastiCache endpoint

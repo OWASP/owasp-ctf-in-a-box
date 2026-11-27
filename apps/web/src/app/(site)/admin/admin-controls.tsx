@@ -310,6 +310,7 @@ export default function AdminControls({
                   setMinSolvesInput={setMinSolvesInput}
                   unlockAfterInput={unlockAfterInput}
                   setUnlockAfterInput={setUnlockAfterInput}
+                  classicChallenges={inventory.classic?.items}
                 />
               ) : tab.id === ADMINS_TAB ? (
                 <AdminAdminsTab viewerId={viewerId} visible={active === ADMINS_TAB} />

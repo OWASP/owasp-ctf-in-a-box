@@ -33,7 +33,29 @@ type AdminHintsTabProps = {
   setMinSolvesInput: (v: string) => void;
   unlockAfterInput: string;
   setUnlockAfterInput: (v: string) => void;
+  /** How many challenges the Jeopardy board has, as its panel reported it;
+   *  undefined while not yet known or with Jeopardy off. */
+  classicChallenges?: number;
 };
+
+/** The warning for a "solves required" no Jeopardy hint can ever meet (#828),
+ *  or null. The gate counts a player's solves across the whole board
+ *  (hint-store.ts `countSolves`), and the challenge a player wants a hint for
+ *  is one they haven't solved, so a hint can only be bought when the board has
+ *  more challenges than the value. */
+export function hintThresholdWarning(
+  challenges: number | undefined,
+  minSolves: number,
+  enabled: boolean,
+): string | null {
+  if (!enabled || minSolves <= 0 || challenges === undefined || challenges === 0 || challenges > minSolves) {
+    return null;
+  }
+  const board = `The Jeopardy board has ${challenges} ${challenges === 1 ? "challenge" : "challenges"}`;
+  const need = `${minSolves} other ${minSolves === 1 ? "challenge" : "challenges"}`;
+  const fix = challenges - 1 === 0 ? "0 (no gate)" : `${challenges - 1} or lower`;
+  return `${board}, so with "solves required" at ${minSolves} nobody can buy a hint for a challenge they haven't solved yet: they must first solve ${need}. Set it to ${fix}, or add challenges.`;
+}
 
 export default function AdminHintsTab({
   settings,
@@ -47,7 +69,13 @@ export default function AdminHintsTab({
   setMinSolvesInput,
   unlockAfterInput,
   setUnlockAfterInput,
+  classicChallenges,
 }: AdminHintsTabProps) {
+  const thresholdWarning = hintThresholdWarning(
+    classicChallenges,
+    settings.hintsMinSolves ?? HINT_MIN_SOLVES,
+    settings.hintsEnabled ?? HINT_DEFAULT_ENABLED,
+  );
   return (
     <section className="flex flex-col gap-3">
       <div>
@@ -98,6 +126,11 @@ export default function AdminHintsTab({
         onChange={setMinSolvesInput}
         onBlur={() => commitNumber("hintsMinSolves", minSolvesInput, setMinSolvesInput, "Hints: solves required")}
       />
+      {thresholdWarning && (
+        <p role="status" className="rounded-md border border-[#d4a017]/40 bg-[#d4a017]/10 px-3 py-2 text-sm text-[#f3d27a]">
+          {thresholdWarning}
+        </p>
+      )}
 
       <AdminNumberField
         id="hints-unlock-after-min"

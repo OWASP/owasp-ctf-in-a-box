@@ -338,3 +338,42 @@ describe("members sharing a display name", () => {
     });
   });
 });
+
+
+describe("TeamCard solo copy (#828)", () => {
+  it("says Play solo makes a team of one that someone can still join", () => {
+    const html = renderToStaticMarkup(
+      <TeamCard team={null} writesEnabled maxMembers={4} isCaptain={false} captain={null} joinCode={null} />,
+    );
+    expect(html).toContain("Play solo makes you a team of one, with its own join code");
+  });
+
+  it("tells a one-player team it is their own team and the code still works", () => {
+    const html = renderToStaticMarkup(
+      <TeamCard
+        team={{ slug: "alice", name: "alice", members: ["alice"] }}
+        writesEnabled
+        maxMembers={4}
+        isCaptain
+        captain="alice"
+        joinCode="ab12cd"
+      />,
+    );
+    expect(html).toContain("1 / 4 players");
+    expect(html).toContain("re on your own team. Share the join code if someone wants to join you.");
+  });
+
+  it("does not say it once a second player joins", () => {
+    const html = renderToStaticMarkup(
+      <TeamCard
+        team={{ slug: "red-team", name: "Red Team", members: ["alice", "bob"] }}
+        writesEnabled
+        maxMembers={4}
+        isCaptain
+        captain="alice"
+        joinCode="ab12cd"
+      />,
+    );
+    expect(html).not.toContain("on your own team");
+  });
+});

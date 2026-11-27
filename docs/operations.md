@@ -26,6 +26,15 @@ live-GitHub scoring. For standing the kit up in the first place, see
 
 ## Running an event
 
+**Before: decide what is competitive.** This is an open-source teaching kit, so
+two things a contestant could use are public, and forked with the repository:
+`patches/<target>/<challenge-id>.patch` holds one reference fix per Secure
+Development challenge, and `scorer/rubric.owasp/` shows what each check probes.
+That is deliberate, and the rules page says so to contestants. For a
+competitive event, put the competitive weight on Jeopardy, whose challenges and
+flags are your own private content, or score Secure Development against a
+private rubric.
+
 **During:**
 
 - The leaderboard and app live at the `EVENT_URL` you configured in `.env`.
@@ -625,7 +634,13 @@ The panel offers:
     trivially relayed, so a throwaway account could otherwise buy hints, eat
     a penalty nobody cares about, and pass the text to a real team. Requiring
     earned progress makes that cost the same real work the event scores. Set
-    to `0` to disable.
+    to `0` to disable. On **Jeopardy** the count is the player's solves
+    across the whole board, not one category. The challenge a player wants
+    a hint for is one they haven't solved, so a hint is only useful to buy
+    when the board has **more** challenges than this value: with the default
+    `1`, a one-challenge board never sells a hint before its challenge is
+    solved. The **Hints** destination warns when the board has that few
+    challenges (#828).
   - **Unlock after** (`hintsUnlockAfterMin`, default **0**, at most
     **100000** minutes) — minutes after
     the scheduled scoring start before *any* hint can be bought, so the early

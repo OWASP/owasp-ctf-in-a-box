@@ -316,6 +316,14 @@ export default function TeamCard({
                   {team.members.length} / {maxMembers} players
                 </span>
               </div>
+              {/* Play solo makes an ordinary team of one (#828): it has a join
+                  code and room for more, so say that rather than leave
+                  "1 / 4 players" reading like a half-empty team. */}
+              {team.members.length === 1 && (
+                <p className="text-xs text-muted">
+                  You&rsquo;re on your own team. Share the join code if someone wants to join you.
+                </p>
+              )}
             </div>
           )}
 
@@ -486,7 +494,10 @@ export default function TeamCard({
               explicitly opted out of having teammates. The server derives the
               name from their login; there is nothing to type. */}
           <div className="flex flex-col gap-1 border-t border-white/[0.06] pt-3">
-            <p className="text-xs text-muted">Playing on your own?</p>
+            <p className="text-xs text-muted">
+              Playing on your own? Play solo makes you a team of one, with its own join code, so a teammate can
+              still join you later.
+            </p>
             <button
               type="button"
               disabled={pending}

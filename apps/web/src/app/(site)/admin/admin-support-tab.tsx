@@ -366,6 +366,10 @@ export default function AdminSupportTab({
   /** The latest action's outcome. Starting another action, or picking a
    *  different player, replaces it. A refresh of the same player does not. */
   const [result, setResult] = useState<SupportResult | null>(null);
+  /** Bumped when an action starts or another player is picked. A request
+   *  reports only while this is still the value it started with, so a slow
+   *  answer cannot replace the outcome of whatever the organizer did next. */
+  const actionGen = useRef(0);
   const [lookupSeq] = useState(requestSequence);
 
   const [teamSlug, setTeamSlug] = useState("");
@@ -377,6 +381,15 @@ export default function AdminSupportTab({
   const [renameTo, setRenameTo] = useState("");
   const [resetCode, setResetCode] = useState<{ code: string; expiresAt: string } | null>(null);
 
+  function beginAction(): number {
+    actionGen.current += 1;
+    return actionGen.current;
+  }
+
+  function reportCurrent(gen: number, next: SupportResult) {
+    if (actionGen.current === gen) setResult(next);
+  }
+
   /** Runs a request and records the outcome against `id`, beside that control.
    *  `after` re-reads the contestant when one is on screen, so the panel never
    *  shows a score that an action on this very tab just deleted. */
@@ -386,19 +399,20 @@ export default function AdminSupportTab({
     describe: (data: Record<string, unknown>) => string,
     after?: () => Promise<void>,
   ) {
+    const gen = beginAction();
     setPending(true);
     setResult(null);
     try {
       const res = await fn();
       const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
-        setResult({ id, tone: "err", text: typeof data.error === "string" ? data.error : "Request failed" });
+        reportCurrent(gen, { id, tone: "err", text: typeof data.error === "string" ? data.error : "Request failed" });
         return;
       }
-      setResult({ id, tone: "ok", text: describe(data) });
+      reportCurrent(gen, { id, tone: "ok", text: describe(data) });
       if (after) await after();
     } catch {
-      setResult({ id, tone: "err", text: "Request failed" });
+      reportCurrent(gen, { id, tone: "err", text: "Request failed" });
     } finally {
       setPending(false);
     }
@@ -406,6 +420,7 @@ export default function AdminSupportTab({
 
   async function search() {
     if (!canSearch(query, pending)) return;
+    const gen = beginAction();
     setPending(true);
     setResult(null);
     // The previous answer goes with the previous query: a stale empty result
@@ -417,13 +432,13 @@ export default function AdminSupportTab({
       const res = await fetch(playerSearchUrl(query));
       const data = (await res.json().catch(() => ({}))) as { players?: PlayerRow[]; error?: string };
       if (!res.ok || !Array.isArray(data.players)) {
-        setResult({ id: "search", tone: "err", text: data.error ?? "Search failed" });
+        reportCurrent(gen, { id: "search", tone: "err", text: data.error ?? "Search failed" });
         setResults(null);
         return;
       }
       setResults(data.players);
     } catch {
-      setResult({ id: "search", tone: "err", text: "Search failed" });
+      reportCurrent(gen, { id: "search", tone: "err", text: "Search failed" });
       setResults(null);
     } finally {
       setPending(false);
@@ -432,9 +447,11 @@ export default function AdminSupportTab({
 
   async function lookup(id: string) {
     if (id !== detail?.id) {
+      actionGen.current += 1;
       setResetCode(null);
       setResult(null);
     }
+    const gen = actionGen.current;
     setPending(true);
     const out = await latestOnly(lookupSeq, async () => {
       const res = await fetch(lookupUrl(id));
@@ -444,7 +461,7 @@ export default function AdminSupportTab({
     // A newer lookup owns the card, the error line and the pending flag.
     if (!out.current) return;
     if (!out.ok || !out.value.ok) {
-      setResult({ id: "lookup", tone: "err", text: (out.ok && out.value.data.error) || "Lookup failed" });
+      reportCurrent(gen, { id: "lookup", tone: "err", text: (out.ok && out.value.data.error) || "Lookup failed" });
       setDetail(null);
     } else {
       setDetail(out.value.data);
@@ -493,7 +510,7 @@ export default function AdminSupportTab({
           </button>
           <SupportResultLine result={result} id="search" />
           <SupportResultLine result={result} id="lookup" />
-          <SupportResultLine result={result} id="delete" />
+          {result?.id === "delete" && result.tone === "ok" && <SupportResultLine result={result} id="delete" />}
         </div>
         {results && results.length === 0 && <p className="text-sm text-muted">{noMatchText(heldLogin)}</p>}
         {results && results.length > 0 && (
@@ -603,6 +620,7 @@ export default function AdminSupportTab({
               className={BTN}
               onClick={() => {
                 void (async () => {
+                  const gen = beginAction();
                   setPending(true);
                   setResult(null);
                   try {
@@ -613,13 +631,13 @@ export default function AdminSupportTab({
                     });
                     const data = (await res.json().catch(() => ({}))) as { error?: string; to?: string };
                     if (!res.ok) {
-                      setResult({ id: "rename", tone: "err", text: data.error ?? "Rename failed" });
+                      reportCurrent(gen, { id: "rename", tone: "err", text: data.error ?? "Rename failed" });
                       return;
                     }
-                    setResult({ id: "rename", tone: "ok", text: `Renamed to ${data.to ?? renameTo.trim()}.` });
+                    reportCurrent(gen, { id: "rename", tone: "ok", text: `Renamed to ${data.to ?? renameTo.trim()}.` });
                     await refresh();
                   } catch {
-                    setResult({ id: "rename", tone: "err", text: "Rename failed" });
+                    reportCurrent(gen, { id: "rename", tone: "err", text: "Rename failed" });
                   } finally {
                     setPending(false);
                   }
@@ -795,6 +813,7 @@ export default function AdminSupportTab({
             >
               Delete contestant
             </button>
+            {result?.id === "delete" && result.tone === "err" && <SupportResultLine result={result} id="delete" />}
 
             {detail.team && !detail.team.isCaptain && (
               <button
@@ -972,7 +991,7 @@ export default function AdminSupportTab({
         </div>
       </section>
 
-      <AdminAdjustments result={result} report={setResult} />
+      <AdminAdjustments result={result} report={setResult} actionGen={actionGen} />
     </div>
   );
 }

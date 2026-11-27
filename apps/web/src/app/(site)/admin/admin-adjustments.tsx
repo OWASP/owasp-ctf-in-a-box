@@ -89,6 +89,7 @@ export default function AdminAdjustments({
   initial = null,
   result = null,
   report,
+  actionGen,
 }: {
   /** Seeded rows, for a static render; omitted, the list is fetched. */
   initial?: AdjustmentRow[] | null;
@@ -96,6 +97,8 @@ export default function AdminAdjustments({
   result?: SupportResult | null;
   /** Replaces the tab's outcome. Omitted, a send keeps its error in this section. */
   report?: (next: SupportResult | null) => void;
+  /** The tab's action generation. A send reports only while this is still the value it captured. */
+  actionGen?: { current: number };
 }) {
   const [rows, setRows] = useState<AdjustmentRow[] | null>(initial);
   const [slug, setSlug] = useState("");
@@ -130,9 +133,14 @@ export default function AdminAdjustments({
   }, [initial, read]);
 
   async function send(method: "POST" | "DELETE", body: Record<string, unknown>, noteId: string, okText: string) {
+    const gen = actionGen?.current;
+    const reportIfCurrent = (next: SupportResult | null) => {
+      if (actionGen && actionGen.current !== gen) return;
+      report?.(next);
+    };
     setPending(true);
     setError(null);
-    report?.(null);
+    reportIfCurrent(null);
     try {
       const res = await fetch("/api/admin/adjustments", {
         method,
@@ -146,11 +154,12 @@ export default function AdminAdjustments({
         setPoints("");
         setReason("");
       }
-      report?.({ id: noteId, tone: "ok", text: okText });
+      // A removed row is gone after load(), so its success line lives with the controls.
+      reportIfCurrent({ id: method === "DELETE" ? "adjust-remove" : noteId, tone: "ok", text: okText });
       await load();
     } catch (err) {
       const text = err instanceof Error ? err.message : "Request failed";
-      if (report) report({ id: noteId, tone: "err", text });
+      if (report) reportIfCurrent({ id: noteId, tone: "err", text });
       else setError(text);
     } finally {
       setPending(false);
@@ -187,6 +196,7 @@ export default function AdminAdjustments({
           Add adjustment
         </button>
         <SupportResultLine result={result} id="adjust-add" />
+        <SupportResultLine result={result} id="adjust-remove" />
       </div>
       {rows === null ? (
         listState(rows, error) === "loading" && <p className="text-sm text-muted">Loading…</p>

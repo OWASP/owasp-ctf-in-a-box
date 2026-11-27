@@ -205,3 +205,107 @@ describe("Reset password", () => {
     expect(document.body.textContent).not.toContain("aaaa-1111");
   });
 });
+
+const REMOVED = "Removed −10 from red-team.";
+
+describe("action results that outlive their control", () => {
+  it("keeps a removal's success beside the controls after the row is gone", async () => {
+    const row = { id: "a1", slug: "red-team", points: -10, reason: "late", by: "admin", at: "2026-11-24T00:00:00.000Z" };
+    let removed = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (String(url).startsWith("/api/admin/adjustments")) {
+          if (init?.method === "DELETE") {
+            removed = true;
+            return json({});
+          }
+          return json({ adjustments: removed ? [] : [row] });
+        }
+        if (String(url).startsWith("/api/admin/players")) return json({ players: [{ id: OCTO, name: "octocat", image: null }] });
+        if (String(url).startsWith("/api/admin/sd/held")) return json({ entries: [] });
+        return json(detail);
+      }),
+    );
+    await pickOcto();
+    await screen.findByRole("button", { name: "Remove adjustment for red-team" });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove adjustment for red-team" }));
+    });
+    await screen.findByText(REMOVED);
+    expect(screen.queryByRole("button", { name: "Remove adjustment for red-team" })).toBeNull();
+    expect(document.body.textContent).toContain(REMOVED);
+  });
+
+  it("puts a failed delete beside Delete contestant and a successful one by the search", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") return json({ error: "They captain a team" }, false);
+      if (String(url).startsWith("/api/admin/players")) return json({ players: [{ id: OCTO, name: "octocat", image: null }] });
+      if (String(url).startsWith("/api/admin/sd/held")) return json({ entries: [] });
+      if (String(url).startsWith("/api/admin/adjustments")) return json({ adjustments: [] });
+      return json(detail);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const confirms = await pickOcto();
+    fireEvent.click(screen.getByRole("button", { name: "Delete contestant" }));
+    await act(async () => {
+      await confirms.at(-1)!.onConfirm();
+    });
+    const failure = await screen.findByText("They captain a team");
+    const deleter = screen.getByRole("button", { name: "Delete contestant" });
+    expect(deleter.parentElement?.contains(failure)).toBe(true);
+    expect(screen.getByLabelText("Name or GitHub login").parentElement?.contains(failure)).toBe(false);
+
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") return json({});
+      if (String(url).startsWith("/api/admin/players")) return json({ players: [{ id: OCTO, name: "octocat", image: null }] });
+      if (String(url).startsWith("/api/admin/sd/held")) return json({ entries: [] });
+      if (String(url).startsWith("/api/admin/adjustments")) return json({ adjustments: [] });
+      return json(detail);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Delete contestant" }));
+    await act(async () => {
+      await confirms.at(-1)!.onConfirm();
+    });
+    const success = await screen.findByText("Deleted octocat.");
+    expect(screen.queryByRole("button", { name: "Delete contestant" })).toBeNull();
+    expect(screen.getByLabelText("Name or GitHub login").parentElement?.contains(success)).toBe(true);
+  });
+
+  it("drops an adjustment result that lands after a later action", async () => {
+    let release: (response: Response) => void = () => {};
+    const held = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST" && String(url).includes("/api/admin/adjustments")) return held;
+        if (init?.method === "POST") return json({ code: "aaaa-1111", expiresAt: "2026-11-17T12:15:00.000Z" });
+        if (String(url).startsWith("/api/admin/players")) return json({ players: [{ id: OCTO, name: "octocat", image: null }] });
+        if (String(url).startsWith("/api/admin/sd/held")) return json({ entries: [] });
+        if (String(url).startsWith("/api/admin/adjustments")) return json({ adjustments: [] });
+        return json(detail);
+      }),
+    );
+    const confirms = await pickOcto();
+    const slug = screen.getAllByLabelText("Team slug").find((el) => el.getAttribute("placeholder") === "team slug");
+    if (!slug) throw new Error("adjustment slug field missing");
+    fireEvent.change(slug, { target: { value: "red-team" } });
+    fireEvent.change(screen.getByLabelText("Points (negative for a penalty)"), { target: { value: "-10" } });
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "late flag" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add adjustment" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset password" }));
+    await act(async () => {
+      await confirms.at(-1)!.onConfirm();
+    });
+    await screen.findByText("Issued a reset code for octocat.");
+
+    await act(async () => {
+      release(json({}));
+    });
+    await waitFor(() => expect(document.body.textContent).toContain("Issued a reset code for octocat."));
+    expect(document.body.textContent).not.toContain("Added");
+  });
+});

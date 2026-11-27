@@ -1124,7 +1124,7 @@ says so: "Last post failed at HH:MM — N pending, M dropped: …", with how
 many announcements are waiting to be delivered, how many ran out of attempts,
 and what Discord answered.
 
-A failed announcement is retried five times in all: one minute after the
+A failed announcement is attempted five times in all: one minute after the
 first failure, then 5, 15 and 30 minutes apart, so a webhook fixed within
 about 50 minutes still delivers what queued while it was broken, in order.
 One that fails every attempt is dropped and counted on the card until a

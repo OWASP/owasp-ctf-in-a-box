@@ -234,16 +234,17 @@ describe("flush", () => {
       "first-blood",
       "failed",
       "Discord rejected the webhook (404): the URL is wrong or the webhook was deleted",
-      false,
     );
   });
 
-  it("reports the last attempt that fails as exhausted, so the card counts it as dropped", async () => {
+  it("leaves the drop count to the completion: the last failed attempt completes failed and bumps no drop itself", async () => {
     mocks.outboxPending.mockResolvedValue([]);
     mocks.outboxRetryable.mockResolvedValue([{ id: "9", entry: entry("first-blood", "failed", ANNOUNCE_MAX_ATTEMPTS - 1) }]);
     fetchMock.mockResolvedValue({ ok: false, status: 404 });
     await flushRetries();
-    expect(mocks.bumpStatus).toHaveBeenCalledWith("first-blood", "failed", expect.any(String), true);
+    expect(mocks.outboxComplete).toHaveBeenCalledWith("9", "failed", "lease-token");
+    expect(mocks.bumpStatus).toHaveBeenCalledWith("first-blood", "failed", expect.any(String));
+    expect(mocks.bumpStatus.mock.calls.every((c) => c.length === 3)).toBe(true);
   });
 
   it("does nothing at all without a webhook", async () => {

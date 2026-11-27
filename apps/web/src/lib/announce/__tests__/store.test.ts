@@ -644,12 +644,26 @@ describe("outbox", () => {
     await outboxComplete("id-1", "failed", "token-1");
     const evalCmd = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]).find((c) => c[0] === "EVAL");
     expect(evalCmd?.[1]).toBe(OUTBOX_COMPLETE_SCRIPT);
-    expect(evalCmd?.[2]).toBe(2);
+    expect(evalCmd?.[2]).toBe(3);
     expect(evalCmd?.[3]).toBe(ANNOUNCE_OUTBOX_KEY);
     expect(evalCmd?.[4]).toBe("ctf:announce:lease:id-1");
-    expect(evalCmd?.[5]).toBe("token-1");
-    expect(evalCmd?.[6]).toBe("id-1");
-    expect(String(evalCmd?.[7])).toContain('"n":1');
+    expect(evalCmd?.[5]).toBe("ctf:announce:status");
+    expect(evalCmd?.[6]).toBe("token-1");
+    expect(evalCmd?.[7]).toBe("id-1");
+    expect(String(evalCmd?.[8])).toContain('"n":1');
+    expect(evalCmd?.[9]).toBe("0"); // attempts remain: not a drop
+  });
+
+  it("flags the completion that exhausts an entry, so the script counts the drop with it", async () => {
+    const lastTry = JSON.stringify({ kind: "first-blood", payload: {}, at: new Date().toISOString(), n: ANNOUNCE_MAX_ATTEMPTS - 1, status: "failed" });
+    mocks.upstashPipeline.mockImplementation(async (commands) => commands.map((cmd) => (cmd[0] === "HGET" ? { result: lastTry } : { result: 1 })));
+    await outboxComplete("id-1", "failed", "token-1");
+    const evalCmd = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]).find((c) => c[0] === "EVAL");
+    expect(evalCmd?.[9]).toBe("1");
+    mocks.upstashPipeline.mockClear();
+    await outboxComplete("id-1", "sent", "token-1");
+    const sentCmd = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]).find((c) => c[0] === "EVAL");
+    expect(sentCmd?.[9]).toBe("0");
   });
 
   it("leaves status and lease untouched when the caller no longer owns the lease", async () => {
@@ -833,11 +847,9 @@ describe("status", () => {
     expect(ANNOUNCE_RETRY_DELAYS_MS.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(30 * 60_000);
   });
 
-  it("counts an announcement on its last attempt as dropped, and a post that lands resets it", async () => {
+  it("never counts a drop itself (the completion script does), and a post that lands resets it", async () => {
     mocks.upstashPipeline.mockImplementation(async (cmds: unknown[]) => cmds.map(() => ({ result: 1 })));
-    await bumpStatus("first-blood", "failed", "x", true);
-    expect(mocks.upstashPipeline.mock.calls.at(-1)![0]).toContainEqual(["HINCRBY", "ctf:announce:status", "dropped", 1]);
-    await bumpStatus("first-blood", "failed", "x", false);
+    await bumpStatus("first-blood", "failed", "x");
     expect(mocks.upstashPipeline.mock.calls.at(-1)![0]).not.toContainEqual(["HINCRBY", "ctf:announce:status", "dropped", 1]);
     await bumpStatus("first-blood", "sent");
     expect(mocks.upstashPipeline.mock.calls.at(-1)![0]).toContainEqual(["HSET", "ctf:announce:status", "dropped", 0]);

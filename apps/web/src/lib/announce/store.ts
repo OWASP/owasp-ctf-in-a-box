@@ -984,12 +984,17 @@ export async function outboxClaim(
 /** Writes an entry's terminal status and releases its lease, but ONLY if the
  *  caller still owns that lease. A worker that outlived its 90s lease must not
  *  overwrite the result a newer owner recorded, nor delete the newer owner's
- *  live lease. */
+ *  live lease. When this completion is the entry's last failed attempt
+ *  (ARGV[4] '1'), the status hash's `dropped` count goes up in the same
+ *  script: a drop is counted once, exactly when the exhausted entry is
+ *  stored, never for a completion that did not land.
+ *  KEYS: [1] outbox, [2] lease, [3] ctf:announce:status. */
 export const OUTBOX_COMPLETE_SCRIPT = `
 local lease = redis.call('GET', KEYS[2])
 if not lease or lease ~= ARGV[1] then return 0 end
 redis.call('HSET', KEYS[1], ARGV[2], ARGV[3])
 redis.call('DEL', KEYS[2])
+if ARGV[4] == '1' and KEYS[3] then redis.call('HINCRBY', KEYS[3], 'dropped', 1) end
 return 1
 `;
 
@@ -1031,16 +1036,19 @@ export async function outboxComplete(id: string, status: OutboxStatus, token: st
       entry.n += 1;
       entry.triedAt = Date.now();
     }
+    const exhausted = status === "failed" && entry.n >= ANNOUNCE_MAX_ATTEMPTS;
     const [res] = await upstashPipeline([
       [
         "EVAL",
         OUTBOX_COMPLETE_SCRIPT,
-        2,
+        3,
         ANNOUNCE_OUTBOX_KEY,
         `${ANNOUNCE_LEASE_PREFIX}${id}`,
+        ANNOUNCE_STATUS_KEY,
         token,
         id,
         JSON.stringify(entry),
+        exhausted ? "1" : "0",
       ],
     ]);
     if (res.error) console.error("[announce] outbox complete failed:", adminErrorLabel(new Error(res.error)));
@@ -1280,15 +1288,11 @@ export type AnnounceStatus = {
 
 /** Records one delivery outcome: a successful post bumps that kind's `sent`
  *  counter and the last-posted stamp and resets `dropped`; a failed one
- *  records the error text and its time, bumps no `sent` counter (that is
- *  what the admin status line reads as "posted"), and counts the
- *  announcement as dropped when it was its last attempt (`exhausted`). */
-export async function bumpStatus(
-  kind: AnnouncementKind,
-  outcome: "sent" | "failed",
-  errorText?: string,
-  exhausted = false,
-): Promise<void> {
+ *  records the error text and its time and bumps no `sent` counter (that is
+ *  what the admin status line reads as "posted"). A drop is counted by the
+ *  completion that stores the exhausted entry (OUTBOX_COMPLETE_SCRIPT), not
+ *  here. */
+export async function bumpStatus(kind: AnnouncementKind, outcome: "sent" | "failed", errorText?: string): Promise<void> {
   try {
     const at = new Date().toISOString();
     // The sent counter counts SUCCESSFUL posts only: a failed post that
@@ -1303,7 +1307,6 @@ export async function bumpStatus(
       if (errorText) {
         cmds.push(["HSET", ANNOUNCE_STATUS_KEY, "lastError", errorText], ["HSET", ANNOUNCE_STATUS_KEY, "lastErrorAt", at]);
       }
-      if (exhausted) cmds.push(["HINCRBY", ANNOUNCE_STATUS_KEY, "dropped", 1]);
     }
     if (cmds.length > 0) {
       const results = await upstashPipeline(cmds);

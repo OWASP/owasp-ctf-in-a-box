@@ -28,7 +28,6 @@ import { describeDiscordFailure } from "@/lib/announce/discord-failure";
 import { errorLabel } from "@/lib/error-label";
 import type { AnnouncementKind } from "@/lib/discord-config";
 import type { DiscordMessage } from "./messages";
-import { ANNOUNCE_MAX_ATTEMPTS } from "./keys";
 import { compareOutboxOrder } from "./order";
 import {
   announceCooldownMs,
@@ -201,12 +200,7 @@ export async function flush(): Promise<void> {
       const ok = result.ok;
       for (const { item, token } of batch) {
         await outboxComplete(item.id, ok ? "sent" : "failed", token);
-        await bumpStatus(
-          item.entry.kind,
-          ok ? "sent" : "failed",
-          ok ? undefined : describeDiscordFailure(result),
-          !ok && item.entry.n + 1 >= ANNOUNCE_MAX_ATTEMPTS,
-        );
+        await bumpStatus(item.entry.kind, ok ? "sent" : "failed", ok ? undefined : describeDiscordFailure(result));
       }
     }
     await outboxPrune();
@@ -285,12 +279,7 @@ export async function flushRetries(): Promise<void> {
       const ok = result.ok;
       for (const { item, token } of batch) {
         await outboxComplete(item.id, ok ? "sent" : "failed", token);
-        await bumpStatus(
-          item.entry.kind,
-          ok ? "sent" : "failed",
-          ok ? undefined : describeDiscordFailure(result),
-          !ok && item.entry.n + 1 >= ANNOUNCE_MAX_ATTEMPTS,
-        );
+        await bumpStatus(item.entry.kind, ok ? "sent" : "failed", ok ? undefined : describeDiscordFailure(result));
       }
     }
   } catch (err) {

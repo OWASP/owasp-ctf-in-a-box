@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, cpSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,6 +58,7 @@ async function mockApp(t) {
   const { createServer } = await import("node:http");
   const server = createServer((req, res) => {
     const path = req.url.split("?")[0];
+    if (path === "/rest/admin/application-version") return res.writeHead(200).end("ready");
     if (path === "/REDACTED-search") return res.writeHead(200).end("clean results");
     if (path === "/REDACTED-admin" && req.method === "GET") return res.writeHead(401).end();
     if (path === "/REDACTED-admin/login" && req.method === "POST") {
@@ -88,6 +89,52 @@ async function baseEnv(t, overrides = {}) {
 }
 
 const report = (env) => readFileSync(join(env.GITHUB_WORKSPACE, "ctf-score.md"), "utf8");
+
+test("readiness configuration rejects invalid values before fetching", async (t) => {
+  const env = await baseEnv(t);
+  for (const key of ["APP_READY_TRIES", "APP_READY_DELAY"]) {
+    for (const value of ["", "abc", "Infinity", "-1", "1.5", "999999999"]) {
+      await assert.rejects(judge({ ...env, [key]: value }, {
+        fetchImpl: () => assert.fail("invalid configuration must not fetch"),
+      }), new RegExp(key));
+    }
+  }
+});
+
+test("error-only targets never produce score reports", async (t) => {
+  const env = await baseEnv(t, { APP_READY_TRIES: "2" });
+  for (const status of [404, 500]) {
+    let calls = 0;
+    await assert.rejects(judge(env, { fetchImpl: async () => {
+      calls++;
+      return new Response("broken", { status });
+    } }), /never became reachable/);
+    assert.equal(calls, 2);
+    assert.equal(existsSync(join(env.GITHUB_WORKSPACE, "ctf-score.md")), false);
+  }
+});
+
+test("judge fails closed on a malformed sibling rubric", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "judge-isolated-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  cpSync(RUBRIC_DIR, dir, { recursive: true });
+  writeFileSync(join(dir, "vampi.yaml"), "target: vampi\nunexpectedKey: true\n");
+  await assert.rejects(judge(await baseEnv(t, { RUBRIC_DIR: dir })), /rubric vampi.yaml: unknown key: unexpectedKey/);
+});
+
+test("Security Shepherd retains its bring-up readiness exception", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "judge-shepherd-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, "securityshepherd.yaml"), readFileSync(join(RUBRIC_DIR, "juice-shop.yaml"), "utf8").replace("target: juice-shop", "target: securityshepherd"));
+  const env = await baseEnv(t, { TARGET: "securityshepherd", RUBRIC_DIR: dir, APP_READY_TRIES: "0" });
+  let calls = 0;
+  await judge(env, { fetchImpl: async (url) => {
+    assert.notEqual(url, env.APP_URL);
+    calls++;
+    return new Response("", { status: 500 });
+  } });
+  assert.equal(calls, 3);
+});
 
 test("poll mode: pinned ctf-score.md format satisfies all three upstream regexes", async (t) => {
   const env = await baseEnv(t);
@@ -184,9 +231,8 @@ test("readiness: unreachable APP_URL exits 1 through the real CLI", async (t) =>
 // ready by a stronger route than an HTTP GET". Security Shepherd's bring-up
 // needs it: its certificate expired in 2019, and the alternative — exporting
 // NODE_TLS_REJECT_UNAUTHORIZED=0 into the judge — would strip verification from
-// every request the judge makes, not just this app's. So a judge told zero tries must
-// score the app WITHOUT probing it, even when a probe would have failed outright.
-test("readiness: APP_READY_TRIES=0 skips the probe instead of failing on it", async (t) => {
+// every request the judge makes, not just this app's. Other targets must probe.
+test("readiness: APP_READY_TRIES=0 skips the probe when organizer configuration requests it", async (t) => {
   const env = await baseEnv(t, { APP_READY_TRIES: "0", APP_READY_DELAY: "0" });
   const { total } = await judge(env, {
     fetchImpl: async () => { throw new Error("readiness probe must not run"); },

@@ -46,7 +46,6 @@ export function loadRubric(dir = process.env.RUBRIC_DIR ?? "/rubric") {
   }
 
   const targets = new Map();
-
   // Exec targets first: a <target>/tests/challenges/catalogue.<target>.json dir.
   for (const d of dirents.filter((d) => d.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
     const loaded = loadExecTarget(dir, d.name);

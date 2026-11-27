@@ -15,6 +15,7 @@ export const TARGETS = {
     byName: false,
     defaultConcurrency: 1,
     urlEnv: "JUICE_SHOP_URL",
+    readinessPath: "/rest/admin/application-version",
   },
   dvwa: {
     name: "dvwa",
@@ -22,6 +23,7 @@ export const TARGETS = {
     byName: true,
     defaultConcurrency: 1,
     urlEnv: "DVWA_URL",
+    readinessPath: "/login.php",
   },
   webgoat: {
     name: "webgoat",
@@ -29,6 +31,7 @@ export const TARGETS = {
     byName: true,
     defaultConcurrency: 1,
     urlEnv: "WEBGOAT_URL",
+    readinessPath: "/login",
   },
   securityshepherd: {
     name: "securityshepherd",
@@ -48,6 +51,7 @@ export const TARGETS = {
     // read-only SQLi against seeded data), so 8-wide is safe and lands ~2 min.
     defaultConcurrency: 8,
     urlEnv: "VULNERABLEAPP_URL",
+    readinessPath: "/allEndPointJson",
   },
   vampi: {
     name: "vampi",

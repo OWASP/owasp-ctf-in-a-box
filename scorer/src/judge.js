@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadRubric } from "./rubric.js";
-import { validateProbes, runProbes, waitForApp } from "./probe.js";
+import { validateProbes, runProbes, waitForApp, joinUrl } from "./probe.js";
 import { runExec } from "./exec.js";
 import { getTarget } from "./targets.js";
 
@@ -112,8 +112,8 @@ export async function judge(env = process.env, { fetchImpl = fetch } = {}) {
   if (!rubric.targets.has(TARGET)) {
     throw new Error(`judge: target "${TARGET}" is not in the rubric (have: ${[...rubric.targets.keys()].join(", ")})`);
   }
-  // The loader passes probes through untouched; the judge validates the whole
-  // rubric's grammar here, before touching the network or the event file.
+  // Rubrics are baked into the scorer image and validated as one catalogue.
+  // Keep malformed content from silently shipping alongside a working target.
   // Exec challenges carry a test file instead of probes — there is no probe
   // grammar to validate, and their test files are only reachable at run time.
   for (const [target, { challenges }] of rubric.targets) {
@@ -130,14 +130,23 @@ export async function judge(env = process.env, { fetchImpl = fetch } = {}) {
   // 200), and its TLS certificate expired in 2019, so probing it from THIS
   // process would mean disabling certificate verification process-wide, for
   // every other request the judge makes.
-  // An unreachable app is still caught: every exec child fails to report and the
-  // run aborts. Matched as an exact string, so a typo'd or empty value keeps the
-  // old behaviour (probe, then fail loudly) instead of silently skipping.
-  const tries = Number(env.APP_READY_TRIES ?? 60);
-  const delayMs = Number(env.APP_READY_DELAY ?? 5) * 1000; // seconds, like the 60×5s default
-  if (String(env.APP_READY_TRIES ?? "").trim() === "0") {
+  // This exception relies on organizer-controlled environment configuration;
+  // a flag cannot authenticate a caller that controls the judge process.
+  const boundedInteger = (key, fallback, max) => {
+    const raw = env[key] ?? String(fallback);
+    const value = Number(raw);
+    if (String(raw).trim() === "" || !Number.isInteger(value) || value < 0 || value > max) {
+      throw new Error(`judge: ${key} must be an integer between 0 and ${max}`);
+    }
+    return value;
+  };
+  const tries = boundedInteger("APP_READY_TRIES", 60, 600);
+  const delayMs = boundedInteger("APP_READY_DELAY", 5, 60) * 1000;
+  const readinessPath = getTarget(TARGET)?.readinessPath;
+  const readinessUrl = readinessPath ? joinUrl(APP_URL, readinessPath) : APP_URL;
+  if (tries === 0) {
     console.error(`ctf-score-engine: readiness probe skipped (APP_READY_TRIES=0) — the bring-up script vouched for ${APP_URL}`);
-  } else if (!(await waitForApp(APP_URL, { tries, delayMs, fetchImpl }))) {
+  } else if (!(await waitForApp(readinessUrl, { tries, delayMs, fetchImpl }))) {
     throw new Error(`judge: ${APP_URL} never became reachable after ${tries} tries`);
   }
 

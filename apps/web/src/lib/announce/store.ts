@@ -1153,7 +1153,11 @@ export function retryDue(entry: Pick<OutboxEntry, "status" | "n" | "triedAt">, n
 /** The `failed` entries due for a retry (attempts remaining, backoff passed),
  *  for the ticker's retry sweep. Ordering oldest-first so a stuck item is
  *  retried before newer ones. One not yet due still holds back a later
- *  lifecycle edge (OUTBOX_CLAIM_SCRIPT), so the stream stays in order. */
+ *  lifecycle edge (OUTBOX_CLAIM_SCRIPT), so the stream stays in order. This
+ *  is a snapshot: the claim re-checks the entry's status and attempt count
+ *  against it, so a sweep whose selection another worker has since retried
+ *  (a newer `n` and `triedAt`) claims nothing and cannot post before the
+ *  next delay. */
 export async function outboxRetryable(nowMs: number = Date.now()): Promise<{ id: string; entry: OutboxEntry }[]> {
   return outboxEntries((e) => retryDue(e, nowMs));
 }

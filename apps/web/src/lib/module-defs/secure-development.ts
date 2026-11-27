@@ -276,7 +276,7 @@ git push -u origin fix/<short-description>`,
       `Only the ${ctx.appCount} challenge ${ctx.appCount === 1 ? "target" : "targets"} (${ctx.appList}) ${ctx.appCount === 1 ? "is" : "are"} in scope. Do not attack the CI scoring pipeline, the leaderboard, or other contestants' forks.`,
       "Submit your own work. Don't publish full solutions or patches for others to copy during the event.",
       "Automated mass-submission or spamming pull requests to farm scoring runs will get your account rate-limited or disqualified.",
-      "This event runs on an open-source kit: a reference fix for each Secure Development challenge, and the checks that score it, are public in the kit's repository.",
+      "This event runs on an open-source kit: reference fixes for some Secure Development challenges, and the checks the kit ships to score them, are public in the kit's repository. An event may score with its own private checks instead.",
       [
         { strong: "Please use AI." },
         " Finding and patching these vulnerabilities with an AI agent is the intended workflow, not a shortcut against the rules. It's the skill the event is built to teach. Start with OWASP's ",

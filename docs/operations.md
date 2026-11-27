@@ -28,8 +28,9 @@ live-GitHub scoring. For standing the kit up in the first place, see
 
 **Before: decide what is competitive.** This is an open-source teaching kit, so
 two things a contestant could use are public, and forked with the repository:
-`patches/<target>/<challenge-id>.patch` holds one reference fix per Secure
-Development challenge, and `scorer/rubric.owasp/` shows what each check probes.
+`patches/<target>/<challenge-id>.patch` holds reference fixes for some Secure
+Development challenges (one challenge per file), and `scorer/rubric.owasp/`
+shows what each bundled check probes.
 That is deliberate, and the rules page says so to contestants. For a
 competitive event, put the competitive weight on Jeopardy, whose challenges and
 flags are your own private content, or score Secure Development against a

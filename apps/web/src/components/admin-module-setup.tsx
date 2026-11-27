@@ -117,6 +117,15 @@ export function moduleSummary(setup: ModuleSetupContent | undefined, inventory: 
 /** "3 not on the board" — the count of items whose category is missing from
  *  the stored list, or null when there are none (or when the panel has not
  *  reported yet). Exported for direct testing. */
+/** Whether two reports carry the same numbers, every field compared, so a
+ *  change to any one of them (e.g. `onBoard` after a visibility toggle that
+ *  leaves the row and category counts alone) is not dropped as a repeat. */
+export function sameInventory(a: ModuleInventory, b: ModuleInventory): boolean {
+  return (
+    a.items === b.items && a.categories === b.categories && a.unlisted === b.unlisted && a.onBoard === b.onBoard
+  );
+}
+
 export function unlistedLabel(inventory: ModuleInventory | undefined): string | null {
   const n = inventory?.unlisted;
   if (typeof n !== "number" || n <= 0) return null;

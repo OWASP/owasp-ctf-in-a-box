@@ -1120,8 +1120,16 @@ limit again, and a test that itself draws a 429 parks the scheduled
 deliveries too, until the retry instant. The line under the card shows the
 last successful post and the last delivery failure. While the last failure is
 newer than the last post (the webhook is failing now), a red line above it
-says so: "Last post failed at HH:MM — N pending: …", with how many
-announcements are waiting to be delivered and what Discord answered.
+says so: "Last post failed at HH:MM — N pending, M dropped: …", with how
+many announcements are waiting to be delivered, how many ran out of attempts,
+and what Discord answered.
+
+A failed announcement is retried five times in all: one minute after the
+first failure, then 5, 15 and 30 minutes apart, so a webhook fixed within
+about 50 minutes still delivers what queued while it was broken, in order.
+One that fails every attempt is dropped and counted on the card until a
+later post gets through. Send test, then a quick look at the card, is the
+check to run before the event opens.
 
 ![A Discord channel message from the kit: a red "First blood" embed reading that bhushan4work solved Discord Announcement Demo first, with a Points field showing 10](assets/discord-announcement.jpg)
 

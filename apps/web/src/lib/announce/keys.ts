@@ -96,8 +96,16 @@ export const ANNOUNCE_COOLDOWN_KEY = "ctf:announce:cooldown";
 export const ANNOUNCE_LEASE_MS = 90_000;
 
 /** Attempt cap per announcement; beyond it the outbox entry stays `failed`
- *  and the sweeps stop touching it. */
-export const ANNOUNCE_MAX_ATTEMPTS = 3;
+ *  and the sweeps stop touching it (counted as dropped in the status hash). */
+export const ANNOUNCE_MAX_ATTEMPTS = 5;
+
+/** How long a failed announcement waits before its next attempt: index
+ *  `n - 1` after its `n`th failure. Spread over about 50 minutes, so a webhook
+ *  an organizer deletes and replaces, or a Discord incident, still delivers
+ *  what queued meanwhile; retrying on every 30 s tick spent the whole budget
+ *  in about a minute. One entry per retry, so its length is
+ *  ANNOUNCE_MAX_ATTEMPTS - 1. */
+export const ANNOUNCE_RETRY_DELAYS_MS: readonly number[] = [60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000];
 
 /** Status counters + last post/failure, for the /admin section. */
 export const ANNOUNCE_STATUS_KEY = "ctf:announce:status";

@@ -893,6 +893,15 @@ Cloudflare stops gross floods before they reach the box.
 Issue #438 tracks the per-login buckets still missing on the two submit
 routes and an Insights view of throttled logins.
 
+**Cloudflare replaces an origin 502 or 504 with its own error page.** The
+browser gets Cloudflare's "Bad gateway" page instead of the app's body, so
+an error message in it never arrives. The app does not answer either status
+for anything it means to explain (Send test answers a refused Discord post
+with `424`). So a bare `Request failed (502)` on an `/admin` control behind
+Cloudflare is not the feature's own refusal: either the box did not answer
+or Cloudflare's edge failed. Check `/health` first, then the box's logs and
+Cloudflare's dashboard, before looking at the feature.
+
 ### Origin reachable around Cloudflare
 
 The origin — `*.fly.dev` and the Fly IP addresses — is reachable without

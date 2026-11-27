@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
 import AdminSupportTab, {
   githubLoginOf,
+  noMatchText,
   addToTeamLabel,
   addToTeamNotice,
   canSearch,
@@ -296,4 +297,23 @@ it("Support shows the searched login's held scores, one fresh view per login", (
   expect(code).toContain("<AdminHeldScores key={`${heldLogin}:${searchGen}`} login={heldLogin} />");
   expect(code).toContain("setSearchGen((n) => n + 1)");
   expect(code).toContain("setHeldLogin(githubLoginOf(query))");
+});
+
+describe("noMatchText", () => {
+  it("points a login search at its held scores, since an unlinked PR author has no player", () => {
+    expect(noMatchText("dcoteloalt")).toBe(
+      "No kit account matches that name. Secure Development scores held for @dcoteloalt, if any, are listed below.",
+    );
+  });
+
+  it("keeps the plain message for a query that cannot be a login", () => {
+    expect(noMatchText(undefined)).toBe("No player matches that name.");
+  });
+});
+
+it("a new search drops the previous results before it asks, so a stale empty answer never names the new login", () => {
+  const code = readFileSync(fileURLToPath(new URL("../admin-support-tab.tsx", import.meta.url)), "utf8");
+  const search = code.slice(code.indexOf("async function search()"), code.indexOf("async function lookup("));
+  expect(search.indexOf("setResults(null);")).toBeGreaterThan(-1);
+  expect(search.indexOf("setResults(null);")).toBeLessThan(search.indexOf("await fetch(playerSearchUrl(query))"));
 });

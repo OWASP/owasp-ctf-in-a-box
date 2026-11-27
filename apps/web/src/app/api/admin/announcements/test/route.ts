@@ -15,6 +15,10 @@ import { describeDiscordFailure } from "@/lib/announce/discord-failure";
  * response carries only the outcome and what Discord answered (for a dead
  * webhook, that the URL is wrong or the webhook was deleted), never the URL;
  * a failure logs a status line or a label, never the endpoint.
+ *
+ * A refused post answers 424, never 502 or 504: a proxy in front of the box
+ * (Cloudflare, see docs/hosting.md) replaces an origin 502 or 504 with its own
+ * error page, and the organizer would see a bare status instead of the reason.
  */
 
 /** 429 shaped like Discord's own: a Retry-After the admin UI (and any
@@ -59,7 +63,7 @@ export async function POST(request: Request) {
     }
     return result.ok
       ? NextResponse.json({ ok: true })
-      : NextResponse.json({ ok: false, error: describeDiscordFailure(result) }, { status: 502 });
+      : NextResponse.json({ ok: false, error: describeDiscordFailure(result) }, { status: 424 });
   } catch (err) {
     console.error("[admin/announcements] test send failed:", adminErrorLabel(err));
     return NextResponse.json({ error: "announcements store unavailable" }, { status: 503 });

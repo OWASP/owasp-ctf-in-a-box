@@ -521,11 +521,21 @@ module's group already carries srh's rule, or srh loses Redis.
    aws elasticache describe-cache-clusters --region <region> \
      --cache-cluster-id <member-cluster-id> \
      --query 'CacheClusters[0].SecurityGroups'
+   # which ID is <name>-cache, which is <name>-srh, and which is the extra group
+   aws ec2 describe-security-groups --region <region> \
+     --filters Name=vpc-id,Values=<vpc-id> \
+     --query 'SecurityGroups[].[GroupId,GroupName,Tags[?Key==`Name`]|[0].Value]' \
+     --output table
    aws ec2 describe-security-group-rules --region <region> \
      --filters Name=group-id,Values=<sg-id> \
      --query 'SecurityGroupRules[?!IsEgress].[IpProtocol,FromPort,ToPort,ReferencedGroupInfo.GroupId,CidrIpv4,CidrIpv6,PrefixListId]' \
      --output table
    ```
+
+   The module's own IDs are also in its state:
+   `terraform state show aws_security_group.cache` and
+   `terraform state show aws_security_group.srh` (`id`). Run the rules
+   query for the `<name>-cache` group and for each extra group.
 
 2. The `<name>-cache` group must have a TCP (`tcp`) ingress rule on 6379
    from the `<name>-srh` group. If it doesn't, run `terraform apply` first without
@@ -538,12 +548,17 @@ module's group already carries srh's rule, or srh loses Redis.
 3. Look at what the extra group allows. Anything other than srh reaching 6379,
    such as the app's group, a CIDR or a prefix list, is a path to Redis that ADR 41 rules out,
    and removing it is the fix.
-4. Run `terraform plan` again. The only change to the cache should be the
+4. Look at every ingress rule on `<name>-cache` itself too. The only one should
+   be TCP 6379 from `<name>-srh`. Terraform manages that rule as its own
+   resource, so a rule added to the group by hand never shows up in a plan
+   and is never removed by an apply: revoke any other rule yourself,
+   `aws ec2 revoke-security-group-ingress --region <region> --group-id <cache-sg-id> --security-group-rule-ids <rule-id>`.
+5. Run `terraform plan` again. The only change to the cache should be the
    extra group leaving `security_group_ids`. Apply it outside the event
    window. `/health/deep` caches its result for 10 seconds, so wait longer
    than that after the apply, then confirm srh is healthy:
    `curl -fsS https://<domain>/health/deep` returns `"status":"ok"`.
-5. Delete the extra group if nothing else uses it:
+6. Delete the extra group if nothing else uses it:
    `aws ec2 delete-security-group --region <region> --group-id <sg-id>`.
 
 Do not add the extra group to the module to make the plan quiet: the cache

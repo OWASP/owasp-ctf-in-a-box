@@ -897,9 +897,10 @@ routes and an Insights view of throttled logins.
 browser gets Cloudflare's "Bad gateway" page instead of the app's body, so
 an error message in it never arrives. The app does not answer either status
 for anything it means to explain (Send test answers a refused Discord post
-with `424`). If an `/admin` control ever shows a bare `Request failed (502)`
-behind Cloudflare, the box itself was unreachable: check `/health` and the
-logs before the feature.
+with `424`). So a bare `Request failed (502)` on an `/admin` control behind
+Cloudflare is not the feature's own refusal: either the box did not answer
+or Cloudflare's edge failed. Check `/health` first, then the box's logs and
+Cloudflare's dashboard, before looking at the feature.
 
 ### Origin reachable around Cloudflare
 

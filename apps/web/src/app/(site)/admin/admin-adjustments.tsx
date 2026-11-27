@@ -133,6 +133,9 @@ export default function AdminAdjustments({
   }, [initial, read]);
 
   async function send(method: "POST" | "DELETE", body: Record<string, unknown>, noteId: string, okText: string) {
+    // This request is a new action. A Support call already in flight captured
+    // the previous value and must not report over this one.
+    if (actionGen) actionGen.current += 1;
     const gen = actionGen?.current;
     const reportIfCurrent = (next: SupportResult | null) => {
       if (actionGen && actionGen.current !== gen) return;

@@ -308,4 +308,45 @@ describe("action results that outlive their control", () => {
     await waitFor(() => expect(document.body.textContent).toContain("Issued a reset code for octocat."));
     expect(document.body.textContent).not.toContain("Added");
   });
+
+  it("keeps an adjustment result when an older reset answer arrives later", async () => {
+    let releaseReset: (response: Response) => void = () => {};
+    const heldReset = new Promise<Response>((resolve) => {
+      releaseReset = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST" && String(url).includes("/api/admin/ops/user")) return heldReset;
+        if (init?.method === "POST" && String(url).includes("/api/admin/adjustments")) return json({});
+        if (String(url).startsWith("/api/admin/players")) return json({ players: [{ id: OCTO, name: "octocat", image: null }] });
+        if (String(url).startsWith("/api/admin/sd/held")) return json({ entries: [] });
+        if (String(url).startsWith("/api/admin/adjustments")) return json({ adjustments: [] });
+        return json(detail);
+      }),
+    );
+    const confirms = await pickOcto();
+    fireEvent.click(screen.getByRole("button", { name: "Reset password" }));
+    const reset = confirms.at(-1)!.onConfirm();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const slug = screen.getAllByLabelText("Team slug").find((el) => el.getAttribute("placeholder") === "team slug");
+    if (!slug) throw new Error("adjustment slug field missing");
+    fireEvent.change(slug, { target: { value: "red-team" } });
+    fireEvent.change(screen.getByLabelText("Points (negative for a penalty)"), { target: { value: "-10" } });
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "late flag" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add adjustment" }));
+    });
+    await screen.findByText("Added −10 to red-team.");
+
+    await act(async () => {
+      releaseReset(json({ code: "aaaa-1111", expiresAt: "2026-11-17T12:15:00.000Z" }));
+      await reset;
+    });
+    expect(document.body.textContent).toContain("Added −10 to red-team.");
+    expect(document.body.textContent).not.toContain("Issued a reset code");
+  });
 });

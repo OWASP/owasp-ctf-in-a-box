@@ -1305,8 +1305,9 @@ export async function bumpStatus(kind: AnnouncementKind, outcome: "sent" | "fail
     const cmds: (string | number)[][] = [];
     if (outcome === "sent") {
       cmds.push(["HINCRBY", ANNOUNCE_STATUS_KEY, `${kind}:sent`, 1]);
-      cmds.push(["HSET", ANNOUNCE_STATUS_KEY, "lastPostedAt", at]);
-      cmds.push(["HSET", ANNOUNCE_STATUS_KEY, "dropped", 0]);
+      // One HSET: a pipeline is not atomic, and a drop counted between two
+      // separate writes would be wiped by the reset with nothing to show it.
+      cmds.push(["HSET", ANNOUNCE_STATUS_KEY, "lastPostedAt", at, "dropped", 0]);
     } else {
       if (errorText) {
         cmds.push(["HSET", ANNOUNCE_STATUS_KEY, "lastError", errorText], ["HSET", ANNOUNCE_STATUS_KEY, "lastErrorAt", at]);

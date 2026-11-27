@@ -1126,10 +1126,12 @@ and what Discord answered.
 
 A failed announcement is attempted five times in all: one minute after the
 first failure, then 5, 15 and 30 minutes apart, so a webhook fixed within
-about 50 minutes still delivers what queued while it was broken, in order.
-One that fails every attempt is dropped and counted on the card until a
-later post gets through. Send test, then a quick look at the card, is the
-check to run before the event opens.
+about 50 minutes still delivers what queued while it was broken. Launch,
+pause and resume announcements keep their order: a later one waits behind an
+earlier one that is still retrying. Others can post ahead of an older one that
+is waiting out its retry delay. One that fails every attempt is dropped and
+counted on the card until a later post gets through. Send test, then a quick
+look at the card, is the check to run before the event opens.
 
 ![A Discord channel message from the kit: a red "First blood" embed reading that bhushan4work solved Discord Announcement Demo first, with a Points field showing 10](assets/discord-announcement.jpg)
 

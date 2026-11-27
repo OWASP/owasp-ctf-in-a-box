@@ -852,7 +852,8 @@ describe("status", () => {
     await bumpStatus("first-blood", "failed", "x");
     expect(mocks.upstashPipeline.mock.calls.at(-1)![0]).not.toContainEqual(["HINCRBY", "ctf:announce:status", "dropped", 1]);
     await bumpStatus("first-blood", "sent");
-    expect(mocks.upstashPipeline.mock.calls.at(-1)![0]).toContainEqual(["HSET", "ctf:announce:status", "dropped", 0]);
+    // The stamp and the reset in ONE command, so no drop lands between them.
+    expect(mocks.upstashPipeline.mock.calls.at(-1)![0]).toContainEqual(["HSET", "ctf:announce:status", "lastPostedAt", expect.any(String), "dropped", 0]);
   });
 
   it("reads the counters back, failing open to an empty status", async () => {

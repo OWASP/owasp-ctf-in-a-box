@@ -58,6 +58,15 @@ export function githubLoginOf(query: string): string | undefined {
   return /^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$/.test(login) ? login : undefined;
 }
 
+/** What an empty search says. A query that could be a GitHub login also
+ *  points at the held scores listed below it: a PR author who never linked a
+ *  kit account has no player to match, only held scores. */
+export function noMatchText(heldLogin: string | undefined): string {
+  return heldLogin
+    ? `No kit account matches that name. Secure Development scores held for @${heldLogin}, if any, are listed below.`
+    : "No player matches that name.";
+}
+
 /** Numbers requests so only the newest one's answer is applied. */
 export type RequestSequence = { next: () => number; isLatest: (n: number) => boolean };
 
@@ -475,7 +484,7 @@ export default function AdminSupportTab({
             Search
           </button>
         </div>
-        {results && results.length === 0 && <p className="text-sm text-muted">No player matches that name.</p>}
+        {results && results.length === 0 && <p className="text-sm text-muted">{noMatchText(heldLogin)}</p>}
         {results && results.length > 0 && (
           <ul className="flex flex-col gap-1" aria-label="Matching players">
             {results.map((p) => (

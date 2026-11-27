@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
 import AdminSupportTab, {
   githubLoginOf,
+  noMatchText,
   addToTeamLabel,
   addToTeamNotice,
   canSearch,
@@ -296,4 +297,16 @@ it("Support shows the searched login's held scores, one fresh view per login", (
   expect(code).toContain("<AdminHeldScores key={`${heldLogin}:${searchGen}`} login={heldLogin} />");
   expect(code).toContain("setSearchGen((n) => n + 1)");
   expect(code).toContain("setHeldLogin(githubLoginOf(query))");
+});
+
+describe("noMatchText", () => {
+  it("points a login search at its held scores, since an unlinked PR author has no player", () => {
+    expect(noMatchText("dcoteloalt")).toBe(
+      "No kit account matches that name. Secure Development scores held for @dcoteloalt, if any, are listed below.",
+    );
+  });
+
+  it("keeps the plain message for a query that cannot be a login", () => {
+    expect(noMatchText(undefined)).toBe("No player matches that name.");
+  });
 });

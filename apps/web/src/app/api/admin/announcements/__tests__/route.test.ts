@@ -233,17 +233,29 @@ describe("test POST", () => {
     expect(JSON.stringify(await res.json())).not.toContain(URL);
   });
 
-  it("a rejected POST is a 502 with no endpoint in the body", async () => {
+  it("a rejected POST is a 424 with no endpoint in the body", async () => {
     mocks.postToDiscord.mockResolvedValue({ ok: false });
     const res = await TEST(req("POST", undefined, "/api/admin/announcements/test"));
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(424);
     expect(JSON.stringify(await res.json())).not.toContain(URL);
   });
+
+  // Cloudflare (and other proxies) replace an origin 502 or 504 with their own
+  // page, so the reason in the body would never reach the organizer.
+  it.each([{ httpStatus: 404 }, { httpStatus: 503 }, {}])(
+    "a refused post never answers 502 or 504, which a proxy in front of the box would replace (%o)",
+    async (failure) => {
+      mocks.postToDiscord.mockResolvedValue({ ok: false, ...failure });
+      const res = await TEST(req("POST", undefined, "/api/admin/announcements/test"));
+      expect([502, 504]).not.toContain(res.status);
+      expect((await res.json()).ok).toBe(false);
+    },
+  );
 
   it("a dead webhook says what Discord answered and what it means, not just the status", async () => {
     mocks.postToDiscord.mockResolvedValue({ ok: false, httpStatus: 404 });
     const res = await TEST(req("POST", undefined, "/api/admin/announcements/test"));
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(424);
     const body = await res.json();
     expect(body.error).toBe("Discord rejected the webhook (404): the URL is wrong or the webhook was deleted");
     expect(JSON.stringify(body)).not.toContain(URL);

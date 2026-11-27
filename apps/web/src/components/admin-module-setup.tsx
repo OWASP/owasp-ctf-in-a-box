@@ -43,9 +43,10 @@ export type ModuleInventory = {
    *  contestant board therefore does not render at all. Reported only by the
    *  boards that have categories; the quiz omits it. */
   unlisted?: number;
-  /** Items a contestant sees on the board right now: listed, and visible by
-   *  `isChallengeVisible` (not disabled, not still scheduled). Reported only by
-   *  Jeopardy, for the Hints warning (#828). */
+  /** Items on the contestant board: listed, and live or scheduled to release
+   *  (a disabled one with no release time is left out). Reported only by
+   *  Jeopardy, for the Hints warning. A scheduled one counts already, since
+   *  the panel reports again only when its lists change. */
   onBoard?: number;
 };
 
@@ -114,9 +115,6 @@ export function moduleSummary(setup: ModuleSetupContent | undefined, inventory: 
   return [complete ? "setup complete" : "setup incomplete", ...counts, ...(unlisted ? [unlisted] : [])].join(" · ");
 }
 
-/** "3 not on the board" — the count of items whose category is missing from
- *  the stored list, or null when there are none (or when the panel has not
- *  reported yet). Exported for direct testing. */
 /** Whether two reports carry the same numbers, every field compared, so a
  *  change to any one of them (e.g. `onBoard` after a visibility toggle that
  *  leaves the row and category counts alone) is not dropped as a repeat. */
@@ -126,6 +124,9 @@ export function sameInventory(a: ModuleInventory, b: ModuleInventory): boolean {
   );
 }
 
+/** "3 not on the board" — the count of items whose category is missing from
+ *  the stored list, or null when there are none (or when the panel has not
+ *  reported yet). Exported for direct testing. */
 export function unlistedLabel(inventory: ModuleInventory | undefined): string | null {
   const n = inventory?.unlisted;
   if (typeof n !== "number" || n <= 0) return null;

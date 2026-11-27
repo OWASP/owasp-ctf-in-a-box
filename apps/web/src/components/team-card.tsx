@@ -316,7 +316,7 @@ export default function TeamCard({
                   {team.members.length} / {maxMembers} players
                 </span>
               </div>
-              {/* Play solo makes an ordinary team of one (#828): it has a join
+              {/* Play solo makes an ordinary team of one: it has a join
                   code and room for more, so say that rather than leave
                   "1 / 4 players" reading like a half-empty team. */}
               {team.members.length === 1 && (

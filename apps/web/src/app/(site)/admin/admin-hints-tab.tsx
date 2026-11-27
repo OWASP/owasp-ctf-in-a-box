@@ -38,8 +38,8 @@ type AdminHintsTabProps = {
   classicChallenges?: number;
 };
 
-/** The warning for a "solves required" no Jeopardy hint can ever meet (#828),
- *  or null. The gate counts a player's solves across the whole board
+/** The warning for a "solves required" no Jeopardy hint can ever meet, or
+ *  null. The gate counts a player's solves across the whole board
  *  (hint-store.ts `countSolves`), and the challenge a player wants a hint for
  *  is one they haven't solved, so a hint can only be bought when the board has
  *  more challenges than the value. */

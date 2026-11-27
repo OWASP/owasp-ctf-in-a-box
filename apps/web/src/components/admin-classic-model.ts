@@ -7,7 +7,6 @@
 // these helpers implement.
 
 import type { AdminChallenge, Challenge } from "@/lib/classic-store";
-import { isChallengeVisible } from "@/lib/classic-release";
 import type { ClassicImportSummary } from "@/lib/attachment-files-store";
 import type { AttachmentFile } from "@/lib/attachment-files";
 import type { Story } from "@/lib/story-lock";
@@ -42,7 +41,9 @@ export function classicInventory(
   nowMs: number = Date.now(),
 ): ModuleInventory {
   const listed = new Set(categories);
-  const onBoard = rows.filter((row) => listed.has(row.challenge.category) && isChallengeVisible(row.challenge, nowMs));
+  const onBoard = rows.filter(
+    (row) => listed.has(row.challenge.category) && challengeStatus(row.challenge, nowMs).kind !== "disabled",
+  );
   return {
     items: rows.length,
     categories: categories.length,

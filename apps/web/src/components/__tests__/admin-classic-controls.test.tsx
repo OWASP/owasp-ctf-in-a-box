@@ -857,17 +857,17 @@ describe("classicInventory", () => {
     expect(classicInventory([row1, row2], ["web"]).unlisted).toBe(2);
   });
 
-  // The Hints warning (#828) needs the board contestants see: a disabled or
-  // still-scheduled challenge is not on it, while `items` (the setup
-  // checklist's "author a challenge" step) still counts every row.
-  it("counts only listed, visible challenges as on the board", async () => {
+  // The Hints warning (#828) needs the board contestants get: a disabled
+  // challenge with no release time is not on it, a scheduled one will be, and
+  // `items` (the setup checklist's "author a challenge" step) counts every row.
+  it("counts listed challenges that are live or scheduled as on the board", async () => {
     const { classicInventory } = await import("@/components/admin-classic-controls");
     const now = Date.parse("2026-06-01T12:00:00Z");
     const disabled = { ...row2, challenge: { ...row2.challenge, enabled: false } };
     const scheduled = { ...row2, challenge: { ...row2.challenge, enabled: false, releaseAt: "2026-06-02T12:00:00Z" } };
     const released = { ...row2, challenge: { ...row2.challenge, enabled: false, releaseAt: "2026-05-31T12:00:00Z" } };
     expect(classicInventory([row1, disabled], ["Web"], now)).toMatchObject({ items: 2, onBoard: 1 });
-    expect(classicInventory([row1, scheduled], ["Web"], now)).toMatchObject({ items: 2, onBoard: 1 });
+    expect(classicInventory([row1, scheduled], ["Web"], now)).toMatchObject({ items: 2, onBoard: 2 });
     expect(classicInventory([row1, released], ["Web"], now)).toMatchObject({ items: 2, onBoard: 2 });
     expect(classicInventory([row1, row2], ["Crypto"], now)).toMatchObject({ items: 2, onBoard: 0 });
   });

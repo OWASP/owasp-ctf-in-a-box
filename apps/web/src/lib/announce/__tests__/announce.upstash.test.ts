@@ -394,6 +394,31 @@ describe.skipIf(!liveConfigured)("announce CAS + claims (live Redis)", () => {
     await upstashPipeline([["DEL", ledger, outbox, config, gen]]);
   });
 
+  it("OUTBOX_COMPLETE_SCRIPT counts a drop only with the exhausting completion its owner stores", async () => {
+    const STATUS = liveKey("announce-complete", "status");
+    const token = `${RUN}-complete-drop`;
+    const failed = { kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 5, status: "failed" };
+    await upstashPipeline([
+      ["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, STATUS],
+      ["HSET", OUTBOX_KEY, CLAIM_ID, JSON.stringify({ ...failed, n: 4 })],
+      ["SET", CLAIM_LEASE_KEY, token, "PX", 90_000, "NX"],
+    ]);
+    // A stale owner's exhausting completion stores nothing and counts nothing.
+    expect(await upstashEval(OUTBOX_COMPLETE_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, STATUS], [`${RUN}-stale`, CLAIM_ID, JSON.stringify(failed), "1"])).toBe(0);
+    const [none] = await upstashPipeline([["HGET", STATUS, "dropped"]]);
+    expect(none.result).toBeNull();
+    // The owner's stores the entry and counts the drop in the same script.
+    expect(await upstashEval(OUTBOX_COMPLETE_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, STATUS], [token, CLAIM_ID, JSON.stringify(failed), "1"])).toBe(1);
+    const [stored, dropped] = await upstashPipeline([["HGET", OUTBOX_KEY, CLAIM_ID], ["HGET", STATUS, "dropped"]]);
+    expect(JSON.parse(stored.result as string).n).toBe(5);
+    expect(dropped.result).toBe("1");
+    // A repeat after the lease is gone counts nothing more.
+    expect(await upstashEval(OUTBOX_COMPLETE_SCRIPT, [OUTBOX_KEY, CLAIM_LEASE_KEY, STATUS], [token, CLAIM_ID, JSON.stringify(failed), "1"])).toBe(0);
+    const [still] = await upstashPipeline([["HGET", STATUS, "dropped"]]);
+    expect(still.result).toBe("1");
+    await upstashPipeline([["DEL", OUTBOX_KEY, CLAIM_LEASE_KEY, STATUS]]);
+  });
+
   it("OUTBOX_COMPLETE_SCRIPT writes only for the current lease owner", async () => {
     const entry = { kind: "first-blood", payload: {}, at: new Date().toISOString(), n: 0, status: "pending" };
     const token = `${RUN}-complete-owner`;

@@ -38,6 +38,7 @@ const status = (over: Partial<AnnounceStatus> = {}): AnnounceStatus => ({
   lastPostedAt: null,
   lastError: null,
   lastErrorAt: null,
+  dropped: 0,
   pending: 0,
   ...over,
 });
@@ -291,6 +292,11 @@ describe("failureNotice", () => {
     const notice = failureNotice(status({ lastErrorAt: "2026-11-24T20:55:00Z", lastError: "Could not reach Discord (network error or timeout)" }), TZ);
     expect(notice).toContain("Could not reach Discord");
     expect(notice).not.toContain("pending");
+  });
+
+  it("says how many announcements ran out of attempts and were dropped", () => {
+    const notice = failureNotice(status({ lastErrorAt: "2026-11-24T20:55:00Z", lastError: "x", pending: 1, dropped: 2 }), TZ);
+    expect(notice).toContain("— 1 pending, 2 dropped: x");
   });
 
   it("says the count is unavailable rather than reading a failed outbox read as zero", () => {

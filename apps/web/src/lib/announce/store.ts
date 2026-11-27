@@ -47,6 +47,7 @@ import {
   ANNOUNCE_LIFECYCLE_KEY,
   ANNOUNCE_MAX_ATTEMPTS,
   ANNOUNCE_OUTBOX_KEY,
+  ANNOUNCE_RETRY_DELAYS_MS,
   ANNOUNCE_LIFECYCLE_REV_KEY,
   ANNOUNCE_SEQ_KEY,
   ANNOUNCE_STATUS_KEY,
@@ -854,6 +855,10 @@ export type OutboxEntry = {
   seq?: number;
   n: number;
   status: OutboxStatus;
+  /** Epoch ms of the last failed attempt, so the retry sweep can wait out
+   *  ANNOUNCE_RETRY_DELAYS_MS. Absent on entries that never failed, and on
+   *  ones written before it existed, which are due at once. */
+  triedAt?: number;
   webhookGeneration: number;
   kindEpoch: number;
 };
@@ -979,12 +984,17 @@ export async function outboxClaim(
 /** Writes an entry's terminal status and releases its lease, but ONLY if the
  *  caller still owns that lease. A worker that outlived its 90s lease must not
  *  overwrite the result a newer owner recorded, nor delete the newer owner's
- *  live lease. */
+ *  live lease. When this completion is the entry's last failed attempt
+ *  (ARGV[4] '1'), the status hash's `dropped` count goes up in the same
+ *  script: a drop is counted once, exactly when the exhausted entry is
+ *  stored, never for a completion that did not land.
+ *  KEYS: [1] outbox, [2] lease, [3] ctf:announce:status. */
 export const OUTBOX_COMPLETE_SCRIPT = `
 local lease = redis.call('GET', KEYS[2])
 if not lease or lease ~= ARGV[1] then return 0 end
 redis.call('HSET', KEYS[1], ARGV[2], ARGV[3])
 redis.call('DEL', KEYS[2])
+if ARGV[4] == '1' and KEYS[3] then redis.call('HINCRBY', KEYS[3], 'dropped', 1) end
 return 1
 `;
 
@@ -1022,17 +1032,23 @@ export async function outboxComplete(id: string, status: OutboxStatus, token: st
       return;
     }
     entry.status = status;
-    if (status === "failed") entry.n += 1;
+    if (status === "failed") {
+      entry.n += 1;
+      entry.triedAt = Date.now();
+    }
+    const exhausted = status === "failed" && entry.n >= ANNOUNCE_MAX_ATTEMPTS;
     const [res] = await upstashPipeline([
       [
         "EVAL",
         OUTBOX_COMPLETE_SCRIPT,
-        2,
+        3,
         ANNOUNCE_OUTBOX_KEY,
         `${ANNOUNCE_LEASE_PREFIX}${id}`,
+        ANNOUNCE_STATUS_KEY,
         token,
         id,
         JSON.stringify(entry),
+        exhausted ? "1" : "0",
       ],
     ]);
     if (res.error) console.error("[announce] outbox complete failed:", adminErrorLabel(new Error(res.error)));
@@ -1125,11 +1141,25 @@ export async function outboxPending(): Promise<{ id: string; entry: OutboxEntry 
   return outboxEntries((e) => e.status === "pending");
 }
 
-/** The `failed` entries still worth a retry (attempts remaining), for the
- *  ticker's retry sweep. Ordering oldest-first so a stuck item is retried
- *  before newer ones. */
-export async function outboxRetryable(): Promise<{ id: string; entry: OutboxEntry }[]> {
-  return outboxEntries((e) => e.status === "failed" && e.n < ANNOUNCE_MAX_ATTEMPTS);
+/** Whether a failed entry is due for another attempt: attempts remain and
+ *  its backoff (ANNOUNCE_RETRY_DELAYS_MS) has passed since the last one. */
+export function retryDue(entry: Pick<OutboxEntry, "status" | "n" | "triedAt">, nowMs: number): boolean {
+  if (entry.status !== "failed" || entry.n >= ANNOUNCE_MAX_ATTEMPTS) return false;
+  if (typeof entry.triedAt !== "number") return true;
+  const delay = ANNOUNCE_RETRY_DELAYS_MS[Math.min(Math.max(entry.n, 1), ANNOUNCE_RETRY_DELAYS_MS.length) - 1];
+  return nowMs - entry.triedAt >= delay;
+}
+
+/** The `failed` entries due for a retry (attempts remaining, backoff passed),
+ *  for the ticker's retry sweep. Ordering oldest-first so a stuck item is
+ *  retried before newer ones. One not yet due still holds back a later
+ *  lifecycle edge (OUTBOX_CLAIM_SCRIPT), so the stream stays in order. This
+ *  is a snapshot: the claim re-checks the entry's status and attempt count
+ *  against it, so a sweep whose selection another worker has since retried
+ *  (a newer `n` and `triedAt`) claims nothing and cannot post before the
+ *  next delay. */
+export async function outboxRetryable(nowMs: number = Date.now()): Promise<{ id: string; entry: OutboxEntry }[]> {
+  return outboxEntries((e) => retryDue(e, nowMs));
 }
 
 /** Parses the outbox hash entries `keep` accepts, oldest first. An
@@ -1250,6 +1280,9 @@ export type AnnounceStatus = {
   lastPostedAt: string | null;
   lastError: string | null;
   lastErrorAt: string | null;
+  /** Announcements that ran out of attempts since the last successful post:
+   *  lost, which the card says, cleared by the next post that lands. */
+  dropped: number;
   /** Announcements still to be delivered: pending, or failed with attempts
    *  left. With a failure newer than the last post, the card reads it as
    *  "N pending" behind a failing webhook. Null when the outbox could not be
@@ -1258,9 +1291,11 @@ export type AnnounceStatus = {
 };
 
 /** Records one delivery outcome: a successful post bumps that kind's `sent`
- *  counter and the last-posted stamp; a failed one records the (fixed,
- *  label-only) error text and its time, and bumps no counter — the counter
- *  is what the admin status line reads as "posted". */
+ *  counter and the last-posted stamp and resets `dropped`; a failed one
+ *  records the error text and its time and bumps no `sent` counter (that is
+ *  what the admin status line reads as "posted"). A drop is counted by the
+ *  completion that stores the exhausted entry (OUTBOX_COMPLETE_SCRIPT), not
+ *  here. */
 export async function bumpStatus(kind: AnnouncementKind, outcome: "sent" | "failed", errorText?: string): Promise<void> {
   try {
     const at = new Date().toISOString();
@@ -1270,9 +1305,13 @@ export async function bumpStatus(kind: AnnouncementKind, outcome: "sent" | "fail
     const cmds: (string | number)[][] = [];
     if (outcome === "sent") {
       cmds.push(["HINCRBY", ANNOUNCE_STATUS_KEY, `${kind}:sent`, 1]);
-      cmds.push(["HSET", ANNOUNCE_STATUS_KEY, "lastPostedAt", at]);
-    } else if (errorText) {
-      cmds.push(["HSET", ANNOUNCE_STATUS_KEY, "lastError", errorText], ["HSET", ANNOUNCE_STATUS_KEY, "lastErrorAt", at]);
+      // One HSET: a pipeline is not atomic, and a drop counted between two
+      // separate writes would be wiped by the reset with nothing to show it.
+      cmds.push(["HSET", ANNOUNCE_STATUS_KEY, "lastPostedAt", at, "dropped", 0]);
+    } else {
+      if (errorText) {
+        cmds.push(["HSET", ANNOUNCE_STATUS_KEY, "lastError", errorText], ["HSET", ANNOUNCE_STATUS_KEY, "lastErrorAt", at]);
+      }
     }
     if (cmds.length > 0) {
       const results = await upstashPipeline(cmds);
@@ -1315,10 +1354,11 @@ export async function readStatus(): Promise<AnnounceStatus> {
       lastPostedAt: raw.lastPostedAt ?? null,
       lastError: raw.lastError ?? null,
       lastErrorAt: raw.lastErrorAt ?? null,
+      dropped: Math.max(0, Number(raw.dropped) || 0),
       pending,
     };
   } catch (err) {
     console.error("[announce] status read failed:", adminErrorLabel(err));
-    return { posted: {}, lastPostedAt: null, lastError: null, lastErrorAt: null, pending: null };
+    return { posted: {}, lastPostedAt: null, lastError: null, lastErrorAt: null, dropped: 0, pending: null };
   }
 }

@@ -45,7 +45,8 @@ async function errorOf(res: Response): Promise<string> {
 /** The card's warning while deliveries are failing: the last failure is newer
  *  than the last post, so the webhook is not working NOW (one that failed and
  *  then posted again is fine). Names when, how many announcements wait behind
- *  it, and what Discord answered; never the URL. Exported so the suite can pin
+ *  it, how many ran out of attempts and were dropped, and what Discord
+ *  answered; never the URL. Exported so the suite can pin
  *  it — there is no DOM in this repo's tests. */
 export function failureNotice(status: AnnounceStatus, timeZone: string): string | null {
   if (!status.lastErrorAt) return null;
@@ -54,7 +55,8 @@ export function failureNotice(status: AnnounceStatus, timeZone: string): string 
   if (status.lastPostedAt && Date.parse(status.lastPostedAt) >= failedMs) return null;
   const waiting =
     status.pending === null ? " — pending count unavailable" : status.pending > 0 ? ` — ${status.pending} pending` : "";
-  return `Last post failed at ${adminTime(status.lastErrorAt, timeZone)}${waiting}: ${status.lastError ?? "Discord did not accept it"}`;
+  const lost = status.dropped > 0 ? `, ${status.dropped} dropped` : "";
+  return `Last post failed at ${adminTime(status.lastErrorAt, timeZone)}${waiting}${lost}: ${status.lastError ?? "Discord did not accept it"}`;
 }
 
 /** Whether a blur-save should POST at all: only when the trimmed input

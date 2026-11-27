@@ -45,6 +45,7 @@ import {
   publicConfig,
   readLedgerField,
   readStatus,
+  retryDue,
   SET_ANNOUNCE_COOLDOWN_SCRIPT,
   setAnnounceCooldown,
   setAnnounceWebhook,
@@ -59,6 +60,8 @@ import {
 } from "@/lib/announce/store";
 import {
   ANNOUNCE_COOLDOWN_KEY,
+  ANNOUNCE_MAX_ATTEMPTS,
+  ANNOUNCE_RETRY_DELAYS_MS,
   ANNOUNCE_LIFECYCLE_KEY,
   ANNOUNCE_LIFECYCLE_REV_KEY,
   ANNOUNCE_OUTBOX_KEY,
@@ -641,12 +644,26 @@ describe("outbox", () => {
     await outboxComplete("id-1", "failed", "token-1");
     const evalCmd = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]).find((c) => c[0] === "EVAL");
     expect(evalCmd?.[1]).toBe(OUTBOX_COMPLETE_SCRIPT);
-    expect(evalCmd?.[2]).toBe(2);
+    expect(evalCmd?.[2]).toBe(3);
     expect(evalCmd?.[3]).toBe(ANNOUNCE_OUTBOX_KEY);
     expect(evalCmd?.[4]).toBe("ctf:announce:lease:id-1");
-    expect(evalCmd?.[5]).toBe("token-1");
-    expect(evalCmd?.[6]).toBe("id-1");
-    expect(String(evalCmd?.[7])).toContain('"n":1');
+    expect(evalCmd?.[5]).toBe("ctf:announce:status");
+    expect(evalCmd?.[6]).toBe("token-1");
+    expect(evalCmd?.[7]).toBe("id-1");
+    expect(String(evalCmd?.[8])).toContain('"n":1');
+    expect(evalCmd?.[9]).toBe("0"); // attempts remain: not a drop
+  });
+
+  it("flags the completion that exhausts an entry, so the script counts the drop with it", async () => {
+    const lastTry = JSON.stringify({ kind: "first-blood", payload: {}, at: new Date().toISOString(), n: ANNOUNCE_MAX_ATTEMPTS - 1, status: "failed" });
+    mocks.upstashPipeline.mockImplementation(async (commands) => commands.map((cmd) => (cmd[0] === "HGET" ? { result: lastTry } : { result: 1 })));
+    await outboxComplete("id-1", "failed", "token-1");
+    const evalCmd = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]).find((c) => c[0] === "EVAL");
+    expect(evalCmd?.[9]).toBe("1");
+    mocks.upstashPipeline.mockClear();
+    await outboxComplete("id-1", "sent", "token-1");
+    const sentCmd = mocks.upstashPipeline.mock.calls.flatMap((call) => call[0]).find((c) => c[0] === "EVAL");
+    expect(sentCmd?.[9]).toBe("0");
   });
 
   it("leaves status and lease untouched when the caller no longer owns the lease", async () => {
@@ -699,7 +716,7 @@ describe("outbox", () => {
       "f1",
       JSON.stringify({ kind: "first-blood", payload: {}, at, n: 1, status: "failed" }),
       "f2",
-      JSON.stringify({ kind: "first-blood", payload: {}, at, n: 3, status: "failed" }),
+      JSON.stringify({ kind: "first-blood", payload: {}, at, n: ANNOUNCE_MAX_ATTEMPTS, status: "failed" }),
       "s1",
       JSON.stringify({ kind: "first-blood", payload: {}, at, n: 0, status: "sent" }),
     ];
@@ -809,6 +826,36 @@ describe("status", () => {
     expect(mocks.upstashPipeline.mock.calls[0][0]).toContainEqual(["HSET", "ctf:announce:status", "lastErrorAt", expect.any(String)]);
   });
 
+  it("retryDue waits out each backoff step, and stops at the attempt cap", () => {
+    const t0 = Date.parse("2026-11-27T14:00:00Z");
+    const failed = (n: number, triedAt?: number) => ({ status: "failed" as const, n, triedAt });
+    // Not due inside the first backoff, due once it has passed.
+    expect(retryDue(failed(1, t0), t0 + ANNOUNCE_RETRY_DELAYS_MS[0] - 1)).toBe(false);
+    expect(retryDue(failed(1, t0), t0 + ANNOUNCE_RETRY_DELAYS_MS[0])).toBe(true);
+    // Later failures wait longer.
+    expect(retryDue(failed(3, t0), t0 + ANNOUNCE_RETRY_DELAYS_MS[1])).toBe(false);
+    expect(retryDue(failed(3, t0), t0 + ANNOUNCE_RETRY_DELAYS_MS[2])).toBe(true);
+    // Out of attempts: never again. Not failed: not a retry.
+    expect(retryDue(failed(ANNOUNCE_MAX_ATTEMPTS, t0), t0 + 24 * 3600_000)).toBe(false);
+    expect(retryDue({ status: "pending", n: 0 }, t0)).toBe(false);
+    // An entry written before triedAt existed is due at once.
+    expect(retryDue(failed(1), t0)).toBe(true);
+  });
+
+  it("spreads the retries over enough time for an organizer to fix a webhook", () => {
+    expect(ANNOUNCE_RETRY_DELAYS_MS).toHaveLength(ANNOUNCE_MAX_ATTEMPTS - 1);
+    expect(ANNOUNCE_RETRY_DELAYS_MS.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(30 * 60_000);
+  });
+
+  it("never counts a drop itself (the completion script does), and a post that lands resets it", async () => {
+    mocks.upstashPipeline.mockImplementation(async (cmds: unknown[]) => cmds.map(() => ({ result: 1 })));
+    await bumpStatus("first-blood", "failed", "x");
+    expect(mocks.upstashPipeline.mock.calls.at(-1)![0]).not.toContainEqual(["HINCRBY", "ctf:announce:status", "dropped", 1]);
+    await bumpStatus("first-blood", "sent");
+    // The stamp and the reset in ONE command, so no drop lands between them.
+    expect(mocks.upstashPipeline.mock.calls.at(-1)![0]).toContainEqual(["HSET", "ctf:announce:status", "lastPostedAt", expect.any(String), "dropped", 0]);
+  });
+
   it("reads the counters back, failing open to an empty status", async () => {
     mocks.upstashPipeline.mockImplementation(async () => [{ result: ["first-blood:sent", "3", "lastPostedAt", "2026-01-01T00:00:00Z"] }]);
     const status = await readStatus();
@@ -822,7 +869,7 @@ describe("status", () => {
     const entry = (status: string, n: number) => JSON.stringify({ kind: "first-blood", payload: {}, at: "2026-01-01T00:00:00Z", n, status });
     mocks.upstashPipeline.mockImplementation(async (cmds: unknown[][]) =>
       cmds[0][1] === "ctf:announce:outbox"
-        ? [{ result: ["a", entry("pending", 0), "b", entry("failed", 1), "c", entry("failed", 3), "d", entry("sent", 1), "e", entry("skipped", 0)] }]
+        ? [{ result: ["a", entry("pending", 0), "b", entry("failed", 1), "c", entry("failed", ANNOUNCE_MAX_ATTEMPTS), "d", entry("sent", 1), "e", entry("skipped", 0)] }]
         : [{ result: ["lastError", "x", "lastErrorAt", "2026-01-01T00:00:00Z"] }],
     );
     expect((await readStatus()).pending).toBe(2);

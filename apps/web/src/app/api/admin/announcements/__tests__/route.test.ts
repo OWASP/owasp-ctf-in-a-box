@@ -71,7 +71,7 @@ beforeEach(() => {
     delete rest.webhookUrl;
     return rest;
   });
-  mocks.readStatus.mockResolvedValue({ posted: {}, lastPostedAt: null, lastError: null, lastErrorAt: null, pending: 0 });
+  mocks.readStatus.mockResolvedValue({ posted: {}, lastPostedAt: null, lastError: null, lastErrorAt: null, dropped: 0, pending: 0 });
   mocks.updateAnnounceConfig.mockResolvedValue({ webhookConfigured: true, firstBlood: true });
   mocks.setAnnounceWebhook.mockResolvedValue({ webhookConfigured: true });
   mocks.getWebhookUrl.mockResolvedValue(URL);

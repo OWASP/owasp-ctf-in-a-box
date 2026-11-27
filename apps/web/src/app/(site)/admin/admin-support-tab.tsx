@@ -409,6 +409,9 @@ export default function AdminSupportTab({
         reportCurrent(gen, { id, tone: "err", text: typeof data.error === "string" ? data.error : "Request failed" });
         return;
       }
+      // describe can write state (the reset code). A newer action owns the
+      // screen, so a stale answer must not store that code or report.
+      if (actionGen.current !== gen) return;
       reportCurrent(gen, { id, tone: "ok", text: describe(data) });
       if (after) await after();
     } catch {

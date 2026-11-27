@@ -348,5 +348,6 @@ describe("action results that outlive their control", () => {
     });
     expect(document.body.textContent).toContain("Added −10 to red-team.");
     expect(document.body.textContent).not.toContain("Issued a reset code");
+    expect(document.body.textContent).not.toContain("aaaa-1111");
   });
 });

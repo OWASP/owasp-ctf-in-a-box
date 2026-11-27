@@ -528,7 +528,7 @@ module's group already carries srh's rule, or srh loses Redis.
      --output table
    aws ec2 describe-security-group-rules --region <region> \
      --filters Name=group-id,Values=<sg-id> \
-     --query 'SecurityGroupRules[?!IsEgress].[IpProtocol,FromPort,ToPort,ReferencedGroupInfo.GroupId,CidrIpv4,CidrIpv6,PrefixListId]' \
+     --query 'SecurityGroupRules[?!IsEgress].[SecurityGroupRuleId,IpProtocol,FromPort,ToPort,ReferencedGroupInfo.GroupId,CidrIpv4,CidrIpv6,PrefixListId]' \
      --output table
    ```
 
@@ -551,7 +551,7 @@ module's group already carries srh's rule, or srh loses Redis.
 4. Look at every ingress rule on `<name>-cache` itself too. The only one should
    be TCP 6379 from `<name>-srh`. Terraform manages that rule as its own
    resource, so a rule added to the group by hand never shows up in a plan
-   and is never removed by an apply: revoke any other rule yourself,
+   and is never removed by an apply: revoke any other rule yourself, using the rule ID from the first column of the rules query:
    `aws ec2 revoke-security-group-ingress --region <region> --group-id <cache-sg-id> --security-group-rule-ids <rule-id>`.
 5. Run `terraform plan` again. The only change to the cache should be the
    extra group leaving `security_group_ids`. Apply it outside the event

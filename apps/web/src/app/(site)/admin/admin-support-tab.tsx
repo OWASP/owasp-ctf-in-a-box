@@ -405,6 +405,9 @@ export default function AdminSupportTab({
     setPending(true);
     setError(null);
     setNotice(null);
+    // The previous answer goes with the previous query: a stale empty result
+    // would otherwise say the new login matches no account before it is read.
+    setResults(null);
     setHeldLogin(githubLoginOf(query));
     setSearchGen((n) => n + 1);
     try {

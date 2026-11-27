@@ -310,3 +310,10 @@ describe("noMatchText", () => {
     expect(noMatchText(undefined)).toBe("No player matches that name.");
   });
 });
+
+it("a new search drops the previous results before it asks, so a stale empty answer never names the new login", () => {
+  const code = readFileSync(fileURLToPath(new URL("../admin-support-tab.tsx", import.meta.url)), "utf8");
+  const search = code.slice(code.indexOf("async function search()"), code.indexOf("async function lookup("));
+  expect(search.indexOf("setResults(null);")).toBeGreaterThan(-1);
+  expect(search.indexOf("setResults(null);")).toBeLessThan(search.indexOf("await fetch(playerSearchUrl(query))"));
+});

@@ -523,12 +523,12 @@ module's group already carries srh's rule, or srh loses Redis.
      --query 'CacheClusters[0].SecurityGroups'
    aws ec2 describe-security-group-rules --region <region> \
      --filters Name=group-id,Values=<sg-id> \
-     --query 'SecurityGroupRules[?!IsEgress].[FromPort,ToPort,ReferencedGroupInfo.GroupId,CidrIpv4]' \
+     --query 'SecurityGroupRules[?!IsEgress].[IpProtocol,FromPort,ToPort,ReferencedGroupInfo.GroupId,CidrIpv4,CidrIpv6,PrefixListId]' \
      --output table
    ```
 
-2. The `<name>-cache` group must have an ingress rule on 6379 from the
-   `<name>-srh` group. If it doesn't, run `terraform apply` first without
+2. The `<name>-cache` group must have a TCP (`tcp`) ingress rule on 6379
+   from the `<name>-srh` group. If it doesn't, run `terraform apply` first without
    touching the cache, so `cache_from_srh` is created:
 
    ```sh
@@ -536,11 +536,12 @@ module's group already carries srh's rule, or srh loses Redis.
    ```
 
 3. Look at what the extra group allows. Anything other than srh reaching 6379,
-   such as the app's group or a CIDR, is a path to Redis that ADR 41 rules out,
+   such as the app's group, a CIDR or a prefix list, is a path to Redis that ADR 41 rules out,
    and removing it is the fix.
 4. Run `terraform plan` again. The only change to the cache should be the
    extra group leaving `security_group_ids`. Apply it outside the event
-   window, then confirm srh is healthy:
+   window. `/health/deep` caches its result for 10 seconds, so wait longer
+   than that after the apply, then confirm srh is healthy:
    `curl -fsS https://<domain>/health/deep` returns `"status":"ok"`.
 5. Delete the extra group if nothing else uses it:
    `aws ec2 delete-security-group --region <region> --group-id <sg-id>`.

@@ -33,8 +33,8 @@ type AdminHintsTabProps = {
   setMinSolvesInput: (v: string) => void;
   unlockAfterInput: string;
   setUnlockAfterInput: (v: string) => void;
-  /** How many challenges the Jeopardy board has, as its panel reported it;
-   *  undefined while not yet known or with Jeopardy off. */
+  /** How many challenges contestants see on the Jeopardy board, as its panel
+   *  reported it; undefined while not yet known or with Jeopardy off. */
   classicChallenges?: number;
 };
 

@@ -43,6 +43,10 @@ export type ModuleInventory = {
    *  contestant board therefore does not render at all. Reported only by the
    *  boards that have categories; the quiz omits it. */
   unlisted?: number;
+  /** Items a contestant sees on the board right now: listed, and visible by
+   *  `isChallengeVisible` (not disabled, not still scheduled). Reported only by
+   *  Jeopardy, for the Hints warning (#828). */
+  onBoard?: number;
 };
 
 type SetupStepStatus = "done" | "todo" | "unknown";

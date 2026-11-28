@@ -23,8 +23,8 @@ vi.mock("@/lib/modules", () => ({
   MODULE_BLURB_MAX: 200,
 }));
 
-// A Jeopardy panel that reports one listed, live challenge once mounted, as
-// the real one does after its lists load.
+// A Jeopardy panel that reports three challenges, one of them listed and live,
+// once mounted, as the real one does after its lists load.
 vi.mock("@/components/admin-classic-controls", () => ({
   default: function ReportingClassicPanel({
     onInventory,
@@ -32,7 +32,7 @@ vi.mock("@/components/admin-classic-controls", () => ({
     onInventory?: (inventory: { items: number; categories: number; unlisted: number; onBoard: number }) => void;
   }) {
     useEffect(() => {
-      onInventory?.({ items: 1, categories: 1, unlisted: 0, onBoard: 1 });
+      onInventory?.({ items: 3, categories: 1, unlisted: 0, onBoard: 1 });
     }, [onInventory]);
     return null;
   },

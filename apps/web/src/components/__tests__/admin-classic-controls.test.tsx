@@ -835,8 +835,8 @@ describe("caseSensitive survives the form round trip", () => {
 describe("classicInventory", () => {
   it("counts challenges and categories separately", async () => {
     const { classicInventory } = await import("@/components/admin-classic-controls");
-    expect(classicInventory([], [])).toEqual({ items: 0, categories: 0, unlisted: 0 });
-    expect(classicInventory([], ["Web", "Crypto"])).toEqual({ items: 0, categories: 2, unlisted: 0 });
+    expect(classicInventory([], [])).toEqual({ items: 0, categories: 0, unlisted: 0, onBoard: 0 });
+    expect(classicInventory([], ["Web", "Crypto"])).toEqual({ items: 0, categories: 2, unlisted: 0, onBoard: 0 });
   });
 
   // `unlisted` is what lets the checklist warn that authored challenges are
@@ -845,8 +845,8 @@ describe("classicInventory", () => {
   it("counts challenges the board will not render", async () => {
     const { classicInventory } = await import("@/components/admin-classic-controls");
     // Both rows are in "Web"; a list without it renders neither.
-    expect(classicInventory([row1, row2], ["Crypto"])).toEqual({ items: 2, categories: 1, unlisted: 2 });
-    expect(classicInventory([row1, row2], ["Web"])).toEqual({ items: 2, categories: 1, unlisted: 0 });
+    expect(classicInventory([row1, row2], ["Crypto"])).toEqual({ items: 2, categories: 1, unlisted: 2, onBoard: 0 });
+    expect(classicInventory([row1, row2], ["Web"])).toEqual({ items: 2, categories: 1, unlisted: 0, onBoard: 2 });
   });
 
   it("matches the category EXACTLY, because that is what the board filters on", async () => {
@@ -855,5 +855,20 @@ describe("classicInventory", () => {
     // row spelled "Web" against a stored "web" is invisible there. Counting it
     // as listed here would leave the organizer with no sign of it at all.
     expect(classicInventory([row1, row2], ["web"]).unlisted).toBe(2);
+  });
+
+  // The Hints warning (#828) needs the board contestants get: a disabled
+  // challenge with no release time is not on it, a scheduled one will be, and
+  // `items` (the setup checklist's "author a challenge" step) counts every row.
+  it("counts listed challenges that are live or scheduled as on the board", async () => {
+    const { classicInventory } = await import("@/components/admin-classic-controls");
+    const now = Date.parse("2026-06-01T12:00:00Z");
+    const disabled = { ...row2, challenge: { ...row2.challenge, enabled: false } };
+    const scheduled = { ...row2, challenge: { ...row2.challenge, enabled: false, releaseAt: "2026-06-02T12:00:00Z" } };
+    const released = { ...row2, challenge: { ...row2.challenge, enabled: false, releaseAt: "2026-05-31T12:00:00Z" } };
+    expect(classicInventory([row1, disabled], ["Web"], now)).toMatchObject({ items: 2, onBoard: 1 });
+    expect(classicInventory([row1, scheduled], ["Web"], now)).toMatchObject({ items: 2, onBoard: 2 });
+    expect(classicInventory([row1, released], ["Web"], now)).toMatchObject({ items: 2, onBoard: 2 });
+    expect(classicInventory([row1, row2], ["Crypto"], now)).toMatchObject({ items: 2, onBoard: 0 });
   });
 });

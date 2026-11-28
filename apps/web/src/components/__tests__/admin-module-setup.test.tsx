@@ -10,6 +10,7 @@ import AdminModuleSetup, {
   moduleSummary,
   panelSteps,
   setupComplete,
+  sameInventory,
   setupStepStatus,
   unlistedLabel,
 } from "@/components/admin-module-setup";
@@ -200,5 +201,19 @@ describe("challenges the board does not render", () => {
     const none = renderToStaticMarkup(<AdminModuleSetup title="Jeopardy" setup={setup} inventory={{ items: 5, categories: 1, unlisted: 0 }} />);
     expect(none).not.toContain("not in the list below");
     expect(none).toContain("Setup complete");
+  });
+});
+
+// The shell drops a report equal to the last one. Disabling a challenge
+// changes only `onBoard`, so that field has to count as a change, or the
+// Hints warning keeps the stale board size (#828).
+describe("sameInventory", () => {
+  it("compares every field", () => {
+    const base = { items: 2, categories: 1, unlisted: 0, onBoard: 2 };
+    expect(sameInventory(base, { ...base })).toBe(true);
+    expect(sameInventory(base, { ...base, onBoard: 1 })).toBe(false);
+    expect(sameInventory(base, { ...base, unlisted: 1 })).toBe(false);
+    expect(sameInventory(base, { ...base, items: 3 })).toBe(false);
+    expect(sameInventory(base, { ...base, categories: 2 })).toBe(false);
   });
 });

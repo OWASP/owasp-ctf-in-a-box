@@ -35,8 +35,21 @@ export { CLASSIC_POINTS_MAX };
  *  `challenge-board.tsx` filters on: a challenge spelled "web" against a
  *  stored "Web" is invisible there, so it has to be counted here (#344).
  *  Pure; exported for direct testing. */
-export function classicInventory(rows: readonly AdminChallenge[], categories: readonly string[]): ModuleInventory {
-  return { items: rows.length, categories: categories.length, unlisted: unlistedCount(rows, categories) };
+export function classicInventory(
+  rows: readonly AdminChallenge[],
+  categories: readonly string[],
+  nowMs: number = Date.now(),
+): ModuleInventory {
+  const listed = new Set(categories);
+  const onBoard = rows.filter(
+    (row) => listed.has(row.challenge.category) && challengeStatus(row.challenge, nowMs).kind !== "disabled",
+  );
+  return {
+    items: rows.length,
+    categories: categories.length,
+    unlisted: unlistedCount(rows, categories),
+    onBoard: onBoard.length,
+  };
 }
 
 /** Rows the board will not render, because their category is not in the list. */

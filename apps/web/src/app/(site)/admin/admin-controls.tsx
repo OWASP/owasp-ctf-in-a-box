@@ -43,7 +43,7 @@ import {
   type ResolvedModule,
 } from "@/lib/modules";
 import ConfirmModal from "@/components/confirm-modal";
-import type { ModuleInventory } from "@/components/admin-module-setup";
+import { sameInventory, type ModuleInventory } from "@/components/admin-module-setup";
 import AdminQuizControls from "@/components/admin-quiz-controls";
 import AdminClassicControls from "@/components/admin-classic-controls";
 import type { SyncStatus } from "@/lib/admin-store";
@@ -212,7 +212,7 @@ export default function AdminControls({
   const reportInventory = useCallback((id: string, next: ModuleInventory) => {
     setInventory((prev) => {
       const cur = prev[id];
-      if (cur && cur.items === next.items && cur.categories === next.categories) return prev;
+      if (cur && sameInventory(cur, next)) return prev;
       return { ...prev, [id]: next };
     });
   }, []);
@@ -310,6 +310,7 @@ export default function AdminControls({
                   setMinSolvesInput={setMinSolvesInput}
                   unlockAfterInput={unlockAfterInput}
                   setUnlockAfterInput={setUnlockAfterInput}
+                  classicChallenges={liveModuleIds.includes("classic") ? inventory.classic?.onBoard : undefined}
                 />
               ) : tab.id === ADMINS_TAB ? (
                 <AdminAdminsTab viewerId={viewerId} visible={active === ADMINS_TAB} />

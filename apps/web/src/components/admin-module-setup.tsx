@@ -43,6 +43,11 @@ export type ModuleInventory = {
    *  contestant board therefore does not render at all. Reported only by the
    *  boards that have categories; the quiz omits it. */
   unlisted?: number;
+  /** Items on the contestant board: listed, and live or scheduled to release
+   *  (a disabled one with no release time is left out). Reported only by
+   *  Jeopardy, for the Hints warning. A scheduled one counts already, since
+   *  the panel reports again only when its lists change. */
+  onBoard?: number;
 };
 
 type SetupStepStatus = "done" | "todo" | "unknown";
@@ -108,6 +113,15 @@ export function moduleSummary(setup: ModuleSetupContent | undefined, inventory: 
   // point the organizer at the checklist, which has nothing wrong with it.
   const unlisted = unlistedLabel(inventory);
   return [complete ? "setup complete" : "setup incomplete", ...counts, ...(unlisted ? [unlisted] : [])].join(" · ");
+}
+
+/** Whether two reports carry the same numbers, every field compared, so a
+ *  change to any one of them (e.g. `onBoard` after a visibility toggle that
+ *  leaves the row and category counts alone) is not dropped as a repeat. */
+export function sameInventory(a: ModuleInventory, b: ModuleInventory): boolean {
+  return (
+    a.items === b.items && a.categories === b.categories && a.unlisted === b.unlisted && a.onBoard === b.onBoard
+  );
 }
 
 /** "3 not on the board" — the count of items whose category is missing from

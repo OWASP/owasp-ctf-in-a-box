@@ -684,8 +684,9 @@ See [ADR 68](decisions.md#adr-68-a-jeopardy-challenge-can-be-hidden-or-scheduled
   player signs in with GitHub or, with Secure Development on, links GitHub
   from their profile: one GitHub account links to one kit account, a login
   already linked to another player is not taken over, a player already linked
-  cannot start a second link (`/link-social` answers `403`), and there is no
-  unlink.
+  cannot start a second link (`/link-social` answers `403`) or complete one
+  (the link callback is refused with `GITHUB_ALREADY_LINKED`, #769), and a
+  player cannot unlink (an organizer can, with **Unlink GitHub** in Support).
   Email is not identity (`allowDifferentEmails`), and a GitHub sign-in does
   not refresh the name or avatar. They exist only so sync can map a PR author
   to a player and decide whether a held score may release, sit outside the

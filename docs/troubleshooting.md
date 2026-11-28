@@ -540,7 +540,9 @@ linking to any account until the next master reset, so a deleted player's
 scores cannot be claimed by a new account. If that login belongs to someone
 who should be playing, run the master reset (it clears the block along with
 the rest of the event's progress). Before the event that is fine; mid-event
-the player needs a different GitHub account. Unlinking a link
+the player needs a different GitHub account. If their first link attempt was
+refused, an organizer first runs **Unlink GitHub** for them in Support, or the
+new link is refused with "A GitHub account is already linked." Unlinking a link
 that has not scored, from the Support tab, does not block the login. See
 [Accounts](operations.md#accounts).
 

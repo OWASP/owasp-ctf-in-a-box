@@ -814,13 +814,8 @@ export default function AdminSupportTab({
                         }),
                       (data) => withWarnings(`Deleted ${detail.name}.`, data),
                       async () => {
-                        let removed = false;
-                        setDetail((current) => {
-                          if (current?.id !== deletedId) return current;
-                          removed = true;
-                          return null;
-                        });
-                        if (removed) setResults(null);
+                        setDetail((current) => (current?.id === deletedId ? null : current));
+                        setResults((rows) => rows?.filter((player) => player.id !== deletedId) ?? null);
                       },
                     );
                   },

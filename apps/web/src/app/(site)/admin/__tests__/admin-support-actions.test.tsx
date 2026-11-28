@@ -361,7 +361,14 @@ describe("action results that outlive their control", () => {
       vi.fn(async (url: string, init?: RequestInit) => {
         if (init?.method === "DELETE") return heldDelete;
         if (init?.method === "POST" && String(url).includes("/api/admin/adjustments")) return json({});
-        if (String(url).startsWith("/api/admin/players")) return json({ players: [{ id: OCTO, name: "octocat", image: null }] });
+        if (String(url).startsWith("/api/admin/players")) {
+          return json({
+            players: [
+              { id: OCTO, name: "octocat", image: null },
+              { id: "b0b00000-0000-4000-8000-000000000002", name: "bob", image: null },
+            ],
+          });
+        }
         if (String(url).startsWith("/api/admin/sd/held")) return json({ entries: [] });
         if (String(url).startsWith("/api/admin/adjustments")) return json({ adjustments: [] });
         return json(detail);
@@ -389,6 +396,8 @@ describe("action results that outlive their control", () => {
       await deleting;
     });
     expect(screen.queryByRole("button", { name: "Delete contestant" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /octocat/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /bob/ })).toBeTruthy();
     expect(document.body.textContent).toContain("Added −10 to red-team.");
     expect(document.body.textContent).not.toContain("Deleted octocat.");
   });

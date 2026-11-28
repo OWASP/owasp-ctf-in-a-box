@@ -89,7 +89,9 @@ weekend event, where the real bill is hours, not months.
 every Redis call the app makes, so it grows with the app, while the scorer
 (`scorer_cpu`/`scorer_memory`) and sync (`sync_cpu`/`sync_memory`) rarely
 need to. A CPU/memory pair Fargate does not run is refused at plan, and
-`srh_desired_count` cannot go below 2.
+`srh_desired_count` cannot go below 2. `scorer_desired_count = 2` keeps
+scoring up while a scorer task is replaced; sync always runs one task, since
+it is the single poller.
 
 Turn the dials if that is too much: `app_desired_count = 1` (loses zero-downtime
 deploys), `cache_replica_count = 0` (loses automatic failover, single-AZ). What

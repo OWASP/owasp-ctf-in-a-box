@@ -324,6 +324,20 @@ variable "scorer_memory" {
   default     = 1024
 }
 
+// Two scorers are safe: each POST /score is judged and written on its own, and
+// sync reaches whichever task the scorer's service-discovery name returns.
+// sync has no such variable: it is the single poller (aws_ecs_service.sync).
+variable "scorer_desired_count" {
+  description = "How many scorer tasks to run (Secure Development events only). 2 keeps scoring up through a deployment or a task replacement; sync always stays at one."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.scorer_desired_count >= 1
+    error_message = "scorer_desired_count must be at least 1."
+  }
+}
+
 variable "sync_cpu" {
   description = "Fargate CPU units for the sync task (Secure Development events only)."
   type        = number

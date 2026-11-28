@@ -509,7 +509,7 @@ resource "aws_ecs_service" "scorer" {
   name            = "scorer"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.scorer[0].arn
-  desired_count   = 1
+  desired_count   = var.scorer_desired_count
   launch_type     = "FARGATE"
 
   // aws_ecs_service.srh says why every service carries this.

@@ -123,6 +123,7 @@ sync_image   = "PLACEHOLDER-deploy.sh-overwrites-this"
 # srh_desired_count = 2      # at least 2: srh is the whole data path
 # scorer_cpu        = 512    # Secure Development events only
 # scorer_memory     = 1024
+# scorer_desired_count = 1   # 2 keeps scoring up through a deployment; sync stays at one
 # sync_cpu          = 256    # Secure Development events only
 # sync_memory       = 512
 

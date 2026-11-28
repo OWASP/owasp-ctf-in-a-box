@@ -1473,6 +1473,54 @@ run "task_size_variables_reach_the_task_definitions" {
   }
 }
 
+run "the_scorer_runs_one_task_unless_asked_for_more" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+  }
+
+  assert {
+    condition     = aws_ecs_service.scorer[0].desired_count == 1
+    error_message = "The scorer runs one task by default, as every deploy before scorer_desired_count did."
+  }
+
+  assert {
+    condition     = aws_ecs_service.sync[0].desired_count == 1
+    error_message = "sync is the single poller and always runs one task."
+  }
+}
+
+run "scorer_desired_count_sets_the_scorer_count_and_leaves_sync_at_one" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+    scorer_desired_count      = 2
+  }
+
+  assert {
+    condition     = aws_ecs_service.scorer[0].desired_count == 2
+    error_message = "scorer_desired_count must set the scorer service's count."
+  }
+
+  assert {
+    condition     = aws_ecs_service.sync[0].desired_count == 1
+    error_message = "scorer_desired_count must not change sync, the single poller."
+  }
+}
+
+run "zero_scorer_tasks_is_refused" {
+  command = plan
+
+  variables {
+    enable_secure_development = true
+    scorer_desired_count      = 0
+  }
+
+  expect_failures = [var.scorer_desired_count]
+}
+
 run "fewer_than_two_srh_tasks_is_refused" {
   command = plan
 

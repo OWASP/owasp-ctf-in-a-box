@@ -66,7 +66,7 @@ export async function GET(request: Request) {
     // open to the deployment default, which only decides whether the card
     // shows a login the admin may already see.
     const sdOn = (await getEnabledModuleIds()).has("secure-development");
-    return NextResponse.json(sdOn ? detail : { ...detail, github: null });
+    return NextResponse.json(sdOn ? detail : { ...detail, github: null, githubAccount: false });
   } catch (err) {
     return fail(err, "lookup");
   }

@@ -22,7 +22,10 @@ const detail: UserDetail = {
   hints: { bought: 0, spent: 0 },
   known: true,
   github: { login: "octocat", linkedAt: 1 },
+  githubAccount: true,
 };
+/** What the lookup answers; a test may swap it before picking octocat. */
+let lookupAnswer: UserDetail = detail;
 
 const json = (body: unknown, ok = true) => ({ ok, json: async () => body }) as Response;
 
@@ -41,7 +44,7 @@ function stubFetch(onPost: (body: Post) => Promise<Response>) {
         return onPost(body);
       }
       if (url.startsWith("/api/admin/players")) return json({ players: [{ id: OCTO, name: "octocat", image: null }] });
-      return json(detail);
+      return json(lookupAnswer);
     }),
   );
   return posts;
@@ -62,6 +65,7 @@ async function pickOcto() {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  lookupAnswer = detail;
 });
 
 /** The tab under the real confirmation dialog, wired as admin-controls.tsx
@@ -111,6 +115,28 @@ describe("Unlink GitHub", () => {
     });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(posts).toEqual([{ id: OCTO, action: "unlink-github" }]);
+  });
+});
+
+describe("Unlink GitHub with no recorded link (#769)", () => {
+  async function card(answer: UserDetail) {
+    lookupAnswer = answer;
+    stubFetch(async () => json({ login: null }));
+    render(<AdminSupportTab setConfirm={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Name or GitHub login"), { target: { value: "octo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(await screen.findByRole("button", { name: /octocat/ }));
+    await screen.findByRole("button", { name: "Reset password" });
+  }
+
+  it("is offered for a GitHub account row a refused link left behind", async () => {
+    await card({ ...detail, github: null, githubAccount: true });
+    expect(screen.getByRole("button", { name: "Unlink GitHub" })).toBeTruthy();
+  });
+
+  it("is not offered when the player has no GitHub account at all", async () => {
+    await card({ ...detail, github: null, githubAccount: false });
+    expect(screen.queryByRole("button", { name: "Unlink GitHub" })).toBeNull();
   });
 });
 

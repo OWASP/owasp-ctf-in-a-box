@@ -140,6 +140,10 @@ export type UserDetail = {
   /** The GitHub account linked to this player (`ctf:link:user:<id>`), or null.
    *  `linkedAt` is epoch ms, null for a link written without a time. */
   github: { login: string; linkedAt: number | null } | null;
+  /** True when the player has a `github` account row, with or without a
+   *  recorded link. A link refused at its callback (#769) leaves a row and no
+   *  link, and only Unlink GitHub removes it. */
+  githubAccount: boolean;
   /** True when no key anywhere mentions this player — a signed-in player
    *  with nothing yet, worth saying so plainly instead of rendering a page of
    *  zeroes. */
@@ -247,6 +251,8 @@ export async function lookupUser(rawId: unknown): Promise<UserDetail> {
 
   const secureDevSolves = await countSecureDevSolves(player);
   const github = await getGithubLink(player);
+  const { internalAdapter } = await auth.$context;
+  const githubAccount = (await internalAdapter.findAccounts(player)).some((a) => a.providerId === "github");
   const profile = (await getPlayerProfiles([player])).get(player);
   const quizAnsweredCount = hashLen(quizAnswers.result);
   const classicSolvedCount = hashLen(classicSolves.result);
@@ -272,6 +278,7 @@ export async function lookupUser(rawId: unknown): Promise<UserDetail> {
     secureDev: { solves: secureDevSolves },
     hints: { bought: hintsBoughtCount, spent: Number(hintsSpent.result) || 0 },
     github,
+    githubAccount,
     // "Known" means the box holds ANY record of this player — attempts
     // included, so a contestant who has tried and never solved is not
     // reported as having no data.

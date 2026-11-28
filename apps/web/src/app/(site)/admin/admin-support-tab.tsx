@@ -362,6 +362,10 @@ export default function AdminSupportTab({
    *  held scores (after a failed read, say) instead of keeping the old view. */
   const [searchGen, setSearchGen] = useState(0);
   const [detail, setDetail] = useState<UserDetail | null>(null);
+  /** The id on the card right now. An action closes over the player it
+   *  changed; this is how that callback tells they are still the one shown. */
+  const shownId = useRef<string | undefined>(undefined);
+  shownId.current = detail?.id;
   const [pending, setPending] = useState(false);
   /** The latest action's outcome. Starting another action, or picking a
    *  different player, replaces it. A refresh of the same player does not. */
@@ -409,13 +413,12 @@ export default function AdminSupportTab({
         reportCurrent(gen, { id, tone: "err", text: typeof data.error === "string" ? data.error : "Request failed" });
         return;
       }
-      // describe can write state (the reset code). A newer action owns the
-      // notice, so a stale answer must not store that code or report.
-      // A delete has already removed the account: its card still has to go
-      // when that same contestant is on screen. The callback checks the id,
-      // so a player picked since then stays.
+      // describe stores the reset code. A newer action owns the notice, so a
+      // stale answer must not store that code or report. The mutation has
+      // already landed, so after still reconciles, and each callback leaves
+      // a player who has since been replaced on screen.
       if (actionGen.current !== gen) {
-        if (id === "delete" && after) await after();
+        if (after) await after();
         return;
       }
       reportCurrent(gen, { id, tone: "ok", text: describe(data) });
@@ -480,7 +483,17 @@ export default function AdminSupportTab({
   }
 
   const refresh = async () => {
-    if (detail) await lookup(detail.id);
+    const id = detail?.id;
+    if (!id || shownId.current !== id) return;
+    const out = await latestOnly(lookupSeq, async () => {
+      const res = await fetch(lookupUrl(id));
+      const data = (await res.json().catch(() => ({}))) as UserDetail & { error?: string };
+      return { ok: res.ok, data };
+    });
+    // A newer lookup, or a different player now on the card, owns the screen.
+    if (!out.current || shownId.current !== id || !out.ok || !out.value.ok) return;
+    setDetail(out.value.data);
+    setRenameTo(out.value.data.name);
   };
 
   /** Warnings the server returns (the Secure Development re-ingest caveat)
@@ -898,6 +911,7 @@ export default function AdminSupportTab({
                       slug,
                     ),
                   async () => {
+                    if (shownId.current !== detail.id) return;
                     setAddSlug("");
                     setAddOverride(false);
                     await refresh();

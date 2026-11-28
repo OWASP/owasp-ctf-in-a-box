@@ -401,4 +401,50 @@ describe("action results that outlive their control", () => {
     expect(document.body.textContent).toContain("Added −10 to red-team.");
     expect(document.body.textContent).not.toContain("Deleted octocat.");
   });
+
+  it("refreshes a superseded unlink and leaves the newer notice", async () => {
+    let releaseUnlink: (response: Response) => void = () => {};
+    const heldUnlink = new Promise<Response>((resolve) => {
+      releaseUnlink = resolve;
+    });
+    let unlinked = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST" && String(url).includes("/api/admin/ops/user")) return heldUnlink;
+        if (init?.method === "POST" && String(url).includes("/api/admin/adjustments")) return json({});
+        if (String(url).startsWith("/api/admin/players")) return json({ players: [{ id: OCTO, name: "octocat", image: null }] });
+        if (String(url).startsWith("/api/admin/sd/held")) return json({ entries: [] });
+        if (String(url).startsWith("/api/admin/adjustments")) return json({ adjustments: [] });
+        if (String(url).startsWith("/api/admin/ops/user")) return json(unlinked ? { ...detail, github: null } : detail);
+        return json(detail);
+      }),
+    );
+    const confirms = await pickOcto();
+    expect(document.body.textContent).toContain("GitHub login octocat");
+    fireEvent.click(screen.getByRole("button", { name: "Unlink GitHub" }));
+    const unlinking = confirms.at(-1)!.onConfirm();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const slug = screen.getAllByLabelText("Team slug").find((el) => el.getAttribute("placeholder") === "team slug");
+    if (!slug) throw new Error("adjustment slug field missing");
+    fireEvent.change(slug, { target: { value: "red-team" } });
+    fireEvent.change(screen.getByLabelText("Points (negative for a penalty)"), { target: { value: "-10" } });
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "late flag" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Add adjustment" }));
+    });
+    await screen.findByText("Added −10 to red-team.");
+
+    unlinked = true;
+    await act(async () => {
+      releaseUnlink(json({}));
+      await unlinking;
+    });
+    expect(document.body.textContent).toContain("Added −10 to red-team.");
+    expect(document.body.textContent).not.toContain("Unlinked GitHub");
+    expect(document.body.textContent).not.toContain("GitHub login octocat");
+  });
 });

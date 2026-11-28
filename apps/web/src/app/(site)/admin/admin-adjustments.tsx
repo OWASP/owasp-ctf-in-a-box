@@ -10,9 +10,28 @@ import { ADJUSTMENT_MAX, isTeamSlug } from "@/lib/adjustment-keys";
 
 export type AdjustmentRow = { id: string; slug: string; points: number; reason: string; by: string; at: string };
 
+/** One Support action's outcome. The tab keeps a single one, so the next
+ *  action replaces it instead of leaving the previous line on screen. */
+export type SupportResult = { id: string; tone: "ok" | "err"; text: string };
+
+/** The outcome line for `id`, beside the control that produced it. */
+export function SupportResultLine({ result, id }: { result: SupportResult | null; id: string }) {
+  if (!result || result.id !== id) return null;
+  const err = result.tone === "err";
+  return (
+    <p role={err ? "alert" : "status"} className={err ? "text-sm text-[#e53e3e]" : "text-sm text-[#22c55e]"}>
+      {result.text}
+    </p>
+  );
+}
+
 /** One ledger row as the list shows it. */
 export function adjustmentRow(a: AdjustmentRow): string {
-  return `${a.slug} ${a.points > 0 ? "+" : "−"}${Math.abs(a.points)} · ${a.reason} · by ${a.by}`;
+  return `${a.slug} ${signedPoints(a.points)} · ${a.reason} · by ${a.by}`;
+}
+
+function signedPoints(points: number): string {
+  return `${points > 0 ? "+" : "−"}${Math.abs(points)}`;
 }
 
 const INPUT =
@@ -68,9 +87,18 @@ export function listState(rows: readonly AdjustmentRow[] | null, error: string |
 
 export default function AdminAdjustments({
   initial = null,
+  result = null,
+  report,
+  actionGen,
 }: {
   /** Seeded rows, for a static render; omitted, the list is fetched. */
   initial?: AdjustmentRow[] | null;
+  /** The tab's current outcome. A line renders only when its id is this section's. */
+  result?: SupportResult | null;
+  /** Replaces the tab's outcome. Omitted, a send keeps its error in this section. */
+  report?: (next: SupportResult | null) => void;
+  /** The tab's action generation. A send reports only while this is still the value it captured. */
+  actionGen?: { current: number };
 }) {
   const [rows, setRows] = useState<AdjustmentRow[] | null>(initial);
   const [slug, setSlug] = useState("");
@@ -104,9 +132,18 @@ export default function AdminAdjustments({
     };
   }, [initial, read]);
 
-  async function send(method: "POST" | "DELETE", body: Record<string, unknown>) {
+  async function send(method: "POST" | "DELETE", body: Record<string, unknown>, noteId: string, okText: string) {
+    // This request is a new action. A Support call already in flight captured
+    // the previous value and must not report over this one.
+    if (actionGen) actionGen.current += 1;
+    const gen = actionGen?.current;
+    const reportIfCurrent = (next: SupportResult | null) => {
+      if (actionGen && actionGen.current !== gen) return;
+      report?.(next);
+    };
     setPending(true);
     setError(null);
+    reportIfCurrent(null);
     try {
       const res = await fetch("/api/admin/adjustments", {
         method,
@@ -120,9 +157,13 @@ export default function AdminAdjustments({
         setPoints("");
         setReason("");
       }
+      // A removed row is gone after load(), so its success line lives with the controls.
+      reportIfCurrent({ id: method === "DELETE" ? "adjust-remove" : noteId, tone: "ok", text: okText });
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Request failed");
+      const text = err instanceof Error ? err.message : "Request failed";
+      if (report) reportIfCurrent({ id: noteId, tone: "err", text });
+      else setError(text);
     } finally {
       setPending(false);
     }
@@ -145,9 +186,20 @@ export default function AdminAdjustments({
         <input aria-label="Team slug" placeholder="team slug" value={slug} onChange={(e) => setSlug(e.target.value)} className={`w-40 font-mono ${INPUT}`} />
         <input aria-label="Points (negative for a penalty)" placeholder="±points" inputMode="numeric" value={points} onChange={(e) => setPoints(e.target.value)} className={`w-24 text-right ${INPUT}`} />
         <input aria-label="Reason" placeholder="reason (required)" maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} className={`min-w-48 flex-1 ${INPUT}`} />
-        <button type="button" disabled={pending || !ready} className={BTN} onClick={() => void send("POST", { slug: slug.trim(), points: parsed, reason })}>
+        <button
+          type="button"
+          disabled={pending || !ready}
+          className={BTN}
+          onClick={() => {
+            if (parsed === null) return;
+            const team = slug.trim();
+            void send("POST", { slug: team, points: parsed, reason }, "adjust-add", `Added ${signedPoints(parsed)} to ${team}.`);
+          }}
+        >
           Add adjustment
         </button>
+        <SupportResultLine result={result} id="adjust-add" />
+        <SupportResultLine result={result} id="adjust-remove" />
       </div>
       {rows === null ? (
         listState(rows, error) === "loading" && <p className="text-sm text-muted">Loading…</p>
@@ -162,11 +214,12 @@ export default function AdminAdjustments({
                 type="button"
                 disabled={pending}
                 aria-label={`Remove adjustment for ${a.slug}`}
-                onClick={() => void send("DELETE", { id: a.id })}
+                onClick={() => void send("DELETE", { id: a.id }, `adjust-remove:${a.id}`, `Removed ${signedPoints(a.points)} from ${a.slug}.`)}
                 className="flex-none rounded-md border border-white/10 px-2 py-0.5 text-xs text-zinc-300 hover:text-white disabled:opacity-50"
               >
                 Remove
               </button>
+              <SupportResultLine result={result} id={`adjust-remove:${a.id}`} />
             </li>
           ))}
         </ul>

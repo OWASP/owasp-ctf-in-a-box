@@ -696,7 +696,7 @@ The panel offers:
   redundant buying is the team's own coordination cost.
 
 - **Activity** (its own tab) — the live event log: sign-ins, quiz and classic
-  solves, and team create/join/leave/rename, newest first. Type
+  solves, team create/join/leave/rename, and score adjustments, newest first. Type
   chips (each with its count) and one search box narrow it: every word must
   match somewhere in a row — login, event, detail (challenge, question or
   team id) or the time as shown — and `login:`, `type:`, `detail:` and
@@ -874,7 +874,9 @@ The panel offers:
     ordered by who earned their last points first;
   - is written to the admin audit log on add and on remove (`adjustment:add`,
     `adjustment:remove`, with who and why), and lives in its own ledger,
-    `ctf:adjustments`;
+    `ctf:adjustments`. The same add and remove each also appear on the
+    Activity tab, under the score-adjustment chip, naming the team, the
+    points, the reason and the organizer;
   - is this event's scoring data: the **master reset** clears it, and the
     **event archive does not carry it** (an archive carries content and
     policy, never solves). The score chart stays gross, as it does for hints.

@@ -178,6 +178,20 @@ describe("filterEntries", () => {
     expect(q("team:crypto")).toEqual([]);
   });
 
+  it("shows an added and a removed adjustment under the one chip, and team: finds the slug", () => {
+    const adjustments: ActivityEntry[] = [
+      { at: "2026-08-24T19:00:00.000Z", type: "adjustment", userId: "admin", name: "admin", detail: "added −10 red-team · late flag" },
+      { at: "2026-08-24T19:01:00.000Z", type: "adjustment", userId: "admin", name: "admin", detail: "removed −10 red-team · late flag" },
+      { at: "2026-08-24T19:02:00.000Z", type: "login", userId: "octocat", name: "octocat" },
+    ];
+    const shown = filterEntries(adjustments, { type: "adjustment", text: "", zone: "UTC" });
+    expect(shown.map((e) => e.detail)).toEqual([
+      "added −10 red-team · late flag",
+      "removed −10 red-team · late flag",
+    ]);
+    expect(filterEntries(adjustments, { type: null, text: "team:red-team", zone: "UTC" })).toEqual(adjustments.slice(0, 2));
+  });
+
   it("ignores a prefix with nothing after it", () => {
     expect(q("player:")).toEqual(entries);
   });

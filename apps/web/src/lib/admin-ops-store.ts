@@ -23,7 +23,8 @@ import {
   takeGithubLink,
 } from "@/lib/github-link";
 import { holdScores, releaseScoreHold, restoreAfterFailedDelete } from "@/lib/score-hold";
-import { currentUsername, renameUsername } from "@/lib/username-store";
+import { currentUsername, hasPassword, renameUsername } from "@/lib/username-store";
+import { unlinkGithubBlockReason } from "@/lib/unlink-github";
 import { USERNAME_COPY } from "@/lib/username-rules";
 import { resolveTeamMaxMembers } from "@/lib/team-store";
 import {
@@ -144,6 +145,10 @@ export type UserDetail = {
    *  with nothing yet, worth saying so plainly instead of rendering a page of
    *  zeroes. */
   known: boolean;
+  /** A username and a credential password, so Support can disable Unlink
+   *  GitHub before the confirm dialog. A failed read fails the lookup. */
+  hasUsername: boolean;
+  hasPassword: boolean;
 };
 
 function hashLen(result: unknown): number {
@@ -272,6 +277,8 @@ export async function lookupUser(rawId: unknown): Promise<UserDetail> {
     secureDev: { solves: secureDevSolves },
     hints: { bought: hintsBoughtCount, spent: Number(hintsSpent.result) || 0 },
     github,
+    hasUsername: Boolean(await currentUsername(player)),
+    hasPassword: await hasPassword(player),
     // "Known" means the box holds ANY record of this player — attempts
     // included, so a contestant who has tried and never solved is not
     // reported as having no data.
@@ -1047,17 +1054,6 @@ export async function renameUser(
   return { from, to };
 }
 
-/** The unlink refusal when no sign-in method would be left. A credential row
- *  signs in only with a username; an OAuth row only while its provider is
- *  enabled. The steps name what the Support card offers. */
-function noOtherSignIn(hasUsername: boolean, hasPassword: boolean): string {
-  const steps: string[] = [];
-  if (!hasUsername) steps.push("set a username for them (Username, then Save)");
-  if (!hasPassword) steps.push("give them a reset code so they can set a password");
-  const [first, ...rest] = steps;
-  return `This player cannot sign in without GitHub. First ${first}${rest.map((s) => `, then ${s}`).join("")}.`;
-}
-
 /** The refusal `unlinkGithub` returns when the scored link it took cannot be
  *  put back because the login was blocked while it ran. */
 export const BLOCKED_DURING_UNLINK =
@@ -1104,9 +1100,10 @@ export async function unlinkGithub(rawId: unknown, actor: AuditActor): Promise<{
     throw new OpsValidationError("id", "No GitHub account is linked.");
   }
 
-  const hasPassword = accounts.some((a) => a.providerId === "credential");
-  const hasUsername = Boolean(await currentUsername(player));
-  if (!(hasPassword && hasUsername)) throw new OpsValidationError("id", noOtherSignIn(hasUsername, hasPassword));
+  const passwordAccount = accounts.some((a) => a.providerId === "credential");
+  const usernameSet = Boolean(await currentUsername(player));
+  const blocked = unlinkGithubBlockReason(usernameSet, passwordAccount);
+  if (blocked) throw new OpsValidationError("id", blocked);
 
   // The token exists before the hold so a hold of unknown outcome (a
   // timeout) is still lifted below; SREM of a non-member is harmless.

@@ -34,6 +34,7 @@ import AdminSupportTab, {
   teamCardSummary,
   type UserDetail,
 } from "@/app/(site)/admin/admin-support-tab";
+import { unlinkGithubBlockReason } from "@/lib/unlink-github";
 
 const OCTO = "0c7aca70-0000-4000-8000-00000000000a";
 const detail: UserDetail = {
@@ -47,6 +48,8 @@ const detail: UserDetail = {
   hints: { bought: 2, spent: 20 },
   known: true,
   github: null,
+  hasUsername: true,
+  hasPassword: true,
 };
 
 describe("AdminSupportTab", () => {
@@ -316,4 +319,22 @@ it("a new search drops the previous results before it asks, so a stale empty ans
   const search = code.slice(code.indexOf("async function search()"), code.indexOf("async function lookup("));
   expect(search.indexOf("setResults(null);")).toBeGreaterThan(-1);
   expect(search.indexOf("setResults(null);")).toBeLessThan(search.indexOf("await fetch(playerSearchUrl(query))"));
+});
+
+describe("unlinkGithubBlockReason", () => {
+  it("is quiet when a username and a password remain", () => {
+    expect(unlinkGithubBlockReason(true, true)).toBeNull();
+  });
+
+  it("names the missing sign-in step", () => {
+    expect(unlinkGithubBlockReason(true, false)).toBe(
+      "This player cannot sign in without GitHub. First give them a reset code so they can set a password.",
+    );
+    expect(unlinkGithubBlockReason(false, true)).toBe(
+      "This player cannot sign in without GitHub. First set a username for them (Username, then Save).",
+    );
+    expect(unlinkGithubBlockReason(false, false)).toBe(
+      "This player cannot sign in without GitHub. First set a username for them (Username, then Save), then give them a reset code so they can set a password.",
+    );
+  });
 });

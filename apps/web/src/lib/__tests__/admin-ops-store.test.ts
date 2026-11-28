@@ -92,7 +92,7 @@ vi.mock("@/lib/auth", () => ({ auth: { $context: Promise.resolve({ internalAdapt
 
 // renameUser reads the old username and writes the new one through the
 // username store (the auth adapter), which these suites do not stand up.
-const nameDeps = vi.hoisted(() => ({ renameUsername: vi.fn(), currentUsername: vi.fn() }));
+const nameDeps = vi.hoisted(() => ({ renameUsername: vi.fn(), currentUsername: vi.fn(), hasPassword: vi.fn() }));
 vi.mock("@/lib/username-store", () => nameDeps);
 
 import {
@@ -233,6 +233,8 @@ beforeEach(() => {
     authRow = false;
   });
   playerDeps.getPlayerProfiles.mockImplementation(async (ids: string[]) => new Map(ids.map((id) => [id, profile(id, "octocat")])));
+  nameDeps.currentUsername.mockResolvedValue(null);
+  nameDeps.hasPassword.mockResolvedValue(false);
 });
 
 describe("resetUserProgress brackets its writes as score-lowering (#553)", () => {

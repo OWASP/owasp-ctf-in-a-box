@@ -5,8 +5,12 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/upstash", () => upstash);
 
 import {
+  CLAIM_LINK_SCRIPT,
+  LINK_PENDING_TTL_MS,
   RELINK_BLOCK_KEY,
+  claimGithubLink,
   getGithubLink,
+  releaseGithubLinkClaim,
   linkKey,
   linkOnUserWrite,
   recordGithubSignIn,
@@ -160,6 +164,34 @@ describe("github link", () => {
   it("rejects an unexpected script reply", async () => {
     upstash.upstashEval.mockResolvedValue(null);
     await expect(recordGithubSignIn("id-1", "octo")).rejects.toThrow(/unexpected/);
+  });
+
+  describe("claimGithubLink and releaseGithubLinkClaim", () => {
+    it("claims the player's pending set for the callback's token with CLAIM_LINK_SCRIPT, under ctf:link:*", async () => {
+      upstash.upstashEval.mockResolvedValue(1);
+      expect(await claimGithubLink("id-1", "tok-1")).toBe(true);
+      expect(upstash.upstashEval.mock.calls[0]).toEqual([CLAIM_LINK_SCRIPT, ["ctf:link:pending:id-1"], ["tok-1", LINK_PENDING_TTL_MS]]);
+    });
+
+    it("is false when another callback holds the claim", async () => {
+      upstash.upstashEval.mockResolvedValue(0);
+      expect(await claimGithubLink("id-1", "tok-1")).toBe(false);
+    });
+
+    it("throws on a command error or an unexpected reply, so the caller fails closed", async () => {
+      upstash.upstashEval.mockRejectedValue(new Error("Upstash EVAL failed: NOAUTH"));
+      await expect(claimGithubLink("id-1", "tok-1")).rejects.toThrow(/NOAUTH/);
+      upstash.upstashEval.mockResolvedValue("OK");
+      await expect(claimGithubLink("id-1", "tok-1")).rejects.toThrow(/unexpected claim reply/);
+    });
+
+    it("releases the token's own member of the pending set only, and throws on a command error", async () => {
+      upstash.upstashPipeline.mockResolvedValue([{ result: 1 }]);
+      await releaseGithubLinkClaim("id-1", "tok-1");
+      expect(upstash.upstashPipeline.mock.calls[0][0]).toEqual([["SREM", "ctf:link:pending:id-1", "tok-1"]]);
+      upstash.upstashPipeline.mockResolvedValue([{ error: "NOAUTH" }]);
+      await expect(releaseGithubLinkClaim("id-1", "tok-1")).rejects.toThrow(/NOAUTH/);
+    });
   });
 
   describe("linkOnUserWrite", () => {

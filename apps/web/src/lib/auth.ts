@@ -5,7 +5,8 @@ import { username } from "better-auth/plugins";
 import type { BetterAuthOptions } from "better-auth";
 import { redisAdapter } from "@/lib/auth-store/redis-adapter";
 import { errorLabel } from "@/lib/error-label";
-import { getGithubLink, isReleasedAndBlocked, linkOnUserWrite } from "@/lib/github-link";
+import { LINK_PENDING_PREFIX, claimGithubLink, getGithubLink, isReleasedAndBlocked, linkOnUserWrite, releaseGithubLinkClaim } from "@/lib/github-link";
+import { setWriteFence } from "@/lib/auth-store/write-fence";
 import { recordSignIn } from "@/lib/activity-log";
 import { limitAuthAttempt } from "@/lib/auth-rate-limit";
 import { placeholderEmail } from "@/lib/placeholder-email";
@@ -135,7 +136,14 @@ export async function refuseDisabledProvider(ctx: AuthCtx): Promise<void> {
 export type CallbackWrite = "user" | "account" | "session";
 
 type UserLookup = { internalAdapter?: { findUserById: (id: string) => Promise<unknown> } };
-type HookCtx = { path?: string; params?: Record<string, unknown> } | null | undefined;
+type HookCtx =
+  | {
+      path?: string;
+      params?: Record<string, unknown>;
+      context?: { internalAdapter?: { findAccounts(userId: string): Promise<{ providerId: string; accountId: string }[]> } };
+    }
+  | null
+  | undefined;
 
 // One verdict per callback request: the parsed state object is the request's
 // own, so every write of one callback shares a single settings read.
@@ -241,23 +249,146 @@ export async function refuseDeletedAccount(ctx: AuthCtx): Promise<void> {
  * cannot start a second one: better-auth would add a second account row and
  * the link write would move the player's link off the old login. A link the
  * kit refused or never recorded (no `ctf:link:user:<id>`) can still be
- * retried. An unreadable link fails closed. A request with no session is left
- * to the endpoint, which answers 401.
+ * started again; its completion is judged by refuseSecondGithubLinkOnCallback,
+ * which lets the same GitHub account retry and refuses another. An unreadable
+ * link fails closed. A request with no session is left to the endpoint, which
+ * answers 401.
  */
 export async function refuseSecondGithubLink(ctx: AuthCtx): Promise<void> {
   if (ctx.path !== "/link-social") return;
   const session = await getSessionFromCtx(ctx);
   if (!session) return;
+  await assertNoGithubLink(session.user.id);
+}
+
+/** The player and GitHub account of a link callback's account write, or null
+ *  for any other write. The player comes from the state the callback parsed,
+ *  the one /link-social minted for that session. A state that cannot be read
+ *  refuses: reading it as "not a link" would skip the claim and the fence. */
+async function linkCallbackAccount(ctx: HookCtx, account: unknown): Promise<{ userId: string; accountId: unknown } | null> {
+  if (ctx?.path !== "/callback/:id") return null;
+  let state: Awaited<ReturnType<typeof getOAuthState>>;
+  try {
+    state = await getOAuthState();
+  } catch (err) {
+    console.error(`[auth] could not read the oauth state of a callback account write: ${errorLabel(err)}`);
+    throw githubLinkUnreadable();
+  }
+  const userId = state?.link?.userId;
+  if (typeof userId !== "string" || userId === "") return null;
+  const accountId = typeof account === "object" && account !== null ? (account as Record<string, unknown>).accountId : undefined;
+  return { userId, accountId };
+}
+
+// The claim each link callback holds over its account write, keyed by the
+// endpoint context better-auth hands both the create's before and after hook.
+const linkClaims = new WeakMap<object, { userId: string; token: string }>();
+
+/**
+ * The account create `before` hook on a link callback. refuseSecondGithubLink
+ * runs when a flow starts, so a player who is not linked yet can start two
+ * (two tabs, two GitHub accounts) and both pass it. This holds the rule when
+ * a flow completes: a player gets one GitHub account, so a callback is refused
+ * when the player already has a recorded link or any other GitHub account
+ * row, including one whose link the kit refused (another player held its
+ * login). Callbacks that overlap could both find nothing, so the check runs
+ * under the player's link claim (claimGithubLink), which each callback takes
+ * first with its own token and releases once its row is written
+ * (releaseGithubLinkClaimOnCallback): a callback that comes second is refused
+ * at the claim or finds the first one's row, with nothing written. The
+ * account write is fenced on the claim (the request's write fence, which the
+ * auth route opens), so a callback that stalls past the claim's expiry and
+ * reaches Redis after another one claimed is refused in the write's own
+ * EVAL; a request with no fence to set is refused before writing. A retry of
+ * the same GitHub account updates its row and never reaches this hook. A
+ * sign-in callback has no `link` and is left alone, so a GitHub sign-in still
+ * follows a rename. Any unreadable step fails closed.
+ */
+export async function refuseSecondGithubLinkOnCallback(ctx: HookCtx, account: unknown): Promise<void> {
+  const target = await linkCallbackAccount(ctx, account);
+  if (!target || !ctx) return;
+  const { userId, accountId } = target;
+  const token = crypto.randomUUID();
+  let claimed: boolean;
+  try {
+    if (typeof accountId !== "string" || accountId === "") throw new Error("github link: callback account has no id");
+    claimed = await claimGithubLink(userId, token);
+  } catch (err) {
+    console.error(`[auth] could not claim github link: ${errorLabel(err)}`);
+    throw githubLinkUnreadable();
+  }
+  if (!claimed) throw githubAlreadyLinked();
+  try {
+    await assertNoGithubLink(userId);
+    await assertNoOtherGithubAccount(ctx, userId, accountId);
+    if (!setWriteFence({ key: `${LINK_PENDING_PREFIX}${userId}`, member: token })) {
+      console.error("[auth] github link callback ran outside a write fence slot; refusing the write");
+      throw githubLinkUnreadable();
+    }
+  } catch (err) {
+    await releaseClaim(userId, token);
+    throw err;
+  }
+  linkClaims.set(ctx, { userId, token });
+}
+
+/** The account create `after` hook on a link callback: the row is written, so
+ *  the next callback for this player finds it and the claim can go. */
+export async function releaseGithubLinkClaimOnCallback(ctx: HookCtx): Promise<void> {
+  const held = ctx ? linkClaims.get(ctx) : undefined;
+  if (!ctx || !held) return;
+  linkClaims.delete(ctx);
+  // Cleared first: a later write in this request is not the account write,
+  // and would be refused once the claim it was fenced on is gone.
+  setWriteFence(null);
+  await releaseClaim(held.userId, held.token);
+}
+
+/** Releases a link claim, logging only the label on failure: the claim's
+ *  expiry frees it, and the link itself is unaffected either way. */
+async function releaseClaim(userId: string, token: string): Promise<void> {
+  try {
+    await releaseGithubLinkClaim(userId, token);
+  } catch (err) {
+    console.error(`[auth] could not release github link claim: ${errorLabel(err)}`);
+  }
+}
+
+/** Refuses a player who has a GitHub account row other than `accountId`. An
+ *  unreadable account list fails closed. */
+async function assertNoOtherGithubAccount(ctx: HookCtx, userId: string, accountId: string): Promise<void> {
+  let others: number;
+  try {
+    const adapter = ctx?.context?.internalAdapter;
+    if (!adapter) throw new Error("auth context has no internal adapter");
+    const accounts = await adapter.findAccounts(userId);
+    others = accounts.filter((a) => a.providerId === "github" && a.accountId !== accountId).length;
+  } catch (err) {
+    console.error(`[auth] could not read github accounts before linking: ${errorLabel(err)}`);
+    throw githubLinkUnreadable();
+  }
+  if (others > 0) throw githubAlreadyLinked();
+}
+
+/** Refuses a player whose GitHub link is recorded. An unreadable link fails
+ *  closed. */
+async function assertNoGithubLink(playerId: string): Promise<void> {
   let link: Awaited<ReturnType<typeof getGithubLink>>;
   try {
-    link = await getGithubLink(session.user.id);
+    link = await getGithubLink(playerId);
   } catch (err) {
     console.error(`[auth] could not read github link before linking: ${errorLabel(err)}`);
-    throw new APIError("SERVICE_UNAVAILABLE", { message: "Could not check your GitHub link. Try again.", code: "GITHUB_LINK_UNREADABLE" });
+    throw githubLinkUnreadable();
   }
-  if (link) {
-    throw new APIError("FORBIDDEN", { message: "A GitHub account is already linked.", code: "GITHUB_ALREADY_LINKED" });
-  }
+  if (link) throw githubAlreadyLinked();
+}
+
+function githubLinkUnreadable(): APIError {
+  return new APIError("SERVICE_UNAVAILABLE", { message: "Could not check your GitHub link. Try again.", code: "GITHUB_LINK_UNREADABLE" });
+}
+
+function githubAlreadyLinked(): APIError {
+  return new APIError("FORBIDDEN", { message: "A GitHub account is already linked.", code: "GITHUB_ALREADY_LINKED" });
 }
 
 /**
@@ -461,7 +592,13 @@ export const authOptions = {
       },
     },
     account: {
-      create: { before: async (_account, ctx) => gateOAuthCallback(ctx, "account") },
+      create: {
+        before: async (account, ctx) => {
+          await gateOAuthCallback(ctx, "account");
+          await refuseSecondGithubLinkOnCallback(ctx, account);
+        },
+        after: async (_account, ctx) => releaseGithubLinkClaimOnCallback(ctx),
+      },
       update: { before: async (_account, ctx) => gateOAuthCallback(ctx, "account") },
     },
     session: {

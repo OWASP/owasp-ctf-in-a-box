@@ -228,6 +228,7 @@ beforeEach(() => {
   let authRow = true;
   authDeps.findUserById.mockReset().mockImplementation(async (id: string) => (authRow ? { id } : null));
   authDeps.deleteUserSessions.mockReset().mockResolvedValue(undefined);
+  authDeps.findAccounts.mockReset().mockResolvedValue([]);
   authDeps.deleteAccounts.mockReset().mockResolvedValue(undefined);
   authDeps.deleteUser.mockReset().mockImplementation(async () => {
     authRow = false;
@@ -348,6 +349,28 @@ describe("lookupUser", () => {
     );
     mockNoSecureDevKeys();
     expect((await lookupUser(OCTO)).name).toBe("player 0c7aca70");
+  });
+
+  it("reports a GitHub account row a refused link left with no link (#769)", async () => {
+    // A link refused at its callback writes the account row and no link keys:
+    // Support must still see it, or Unlink GitHub is never offered.
+    const row = (id: string, providerId: string) => ({ id, providerId, userId: OCTO, accountId: id });
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    authDeps.findAccounts.mockResolvedValueOnce([row("a1", "credential"), row("a2", "github")]);
+    const stuck = await lookupUser(OCTO);
+    expect(stuck.github).toBeNull();
+    expect(stuck.githubAccount).toBe(true);
+    expect(authDeps.findAccounts).toHaveBeenCalledWith(OCTO);
+
+    mocks.upstashPipeline.mockResolvedValueOnce(
+      replies(userHmget(null), [], [], null, null, [], [], null, null, 0, null),
+    );
+    mockNoSecureDevKeys();
+    authDeps.findAccounts.mockResolvedValueOnce([row("a1", "credential")]);
+    expect((await lookupUser(OCTO)).githubAccount).toBe(false);
   });
 
   it("sums attempts out of the JSON rows, not by coercing them to numbers", async () => {

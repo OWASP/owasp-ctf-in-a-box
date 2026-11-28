@@ -1338,7 +1338,9 @@ refused in any letter case. Scores, team and GitHub link are untouched. The
 renamed player's header can keep showing the old name for up to 5 minutes.
 
 **Unlink GitHub** (Secure Development on only). Releases the player's GitHub
-link so they can link another account. It is refused once the link has scored
+link so they can link another account. It is also offered for a player with a
+GitHub account and no link, which a refused link leaves behind (#769), and
+removes that account. It is refused once the link has scored
 a Secure Development solve, and refused when the player would have no other
 way to sign in. Another way means a password with a username. For a player who signs in only
 with GitHub, first set a username for them in Support (type it in the

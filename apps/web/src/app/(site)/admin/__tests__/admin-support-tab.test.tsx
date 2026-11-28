@@ -22,6 +22,7 @@ import AdminSupportTab, {
   ResetCodeDialog,
   resetCodeConfirm,
   unlinkGithubConfirm,
+  canUnlinkGithub,
   githubLoginLine,
   lookupUrl,
   PlayerIdentity,
@@ -47,6 +48,7 @@ const detail: UserDetail = {
   hints: { bought: 2, spent: 20 },
   known: true,
   github: null,
+  githubAccount: false,
 };
 
 describe("AdminSupportTab", () => {
@@ -271,6 +273,12 @@ describe("unlink GitHub", () => {
     const c = unlinkGithubConfirm({ ...detail, github: { login: "octo", linkedAt: 1 } });
     expect(c.body).toContain("They can link a GitHub account again from their profile.");
     expect(c.confirmLabel).toBe("Unlink GitHub");
+  });
+  it("is offered for a link, and for a GitHub row a refused link left with no link (#769)", () => {
+    expect(canUnlinkGithub(detail)).toBe(false);
+    expect(canUnlinkGithub({ ...detail, github: { login: "octo", linkedAt: 1 }, githubAccount: true })).toBe(true);
+    expect(canUnlinkGithub({ ...detail, githubAccount: true })).toBe(true);
+    expect(unlinkGithubConfirm(detail).body).toContain("Removes the GitHub account a refused link left on their kit account.");
   });
   it("shows the GitHub login only when the lookup carries one", () => {
     expect(githubLoginLine(detail)).toBeNull();

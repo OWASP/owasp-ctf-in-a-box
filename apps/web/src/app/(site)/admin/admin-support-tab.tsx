@@ -39,6 +39,9 @@ export type UserDetail = {
   hints: { bought: number; spent: number };
   /** Null when the player has no link, and when Secure Development is off. */
   github: { login: string; linkedAt: number | null } | null;
+  /** A `github` account row with or without a link; false when Secure
+   *  Development is off. */
+  githubAccount: boolean;
   known: boolean;
 };
 
@@ -196,8 +199,16 @@ export function unlinkGithubConfirm(detail: Pick<UserDetail, "id" | "name" | "gi
   return {
     title: `Unlink GitHub from ${detail.name}?`,
     confirmLabel: "Unlink GitHub",
-    body: `${playerIdLine(detail.id)} Removes the link to ${detail.github?.login ?? "their GitHub account"}. They can link a GitHub account again from their profile.`,
+    body: detail.github
+      ? `${playerIdLine(detail.id)} Removes the link to ${detail.github.login}. They can link a GitHub account again from their profile.`
+      : `${playerIdLine(detail.id)} Removes the GitHub account a refused link left on their kit account. They can link a GitHub account again from their profile.`,
   };
+}
+
+/** Whether the card offers Unlink GitHub: a recorded link, or a GitHub
+ *  account row a refused link left behind with no link (#769). */
+export function canUnlinkGithub(detail: Pick<UserDetail, "github" | "githubAccount">): boolean {
+  return detail.github !== null || detail.githubAccount;
 }
 
 /** The card's GitHub line, or null when there is no link to show. */
@@ -668,7 +679,7 @@ export default function AdminSupportTab({
               Reset password
             </button>
 
-            {detail.github && (
+            {canUnlinkGithub(detail) && (
               <button
                 type="button"
                 disabled={pending}

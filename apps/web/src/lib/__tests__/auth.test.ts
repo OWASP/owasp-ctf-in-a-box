@@ -22,7 +22,9 @@ vi.mock("server-only", () => ({}));
 
 const linkOnUserWrite = vi.hoisted(() => vi.fn<(user: unknown) => Promise<void>>(async () => {}));
 const getGithubLink = vi.hoisted(() => vi.fn<(id: string) => Promise<{ login: string; linkedAt: number | null } | null>>());
-vi.mock("@/lib/github-link", () => ({ linkOnUserWrite, getGithubLink }));
+const claimGithubLink = vi.hoisted(() => vi.fn<(id: string, accountId: string) => Promise<boolean>>(async () => true));
+const releaseGithubLinkClaim = vi.hoisted(() => vi.fn<(id: string, accountId: string) => Promise<void>>(async () => {}));
+vi.mock("@/lib/github-link", () => ({ LINK_PENDING_PREFIX: "ctf:link:pending:", linkOnUserWrite, getGithubLink, claimGithubLink, releaseGithubLinkClaim }));
 
 const getSessionFromCtx = vi.hoisted(() => vi.fn<(ctx: unknown) => Promise<unknown>>());
 // The OAuth state the callback parsed; null unless a test sets one.
@@ -80,9 +82,11 @@ import {
   refuseDisabledProvider,
   refuseDeletedAccount,
   refuseSecondGithubLink,
+  refuseSecondGithubLinkOnCallback,
   refuseSignUpFields,
 } from "@/lib/auth";
 import { isPlaceholderEmail } from "@/lib/placeholder-email";
+import { currentWriteFence, withWriteFenceSlot } from "@/lib/auth-store/write-fence";
 import { decoratedError, expectLabelOnly } from "@/lib/__tests__/log-redaction";
 import { APIError } from "better-auth/api";
 
@@ -397,6 +401,178 @@ describe("refuseSecondGithubLink (/link-social before hook)", () => {
     getGithubLink.mockClear();
     await expect(refuseSecondGithubLink(ctx(path))).resolves.toBeUndefined();
     expect(getSessionFromCtx).not.toHaveBeenCalled();
+    expect(getGithubLink).not.toHaveBeenCalled();
+  });
+});
+
+describe("refuseSecondGithubLinkOnCallback (account create on a link callback)", () => {
+  // Two link flows started while unlinked both pass refuseSecondGithubLink.
+  // The completion is refused when the player already has a link or another
+  // GitHub account row, checked under the player's link claim.
+  const ID = "5f0c2a1e-7b3d-4c9e-8a21-0d6f4b9e3c71";
+  const account = { providerId: "github", accountId: "1234" };
+  const linkState = { codeVerifier: "v", callbackURL: "/profile?linked=github", link: { email: "k@demo.invalid", userId: ID } };
+  const findAccounts = vi.fn<(id: string) => Promise<{ providerId: string; accountId: string }[]>>();
+  const cb = { path: "/callback/:id", params: { id: "github" }, context: { internalAdapter: { findAccounts } } };
+  const refusal = async (p: Promise<unknown>) => {
+    const err = await p.then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(APIError);
+    return { status: (err as APIError).status, code: (err as APIError).body?.code };
+  };
+  // The auth route opens a write fence slot for every request; the hook
+  // fences the account write on the claim by setting it.
+  const onCallback = (ctx: unknown, acc: unknown) =>
+    withWriteFenceSlot(async () => {
+      await refuseSecondGithubLinkOnCallback(ctx as Parameters<typeof refuseSecondGithubLinkOnCallback>[0], acc);
+      return currentWriteFence();
+    });
+  const hooks = authOptions.databaseHooks.account.create as unknown as {
+    before: (account: unknown, ctx: unknown) => Promise<unknown>;
+    after: (account: unknown, ctx: unknown) => Promise<unknown>;
+  };
+
+  beforeEach(() => {
+    getOAuthState.mockReset();
+    getOAuthState.mockResolvedValue(linkState);
+    getGithubLink.mockReset();
+    getGithubLink.mockResolvedValue(null);
+    findAccounts.mockReset();
+    findAccounts.mockResolvedValue([{ providerId: "credential", accountId: ID }]);
+    claimGithubLink.mockReset();
+    claimGithubLink.mockResolvedValue(true);
+    releaseGithubLinkClaim.mockReset();
+    releaseGithubLinkClaim.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    getOAuthState.mockReset();
+    getOAuthState.mockResolvedValue(null);
+  });
+
+  it("lets the claim holder through for a player with no GitHub account, claiming with a fresh token and fencing the write on it", async () => {
+    const fences = [await onCallback(cb, account), await onCallback({ ...cb }, account)];
+    const tokens = claimGithubLink.mock.calls.map(([id, token]) => (expect(id).toBe(ID), token));
+    expect(tokens[0]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(tokens[1]).not.toBe(tokens[0]);
+    expect(fences).toEqual(tokens.map((member) => ({ key: `ctf:link:pending:${ID}`, member })));
+    expect(getGithubLink).toHaveBeenCalledWith(ID);
+    expect(findAccounts).toHaveBeenCalledWith(ID);
+    expect(releaseGithubLinkClaim).not.toHaveBeenCalled();
+  });
+
+  it("refuses an overlapping completion whose GitHub account does not hold the claim, reading nothing else", async () => {
+    claimGithubLink.mockResolvedValue(false);
+    expect(await refusal(onCallback(cb, account))).toEqual({ status: "FORBIDDEN", code: "GITHUB_ALREADY_LINKED" });
+    expect(getGithubLink).not.toHaveBeenCalled();
+    expect(findAccounts).not.toHaveBeenCalled();
+    expect(releaseGithubLinkClaim).not.toHaveBeenCalled();
+  });
+
+  it("refuses a player whose link landed meanwhile, and releases its claim", async () => {
+    getGithubLink.mockResolvedValue({ login: "octocat", linkedAt: 1 });
+    expect(await refusal(onCallback(cb, account))).toEqual({ status: "FORBIDDEN", code: "GITHUB_ALREADY_LINKED" });
+    expect(releaseGithubLinkClaim.mock.calls).toEqual(claimGithubLink.mock.calls);
+  });
+
+  it("refuses a player who has another GitHub account row with no link, and releases its claim", async () => {
+    findAccounts.mockResolvedValue([{ providerId: "github", accountId: "999" }]);
+    expect(await refusal(onCallback(cb, account))).toEqual({ status: "FORBIDDEN", code: "GITHUB_ALREADY_LINKED" });
+    expect(releaseGithubLinkClaim.mock.calls).toEqual(claimGithubLink.mock.calls);
+  });
+
+  it("does not count the player's row for this same GitHub account", async () => {
+    findAccounts.mockResolvedValue([{ providerId: "github", accountId: "1234" }]);
+    expect(await onCallback(cb, account)).toMatchObject({ key: `ctf:link:pending:${ID}` });
+  });
+
+  it("is wired as the account create before hook, and the after hook clears the fence and releases that callback's claim once", async () => {
+    await withWriteFenceSlot(async () => {
+      const ctx = { ...cb };
+      await hooks.before(account, ctx);
+      expect(releaseGithubLinkClaim).not.toHaveBeenCalled();
+      expect(currentWriteFence()).toEqual({ key: `ctf:link:pending:${ID}`, member: claimGithubLink.mock.calls[0][1] });
+      await hooks.after(account, ctx);
+      expect(currentWriteFence()).toBeNull();
+      await hooks.after(account, ctx);
+      expect(releaseGithubLinkClaim.mock.calls).toEqual(claimGithubLink.mock.calls);
+      findAccounts.mockResolvedValue([{ providerId: "github", accountId: "999" }]);
+      expect(await refusal(hooks.before(account, { ...cb }))).toEqual({ status: "FORBIDDEN", code: "GITHUB_ALREADY_LINKED" });
+      expect(currentWriteFence()).toBeNull();
+    });
+  });
+
+  it("refuses a link callback that runs outside a write fence slot, releasing its claim and writing unfenced nothing", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await refusal(refuseSecondGithubLinkOnCallback(cb, account))).toEqual({ status: "SERVICE_UNAVAILABLE", code: "GITHUB_LINK_UNREADABLE" });
+    errors.mockRestore();
+    expect(releaseGithubLinkClaim.mock.calls).toEqual(claimGithubLink.mock.calls);
+  });
+
+  it("releases nothing and sets no fence for a callback that holds no claim", async () => {
+    await withWriteFenceSlot(async () => {
+      await hooks.after(account, { ...cb });
+      claimGithubLink.mockResolvedValue(false);
+      const refused = { ...cb };
+      await refusal(hooks.before(account, refused));
+      expect(currentWriteFence()).toBeNull();
+      await hooks.after(account, refused);
+    });
+    expect(releaseGithubLinkClaim).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the oauth state", () => getOAuthState.mockRejectedValue(decoratedError()), false],
+    ["the claim", () => claimGithubLink.mockRejectedValue(decoratedError()), false],
+    ["the link", () => getGithubLink.mockRejectedValue(decoratedError()), true],
+    ["the account list", () => findAccounts.mockRejectedValue(decoratedError()), true],
+  ])("fails closed when %s cannot be read, logging only the label", async (_what, fail, releases) => {
+    fail();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await refusal(onCallback(cb, account))).status).toBe("SERVICE_UNAVAILABLE");
+    expectLabelOnly(errors);
+    expect(errors.mock.calls.flat().join(" ")).not.toContain(ID);
+    errors.mockRestore();
+    expect(releaseGithubLinkClaim.mock.calls.length > 0).toBe(releases);
+  });
+
+  it("fails closed on an account with no GitHub id or a context with no adapter", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await refusal(onCallback(cb, { providerId: "github" }))).status).toBe("SERVICE_UNAVAILABLE");
+    expect(claimGithubLink).not.toHaveBeenCalled();
+    expect((await refusal(onCallback({ path: "/callback/:id" }, account))).status).toBe("SERVICE_UNAVAILABLE");
+    errors.mockRestore();
+    expect(releaseGithubLinkClaim.mock.calls).toEqual(claimGithubLink.mock.calls);
+  });
+
+  it("keeps the refusal when releasing the claim fails, logging only the label", async () => {
+    getGithubLink.mockResolvedValue({ login: "octocat", linkedAt: 1 });
+    releaseGithubLinkClaim.mockRejectedValue(decoratedError());
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await refusal(onCallback(cb, account))).code).toBe("GITHUB_ALREADY_LINKED");
+    expectLabelOnly(errors);
+    errors.mockClear();
+    getGithubLink.mockResolvedValue(null);
+    await withWriteFenceSlot(async () => {
+      const ctx = { ...cb };
+      await hooks.before(account, ctx);
+      await expect(hooks.after(account, ctx)).resolves.toBeUndefined();
+    });
+    expectLabelOnly(errors);
+    const logged = errors.mock.calls.flat().join(" ");
+    errors.mockRestore();
+    expect(logged).toContain("could not release github link claim");
+    expect(logged).not.toContain(ID);
+  });
+
+  it("leaves a sign-in callback and every other path alone", async () => {
+    getOAuthState.mockResolvedValue({ codeVerifier: "v", callbackURL: "/" });
+    await expect(onCallback(cb, account)).resolves.toBeNull();
+    await expect(hooks.after(account, { ...cb })).resolves.toBeUndefined();
+    getOAuthState.mockResolvedValue(linkState);
+    await expect(onCallback({ path: "/link-social" }, account)).resolves.toBeNull();
+    await expect(onCallback(null, account)).resolves.toBeNull();
+    expect(claimGithubLink).not.toHaveBeenCalled();
+    expect(releaseGithubLinkClaim).not.toHaveBeenCalled();
     expect(getGithubLink).not.toHaveBeenCalled();
   });
 });

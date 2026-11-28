@@ -65,7 +65,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   requireAdmin.mockResolvedValue({ ok: true, login: "alice", player: ALICE });
   getEnabledModuleIds.mockResolvedValue(new Set(["secure-development"]));
-  lookupUser.mockResolvedValue({ id: OCTO, github: { login: "octo", linkedAt: 5 } });
+  lookupUser.mockResolvedValue({ id: OCTO, github: { login: "octo", linkedAt: 5 }, githubAccount: true });
   issuePasswordResetCode.mockResolvedValue({ code: "aaaa-bbbb", expiresAt: "2026-11-16T10:15:00.000Z" });
   renameUser.mockResolvedValue({ from: "old", to: "new" });
   unlinkGithub.mockResolvedValue({ login: "octo" });
@@ -169,7 +169,9 @@ describe("lookup github login", () => {
   it("hides it when Secure Development is off", async () => {
     getEnabledModuleIds.mockResolvedValue(new Set());
     const res = await GET(new Request(`http://x/api?id=${OCTO}`));
-    expect((await res.json()).github).toBeNull();
+    const body = await res.json();
+    expect(body.github).toBeNull();
+    expect(body.githubAccount).toBe(false);
   });
 });
 

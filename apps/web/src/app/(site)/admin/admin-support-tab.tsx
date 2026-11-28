@@ -410,8 +410,14 @@ export default function AdminSupportTab({
         return;
       }
       // describe can write state (the reset code). A newer action owns the
-      // screen, so a stale answer must not store that code or report.
-      if (actionGen.current !== gen) return;
+      // notice, so a stale answer must not store that code or report.
+      // A delete has already removed the account: its card still has to go
+      // when that same contestant is on screen. The callback checks the id,
+      // so a player picked since then stays.
+      if (actionGen.current !== gen) {
+        if (id === "delete" && after) await after();
+        return;
+      }
       reportCurrent(gen, { id, tone: "ok", text: describe(data) });
       if (after) await after();
     } catch {
@@ -796,8 +802,9 @@ export default function AdminSupportTab({
                       )}
                     </>
                   ),
-                  onConfirm: () =>
-                    run(
+                  onConfirm: () => {
+                    const deletedId = detail.id;
+                    return run(
                       "delete",
                       () =>
                         fetch("/api/admin/ops/user", {
@@ -807,10 +814,16 @@ export default function AdminSupportTab({
                         }),
                       (data) => withWarnings(`Deleted ${detail.name}.`, data),
                       async () => {
-                        setDetail(null);
-                        setResults(null);
+                        let removed = false;
+                        setDetail((current) => {
+                          if (current?.id !== deletedId) return current;
+                          removed = true;
+                          return null;
+                        });
+                        if (removed) setResults(null);
                       },
-                    ),
+                    );
+                  },
                 });
               }}
             >
